@@ -1,7 +1,8 @@
 //! Pairing-Operationen.
 
 use crate::ipc::Response;
-use anyhow::{bail, Result};
+use anyhow::Result;
+use crate::api_bail;
 use crate::daemon::*;
 
 pub(crate) async fn pair_invite(inner: &DaemonInner) -> Result<Response> {
@@ -14,7 +15,7 @@ pub(crate) async fn pair_invite(inner: &DaemonInner) -> Result<Response> {
 pub(crate) fn pair_remove(inner: &DaemonInner, query: &str) -> Result<Response> {
     let found = inner.db.find_devices(query)?;
     match found.as_slice() {
-        [] => bail!("Kein gekoppeltes Gerät '{query}' gefunden. Siehe `space-daemon pair list`."),
+        [] => api_bail!(NotFound, "Kein gekoppeltes Gerät '{query}' gefunden. Siehe `space-daemon pair list`."),
         [d] => {
             inner.db.remove_device(&d.node_id)?;
             Ok(Response::Success {
@@ -25,7 +26,7 @@ pub(crate) fn pair_remove(inner: &DaemonInner, query: &str) -> Result<Response> 
                 ),
             })
         }
-        _ => bail!("'{query}' ist mehrdeutig – bitte mehr Zeichen der Node-ID angeben."),
+        _ => api_bail!(Ambiguous, "'{query}' ist mehrdeutig – bitte mehr Zeichen der Node-ID angeben."),
     }
 }
 

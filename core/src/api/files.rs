@@ -2,11 +2,12 @@
 
 use crate::database::{now_unix, DatabaseManager};
 use crate::ipc::Response;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use iroh_blobs::Hash;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use crate::sync::spawn_sync_all;
+use crate::api_bail;
 use crate::daemon::*;
 
 // ----------------------------------------------------------------------
@@ -15,14 +16,14 @@ use crate::daemon::*;
 
 pub(crate) async fn publish(inner: &DaemonInner, path: &Path) -> Result<Response> {
     if !path.is_absolute() {
-        bail!("Pfad muss absolut sein: {}", path.display());
+        api_bail!(InvalidInput, "Pfad muss absolut sein: {}", path.display());
     }
     let canon = tokio::fs::canonicalize(path)
         .await
         .with_context(|| format!("Datei nicht gefunden: {}", path.display()))?;
     let meta = tokio::fs::metadata(&canon).await?;
     if !meta.is_file() {
-        bail!("Nur einzelne Dateien können freigegeben werden: {}", canon.display());
+        api_bail!(InvalidInput, "Nur einzelne Dateien können freigegeben werden: {}", canon.display());
     }
     let path_str = canon
         .to_str()
@@ -55,14 +56,14 @@ pub(crate) fn resolve_unique_hash(db: &DatabaseManager, prefix: &str) -> Result<
     let matches = db.find_by_hash_prefix(prefix)?;
     let distinct: HashSet<&str> = matches.iter().map(|f| f.blake3_hash.as_str()).collect();
     match distinct.len() {
-        0 => bail!("Keine freigegebene Datei mit Hash '{prefix}' im lokalen Katalog."),
+        0 => api_bail!(NotFound, "Keine freigegebene Datei mit Hash '{prefix}' im lokalen Katalog."),
         1 => Ok(matches.into_iter().next().unwrap()),
         _ => {
             let list: Vec<String> = matches
                 .iter()
                 .map(|f| format!("  {}  {}", &f.blake3_hash[..16], f.file_name))
                 .collect();
-            bail!("Hash '{prefix}' ist mehrdeutig – bitte mehr Zeichen angeben:\n{}", list.join("\n"))
+            api_bail!(Ambiguous, "Hash '{prefix}' ist mehrdeutig – bitte mehr Zeichen angeben:\n{}", list.join("\n"))
         }
     }
 }
@@ -81,13 +82,13 @@ pub(crate) async fn delete(inner: &DaemonInner, hash: Option<String>, path: Opti
         }
         (None, Some(p)) => {
             if !p.is_absolute() {
-                bail!("Pfad muss absolut sein: {}", p.display());
+                api_bail!(InvalidInput, "Pfad muss absolut sein: {}", p.display());
             }
             let p = tokio::fs::canonicalize(&p).await.unwrap_or(p);
             let p = p.to_str().context("Pfad ist kein gültiges UTF-8")?;
             inner.db.soft_delete_by_path(p)?
         }
-        _ => bail!("Genau eines von --hash oder --path angeben."),
+        _ => api_bail!(InvalidInput, "Genau eines von --hash oder --path angeben."),
     };
     // Löschmarkierung (Tombstone) ins Ledger, damit gekoppelte Geräte sie übernehmen.
     for id in &ids {
@@ -97,7 +98,7 @@ pub(crate) async fn delete(inner: &DaemonInner, hash: Option<String>, path: Opti
     }
     let count = ids.len();
     if count == 0 {
-        bail!("Keine passende freigegebene Datei gefunden.");
+        api_bail!(NotFound, "Keine passende freigegebene Datei gefunden.");
     }
     let days = inner.config.retention_days;
     Ok(Response::Success {
@@ -124,4 +125,34 @@ pub(crate) fn catalog(inner: &DaemonInner) -> Result<Response> {
         peers: inner.db.list_peers()?,
         syncing,
     })
+}
+
+/// Seitenweise Katalogabfrage für Oberflächen.
+pub(crate) fn browse(inner: &DaemonInner, q: crate::ipc::BrowseQuery) -> Result<Response> {
+    use crate::ipc::MAX_BROWSE_LIMIT;
+    let limit = match q.limit {
+        0 => 100,
+        n => n.min(MAX_BROWSE_LIMIT),
+    };
+    let device_id;
+    let device = match q.device.as_deref() {
+        None => None,
+        Some("self") => Some(None),
+        Some(other) => {
+            let found = inner.db.find_devices(other)?;
+            match found.as_slice() {
+                [d] => {
+                    device_id = d.node_id.clone();
+                    Some(Some(device_id.as_str()))
+                }
+                [] => api_bail!(NotFound, "Kein gekoppeltes Gerät '{other}'"),
+                _ => api_bail!(Ambiguous, "Gerät '{other}' ist mehrdeutig"),
+            }
+        }
+    };
+    if q.search.as_ref().is_some_and(|s| s.len() > 256) {
+        api_bail!(InvalidInput, "Suchbegriff zu lang");
+    }
+    let (items, total) = inner.db.browse(&inner.self_id(), device, q.search.as_deref(), q.offset, limit)?;
+    Ok(Response::BrowsePage { items, total })
 }

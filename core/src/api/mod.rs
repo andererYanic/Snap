@@ -5,6 +5,7 @@
 
 
 pub mod devices;
+pub mod error;
 pub mod files;
 pub mod transfer;
 
@@ -50,7 +51,7 @@ pub(crate) async fn handle_request(inner: &DaemonInner, req: Request) -> Respons
         Request::Queue => inner.db.list_jobs().map(|jobs| Response::Queue { jobs }),
         Request::QueueCancel { id } => match inner.db.cancel_job(id) {
             Ok(true) => Ok(Response::Success { message: format!("Auftrag {id} entfernt.") }),
-            Ok(false) => Ok(Response::error(format!("Kein Auftrag mit ID {id}."))),
+            Ok(false) => Ok(Response::error(error::ErrorCode::NotFound, format!("Kein Auftrag mit ID {id}."))),
             Err(e) => Err(e),
         },
         Request::QueueRetry { id } => match inner.db.retry_job(id) {
@@ -58,13 +59,18 @@ pub(crate) async fn handle_request(inner: &DaemonInner, req: Request) -> Respons
                 inner.sync_notifier.notify_one();
                 Ok(Response::Success { message: format!("Auftrag {id} wird jetzt erneut versucht.") })
             }
-            Ok(false) => Ok(Response::error(format!("Kein Auftrag mit ID {id}."))),
+            Ok(false) => Ok(Response::error(error::ErrorCode::NotFound, format!("Kein Auftrag mit ID {id}."))),
             Err(e) => Err(e),
         },
         Request::Peers => inner.db.list_peers().map(|peers| Response::Peers { peers }),
         Request::Info => info(inner),
+        Request::Browse(q) => files::browse(inner, q),
+        Request::Subscribe => Ok(Response::error(
+            error::ErrorCode::InvalidInput,
+            "Ereignisse gibt es nur über eine Socket-Verbindung oder Daemon::subscribe()",
+        )),
     };
-    result.unwrap_or_else(|e| Response::error(format!("{e:#}")))
+    result.unwrap_or_else(|e| Response::from_error(&e))
 }
 
 pub(crate) fn info(inner: &DaemonInner) -> Result<Response> {

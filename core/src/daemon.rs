@@ -7,7 +7,8 @@ use crate::worker::run_pending_pin_worker;
 
 use crate::config::Config;
 use crate::database::DatabaseManager;
-use crate::ipc::{read_frame, write_frame, Request, Response};
+use crate::api::error::ErrorCode;
+use crate::ipc::{Envelope, API_VERSION, read_frame, write_frame, Request, Response};
 use crate::ledger::{LedgerCtx, LedgerEntry, LedgerProtocol, LEDGER_ALPN};
 use crate::network::{AccessCheck, ConnectHook, NetworkOptions, P2pNetwork};
 use crate::pairing::{PairingCtx, PairingProtocol, PairingState, PAIR_ALPN};
@@ -190,6 +191,11 @@ impl Daemon {
         handle_request(&self.inner, req).await
     }
 
+    /// Ereignisse abonnieren (eingebettete Nutzung, z. B. Mobile per FFI).
+    pub fn subscribe(&self) -> crate::events::Subscription {
+        self.inner.db.events().subscribe()
+    }
+
     #[cfg(any(test, feature = "test-utils"))]
     pub fn network(&self) -> &P2pNetwork {
         &self.inner.network
@@ -250,11 +256,42 @@ pub(crate) async fn handle_ipc_connection(inner: &DaemonInner, mut stream: UnixS
         tracing::warn!("IPC-Verbindung von fremder uid {} abgelehnt", cred.uid());
         return Ok(());
     }
-    let req: Request = tokio::time::timeout(IPC_READ_TIMEOUT, read_frame(&mut stream))
+    let envelope: Envelope = tokio::time::timeout(IPC_READ_TIMEOUT, read_frame(&mut stream))
         .await
         .context("Zeitüberschreitung beim Lesen der Anfrage")??;
-    let res = handle_request(inner, req).await;
+    if envelope.v != API_VERSION {
+        let res = Response::error(
+            ErrorCode::VersionMismatch,
+            format!(
+                "CLI/App spricht API-Version {}, der Daemon Version {API_VERSION}. Bitte beide auf denselben Stand bringen.",
+                envelope.v
+            ),
+        );
+        return write_frame(&mut stream, &res).await;
+    }
+    if let Request::Subscribe = envelope.req {
+        return stream_events(inner, stream).await;
+    }
+    let res = handle_request(inner, envelope.req).await;
     write_frame(&mut stream, &res).await
+}
+
+/// Sendet Ereignisse, bis der Client die Verbindung schließt.
+async fn stream_events(inner: &DaemonInner, mut stream: UnixStream) -> Result<()> {
+    let mut sub = inner.db.events().subscribe();
+    // Bestätigung, damit der Client weiß, dass das Abo aktiv ist.
+    write_frame(&mut stream, &Response::Success { message: "Abonniert".into() }).await?;
+    let mut probe = [0u8; 1];
+    loop {
+        tokio::select! {
+            event = sub.next() => match event {
+                Some(e) => write_frame(&mut stream, &Response::Event(e)).await?,
+                None => return Ok(()),
+            },
+            // Client hat geschlossen (EOF) oder sendet unerwartet Daten -> beenden.
+            _ = tokio::io::AsyncReadExt::read(&mut stream, &mut probe) => return Ok(()),
+        }
+    }
 }
 
 

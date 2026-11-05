@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use iroh::EndpointId;
 use crate::api::files::resolve_unique_hash;
+use crate::api_bail;
 use crate::daemon::*;
 
 // ----------------------------------------------------------------------
@@ -32,7 +33,7 @@ pub(crate) fn resolve_download_target(inner: &DaemonInner, target: &str) -> Resu
     // 1. Ticket
     if let Ok(ticket) = target.parse::<BlobTicket>() {
         if ticket.format() != BlobFormat::Raw {
-            bail!("Sammlungen (HashSeq) werden noch nicht unterstützt.");
+            api_bail!(InvalidInput, "Sammlungen (HashSeq) werden noch nicht unterstützt.");
         }
         let hash_hex = ticket.hash().to_string();
         let known_name = db
@@ -70,9 +71,10 @@ pub(crate) fn resolve_download_target(inner: &DaemonInner, target: &str) -> Resu
         return remote_target(inner, remote, target);
     }
     if looks_like_hash {
-        bail!("Keine Datei mit Hash '{target}' bekannt (weder eigene noch von gekoppelten Geräten).");
+        api_bail!(NotFound, "Keine Datei mit Hash '{target}' bekannt (weder eigene noch von gekoppelten Geräten).");
     }
-    bail!(
+    api_bail!(
+        NotFound,
         "'{target}' ist weder ein Ticket noch ein bekannter Hash oder Dateiname.\n   \
          Tipp: `space-daemon list` zeigt alle Dateien, `space-daemon sync` aktualisiert die Listen."
     )
@@ -88,7 +90,7 @@ pub(crate) fn remote_target(inner: &DaemonInner, matches: Vec<RemoteFile>, query
             .iter()
             .map(|f| format!("  {}  {}  ({})", &f.hash[..16], f.name, device_label(f)))
             .collect();
-        bail!("'{query}' ist mehrdeutig – bitte den Hash angeben:\n{}", list.join("\n"));
+        api_bail!(Ambiguous, "'{query}' ist mehrdeutig – bitte den Hash angeben:\n{}", list.join("\n"));
     }
     let peers = inner.db.list_peers().unwrap_or_default();
     let score = |f: &RemoteFile| {
@@ -136,14 +138,14 @@ pub(crate) async fn download(
     let (output_path, explicit) = match output {
         Some(out) => {
             if !out.is_absolute() {
-                bail!("Zielpfad muss absolut sein: {}", out.display());
+                api_bail!(InvalidInput, "Zielpfad muss absolut sein: {}", out.display());
             }
             let out = if out.is_dir() { out.join(&default_name) } else { out };
             if out.exists() && !force {
-                bail!("Ziel existiert bereits: {} (mit --force überschreiben)", out.display());
+                api_bail!(AlreadyExists, "Ziel existiert bereits: {} (mit --force überschreiben)", out.display());
             }
             if out.is_dir() {
-                bail!("Ziel ist ein Verzeichnis: {}", out.display());
+                api_bail!(InvalidInput, "Ziel ist ein Verzeichnis: {}", out.display());
             }
             (out, true)
         }
@@ -184,9 +186,9 @@ pub(crate) async fn download(
             if !is_self {
                 inner.db.mark_peer_online(&peer.to_string())?;
             }
-            bail!("{e}")
+            api_bail!(Rejected, "{e}")
         }
-        Err(e) => bail!("{e}"),
+        Err(e) => Err(anyhow::anyhow!("{e}")),
     }
 }
 
@@ -239,7 +241,7 @@ pub(crate) async fn place_file(tmp: &Path, output: &Path, explicit: bool, force:
             Ok(()) => return Ok(candidate),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if explicit {
-                    bail!("Ziel existiert bereits: {} (mit --force überschreiben)", output.display());
+                    api_bail!(AlreadyExists, "Ziel existiert bereits: {} (mit --force überschreiben)", output.display());
                 }
             }
             Err(e) => {

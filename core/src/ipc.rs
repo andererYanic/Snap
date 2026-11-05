@@ -3,6 +3,7 @@
 //! Jede Nachricht ist ein JSON-Dokument mit vorangestellter Länge (u32, Big Endian).
 //! Nachrichten über [`MAX_FRAME_LEN`] werden abgelehnt.
 
+use crate::api::error::ErrorCode;
 use crate::database::{DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile};
 use anyhow::{bail, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -11,6 +12,50 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Maximale Größe einer IPC-Nachricht (1 MiB).
 pub const MAX_FRAME_LEN: u32 = 1024 * 1024;
+
+/// Version des API-Vertrags. Bei inkompatiblen Änderungen erhöhen.
+pub const API_VERSION: u32 = 1;
+
+/// Jede Anfrage über den Socket ist mit der API-Version umhüllt.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Envelope {
+    pub v: u32,
+    pub req: Request,
+}
+
+impl Envelope {
+    pub fn new(req: Request) -> Self {
+        Self { v: API_VERSION, req }
+    }
+}
+
+/// Seitenweise Abfrage des Katalogs (für Oberflächen).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct BrowseQuery {
+    /// `None` = alle Geräte, `Some("self")` = dieses Gerät, sonst Node-ID.
+    pub device: Option<String>,
+    /// Teilstring im Dateinamen (ohne Groß-/Kleinschreibung).
+    pub search: Option<String>,
+    pub offset: u32,
+    /// Maximal [`MAX_BROWSE_LIMIT`]; 0 = Standard (100).
+    pub limit: u32,
+}
+
+pub const MAX_BROWSE_LIMIT: u32 = 500;
+
+/// Ein Eintrag im Katalog, egal ob lokal oder auf einem anderen Gerät.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct CatalogItem {
+    /// `None` = dieses Gerät.
+    pub origin: Option<String>,
+    pub origin_name: Option<String>,
+    pub hash: String,
+    pub name: String,
+    pub size: u64,
+    pub created_at: i64,
+    /// Lokaler Pfad (nur bei eigenen Dateien).
+    pub path: Option<String>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Request {
@@ -54,6 +99,11 @@ pub enum Request {
     Peers,
     /// Informationen über den laufenden Daemon.
     Info,
+    /// Katalog seitenweise abfragen (für Oberflächen).
+    Browse(BrowseQuery),
+    /// Ereignisse abonnieren: Die Verbindung bleibt offen, der Daemon sendet
+    /// fortlaufend `Response::Event`.
+    Subscribe,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -98,15 +148,22 @@ pub enum Response {
     PairInvite { code: String, expires_at: i64 },
     Paired { device: DeviceInfo },
     Devices { devices: Vec<DeviceInfo> },
+    BrowsePage { items: Vec<CatalogItem>, total: u64 },
+    Event(crate::events::Event),
     Queue { jobs: Vec<PendingJob> },
     Peers { peers: Vec<PeerInfo> },
     Info(DaemonInfo),
-    Error { message: String },
+    Error { code: ErrorCode, message: String },
 }
 
 impl Response {
-    pub fn error(message: impl Into<String>) -> Self {
-        Response::Error { message: message.into() }
+    pub fn error(code: ErrorCode, message: impl Into<String>) -> Self {
+        Response::Error { code, message: message.into() }
+    }
+
+    /// Wandelt einen Fehler einer Operation in eine Antwort mit Fehlercode um.
+    pub fn from_error(e: &anyhow::Error) -> Self {
+        Response::Error { code: crate::api::error::code_of(e), message: format!("{e:#}") }
     }
 }
 

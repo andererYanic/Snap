@@ -256,7 +256,7 @@ async fn security_invite_codes() {
     let replaced = code.clone();
     let code = invite(&host).await; // ersetzt die vorherige
     let err = |r: Response| match r {
-        Response::Error { message } => message,
+        Response::Error { message, .. } => message,
         other => panic!("erwartet Fehler, bekam {other:?}"),
     };
     let msg = err(g1.request(Request::PairJoin { code: replaced }).await);

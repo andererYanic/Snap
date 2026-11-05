@@ -110,7 +110,10 @@ async fn publish_download_and_access_control() {
     // Ein dritter Node bekommt eine klare Fehlermeldung statt eines Warteschlangen-Eintrags
     let c = start(&tmp.path().join("c"), free_port()).await;
     match download(&c, &ticket, None).await {
-        Response::Error { message } => assert!(message.contains("nicht"), "{message}"),
+        Response::Error { code, message } => {
+            assert_eq!(code, space_core::api::error::ErrorCode::Rejected, "{message}");
+            assert!(message.contains("nicht"), "{message}");
+        }
         other => panic!("erwartet Fehler, bekam {other:?}"),
     }
     match c.request(Request::Queue).await {

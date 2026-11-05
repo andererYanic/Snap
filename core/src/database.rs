@@ -1,5 +1,6 @@
 //! SQLite-Persistenz: Dateikatalog, Offline-Warteschlange und Peer-Status.
 
+use crate::events::{Event, EventBus};
 use crate::ledger::LedgerEntry;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
@@ -123,6 +124,7 @@ pub struct DatabaseManager {
     conn: Mutex<Connection>,
     readers: Vec<Mutex<Connection>>,
     next_reader: AtomicUsize,
+    events: EventBus,
 }
 
 /// Anzahl der Leseverbindungen.
@@ -135,13 +137,13 @@ const STATEMENT_CACHE: usize = 64;
 pub fn normalize_hash_prefix(input: &str) -> Result<String> {
     let s = input.trim().to_ascii_lowercase();
     if s.len() < 6 {
-        bail!("Hash zu kurz – bitte mindestens 6 Zeichen angeben.");
+        crate::api_bail!(InvalidInput, "Hash zu kurz – bitte mindestens 6 Zeichen angeben.");
     }
     if s.len() > 64 {
-        bail!("Hash zu lang – ein BLAKE3-Hash hat 64 Hexzeichen.");
+        crate::api_bail!(InvalidInput, "Hash zu lang – ein BLAKE3-Hash hat 64 Hexzeichen.");
     }
     if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("Ungültiger Hash – nur Hexzeichen (0-9, a-f) erlaubt.");
+        crate::api_bail!(InvalidInput, "Ungültiger Hash – nur Hexzeichen (0-9, a-f) erlaubt.");
     }
     Ok(s)
 }
@@ -254,6 +256,8 @@ impl DatabaseManager {
             );
             CREATE INDEX IF NOT EXISTS idx_ledger_origin_seq ON ledger_entries(origin, seq);
             CREATE INDEX IF NOT EXISTS idx_ledger_hash ON ledger_entries(hash);
+            CREATE INDEX IF NOT EXISTS idx_ledger_name ON ledger_entries(name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_files_name ON files(file_name COLLATE NOCASE);
 
             -- Direkte Adress-Hinweise, nur von authentifizierten Gegenstellen über sich selbst.
             CREATE TABLE IF NOT EXISTS peer_addrs (
@@ -266,7 +270,12 @@ impl DatabaseManager {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
 
-        Ok(Self { conn: Mutex::new(conn), readers: Vec::new(), next_reader: AtomicUsize::new(0) })
+        Ok(Self { conn: Mutex::new(conn), readers: Vec::new(), next_reader: AtomicUsize::new(0), events: EventBus::default() })
+    }
+
+    /// Ereignis-Bus: meldet jede Änderung nach dem Commit.
+    pub fn events(&self) -> &EventBus {
+        &self.events
     }
 
     /// Schreibverbindung (auch für Lese-nach-Schreib innerhalb einer Methode).
@@ -330,6 +339,9 @@ impl DatabaseManager {
         )?;
         let id: i64 = conn.query_row("SELECT id FROM files WHERE path = ?1", params![path], |r| r.get(0))?;
         conn.commit()?;
+        if !already {
+            self.events.emit(Event::LocalCatalogChanged);
+        }
         Ok((already, id))
     }
 
@@ -421,6 +433,9 @@ impl DatabaseManager {
             params![value, now_unix()],
         )?;
         tx.commit()?;
+        if !ids.is_empty() {
+            self.events.emit(Event::LocalCatalogChanged);
+        }
         Ok(ids)
     }
 
@@ -489,6 +504,8 @@ impl DatabaseManager {
                  WHERE id = ?1",
                 params![id, job.last_error, job.ticket, job.peer_id, job.force],
             )?;
+            drop(conn);
+            self.events.emit(Event::JobQueued { job_id: id });
             return Ok((id, true));
         }
         conn.execute(
@@ -507,7 +524,10 @@ impl DatabaseManager {
                 now_unix()
             ],
         )?;
-        Ok((conn.last_insert_rowid(), false))
+        let id = conn.last_insert_rowid();
+        drop(conn);
+        self.events.emit(Event::JobQueued { job_id: id });
+        Ok((id, false))
     }
 
     const JOB_SELECT: &'static str = "
@@ -588,6 +608,7 @@ impl DatabaseManager {
 
     pub fn complete_job(&self, id: i64) -> Result<()> {
         self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])?;
+        self.events.emit(Event::JobCompleted { job_id: id });
         Ok(())
     }
 
@@ -606,11 +627,16 @@ impl DatabaseManager {
             "UPDATE pending_pins SET attempts = attempts + 1, state = ?3, last_error = ?2 WHERE id = ?1",
             params![id, error, JobState::Failed.as_str()],
         )?;
+        self.events.emit(Event::JobFailed { job_id: id, error: error.to_string() });
         Ok(())
     }
 
     pub fn cancel_job(&self, id: i64) -> Result<bool> {
-        Ok(self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])? > 0)
+        let removed = self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])? > 0;
+        if removed {
+            self.events.emit(Event::JobRemoved { job_id: id });
+        }
+        Ok(removed)
     }
 
     /// Setzt einen Auftrag auf "wartend" und das Backoff seines Peers zurück.
@@ -639,14 +665,31 @@ impl DatabaseManager {
 
     /// Erfolgreiche Verbindung: online, Backoff zurücksetzen.
     pub fn mark_peer_online(&self, node_id: &str) -> Result<()> {
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let prev = Self::peer_status_of(&tx, node_id)?;
+        tx.execute(
             "INSERT INTO peer_status (node_id, status, last_seen, failures, next_retry_at)
              VALUES (?1, 'online', ?2, 0, NULL)
              ON CONFLICT(node_id) DO UPDATE SET
                 status = 'online', last_seen = ?2, failures = 0, next_retry_at = NULL",
             params![node_id, now_unix()],
         )?;
+        tx.commit()?;
+        self.emit_status_change(node_id, prev.as_deref(), "online");
         Ok(())
+    }
+
+    fn peer_status_of(conn: &Connection, node_id: &str) -> rusqlite::Result<Option<String>> {
+        conn.prepare_cached("SELECT status FROM peer_status WHERE node_id = ?1")?
+            .query_row(params![node_id], |r| r.get(0))
+            .optional()
+    }
+
+    fn emit_status_change(&self, node_id: &str, prev: Option<&str>, now: &str) {
+        if prev != Some(now) {
+            self.events.emit(Event::PeerStatusChanged { node_id: node_id.to_string(), status: now.to_string() });
+        }
     }
 
     /// Verbindung fehlgeschlagen: offline und Backoff planen. Gibt den Zeitpunkt
@@ -659,26 +702,28 @@ impl DatabaseManager {
         let now = now_unix();
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let existing: Option<(u32, Option<i64>)> = tx
+        let existing: Option<(u32, Option<i64>, String)> = tx
             .query_row(
-                "SELECT failures, next_retry_at FROM peer_status WHERE node_id = ?1",
+                "SELECT failures, next_retry_at, status FROM peer_status WHERE node_id = ?1",
                 params![node_id],
-                |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?)),
+                |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
+        let prev = existing.as_ref().map(|e| e.2.clone());
         if !escalate {
-            if let Some((_, Some(next))) = existing {
+            if let Some((_, Some(next), _)) = existing {
                 if next > now {
                     tx.execute(
                         "UPDATE peer_status SET status = 'offline' WHERE node_id = ?1",
                         params![node_id],
                     )?;
                     tx.commit()?;
+                    self.emit_status_change(node_id, prev.as_deref(), "offline");
                     return Ok(next);
                 }
             }
         }
-        let failures = existing.map(|(f, _)| f).unwrap_or(0).saturating_add(1);
+        let failures = existing.map(|(f, _, _)| f).unwrap_or(0).saturating_add(1);
         let next = now + crate::backoff::delay_random(failures).as_secs() as i64;
         tx.execute(
             "INSERT INTO peer_status (node_id, status, last_seen, failures, next_retry_at)
@@ -688,6 +733,7 @@ impl DatabaseManager {
             params![node_id, failures, next],
         )?;
         tx.commit()?;
+        self.emit_status_change(node_id, prev.as_deref(), "offline");
         Ok(next)
     }
 
@@ -697,6 +743,7 @@ impl DatabaseManager {
     /// wartende Aufträge existieren.
     pub fn mark_known_peer_seen(&self, node_id: &str) -> Result<bool> {
         let conn = self.conn();
+        let prev = Self::peer_status_of(&conn, node_id)?;
         let updated = conn.execute(
             "UPDATE peer_status SET status = 'online', last_seen = ?2, failures = 0, next_retry_at = NULL
              WHERE node_id = ?1",
@@ -705,6 +752,7 @@ impl DatabaseManager {
         if updated == 0 {
             return Ok(false);
         }
+        self.emit_status_change(node_id, prev.as_deref(), "online");
         Ok(conn
             .query_row(
                 "SELECT 1 FROM pending_pins WHERE peer_id = ?1 AND state = 'waiting' LIMIT 1",
@@ -823,6 +871,9 @@ impl DatabaseManager {
             n += Self::upsert_entry(&tx, e)?;
         }
         tx.commit()?;
+        if n > 0 {
+            self.events.emit(Event::RemoteCatalogChanged { new_entries: n });
+        }
         Ok(n)
     }
 
@@ -952,17 +1003,101 @@ impl DatabaseManager {
         Ok(rows)
     }
 
+    /// Seitenweise Katalogabfrage über eigene und fremde Dateien.
+    /// `device`: `None` = alle, `Some(None)` = nur eigene, `Some(Some(id))` = ein Gerät.
+    pub fn browse(
+        &self,
+        self_origin: &str,
+        device: Option<Option<&str>>,
+        search: Option<&str>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<(Vec<crate::ipc::CatalogItem>, u64)> {
+        // LIKE-Muster mit maskierten Platzhaltern: Nutzereingaben wie "%" oder "_"
+        // werden wörtlich gesucht.
+        let pattern = search.filter(|s| !s.is_empty()).map(|s| {
+            let escaped = s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            format!("%{escaped}%")
+        });
+        let (include_local, include_remote, origin) = match device {
+            None => (true, true, None),
+            Some(None) => (true, false, None),
+            Some(Some(id)) => (false, true, Some(id)),
+        };
+        let sql = 
+            "WITH items AS (
+                SELECT NULL AS origin, NULL AS origin_name, blake3_hash AS hash, file_name AS name,
+                       file_size AS size, created_at, path
+                FROM files
+                WHERE ?1 AND deleted_at IS NULL AND (?3 IS NULL OR file_name LIKE ?3 ESCAPE '\\')
+                UNION ALL
+                SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at, NULL
+                FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
+                WHERE ?2 AND l.deleted = 0 AND l.origin != ?4
+                  AND (?5 IS NULL OR l.origin = ?5)
+                  AND (?3 IS NULL OR l.name LIKE ?3 ESCAPE '\\')
+            )
+            SELECT origin, origin_name, hash, name, size, created_at, path, COUNT(*) OVER () AS total
+            FROM items ORDER BY name COLLATE NOCASE, origin LIMIT ?6 OFFSET ?7";
+        let mut total = 0u64;
+        // Verbindung nur innerhalb dieses Blocks halten (der Rückfall unten fragt erneut an).
+        let items = {
+            let conn = self.read();
+            let mut stmt = conn.prepare_cached(sql)?;
+            let rows = stmt
+            .query_map(
+                params![include_local, include_remote, pattern, self_origin, origin, limit, offset],
+                |r| {
+                    Ok((
+                        crate::ipc::CatalogItem {
+                            origin: r.get(0)?,
+                            origin_name: r.get(1)?,
+                            hash: r.get(2)?,
+                            name: r.get(3)?,
+                            size: r.get::<_, i64>(4)? as u64,
+                            created_at: r.get(5)?,
+                            path: r.get(6)?,
+                        },
+                        r.get::<_, i64>(7)? as u64,
+                    ))
+                },
+            )?
+            .map(|row| row.map(|(item, t)| {
+                total = t;
+                item
+            }))
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        if items.is_empty() && offset > 0 {
+            // Hinter dem Ende: Gesamtzahl trotzdem liefern.
+            let (all, t) = self.browse(self_origin, device, search, 0, 1)?;
+            drop(all);
+            return Ok((Vec::new(), t));
+        }
+        Ok((items, total))
+    }
+
     // ------------------------------------------------------------------
     // Gekoppelte Geräte & Adress-Hinweise
     // ------------------------------------------------------------------
 
     /// Fügt ein Gerät hinzu oder aktualisiert seinen Namen.
+    /// Wird auch bei jedem Abgleich zur Namensaktualisierung aufgerufen; das Ereignis
+    /// `DevicePaired` entsteht nur beim ersten Eintragen.
     pub fn add_device(&self, node_id: &str, name: &str) -> Result<()> {
-        self.conn().execute(
-            "INSERT INTO devices (node_id, name, paired_at) VALUES (?1, ?2, ?3)
-             ON CONFLICT(node_id) DO UPDATE SET name = excluded.name",
-            params![node_id, name, now_unix()],
-        )?;
+        let conn = self.conn();
+        let inserted = conn
+            .prepare_cached("INSERT INTO devices (node_id, name, paired_at) VALUES (?1, ?2, ?3) ON CONFLICT(node_id) DO NOTHING")?
+            .execute(params![node_id, name, now_unix()])?
+            > 0;
+        if inserted {
+            drop(conn);
+            self.events.emit(Event::DevicePaired { node_id: node_id.to_string(), name: name.to_string() });
+        } else {
+            conn.prepare_cached("UPDATE devices SET name = ?2 WHERE node_id = ?1 AND name != ?2")?
+                .execute(params![node_id, name])?;
+        }
         Ok(())
     }
 
@@ -1005,6 +1140,10 @@ impl DatabaseManager {
         tx.execute("DELETE FROM ledger_entries WHERE origin = ?1", params![node_id])?;
         tx.execute("DELETE FROM peer_addrs WHERE node_id = ?1", params![node_id])?;
         tx.commit()?;
+        if removed {
+            self.events.emit(Event::DeviceRemoved { node_id: node_id.to_string() });
+            self.events.emit(Event::RemoteCatalogChanged { new_entries: 0 });
+        }
         Ok(removed)
     }
 
@@ -1191,6 +1330,84 @@ mod tests {
         db.mark_peer_unreachable("p", true).unwrap();
         db.mark_peer_online("p").unwrap();
         assert_eq!(db.get_peer("p").unwrap().unwrap().next_retry_at, None);
+    }
+
+    #[tokio::test]
+    async fn mutations_emit_events() {
+        use crate::events::Event;
+        let db = DatabaseManager::open_in_memory().unwrap();
+        let mut sub = db.events().subscribe();
+        db.upsert_file("/a", H1, "a", 1, "t").unwrap();
+        db.upsert_file("/a", H1, "a", 1, "t").unwrap(); // unverändert -> kein Ereignis
+        db.mark_peer_online("p").unwrap();
+        db.mark_peer_online("p").unwrap(); // kein Statuswechsel -> kein Ereignis
+        db.mark_peer_unreachable("p", true).unwrap();
+        let (job, _) = db.enqueue_download(&job(H1, "/x", "p")).unwrap();
+        db.complete_job(job).unwrap();
+        db.add_device("d", "Handy").unwrap();
+        db.add_device("d", "Handy").unwrap(); // Namensabgleich -> kein Ereignis
+        db.remove_device("d").unwrap();
+        let expected = vec![
+            Event::LocalCatalogChanged,
+            Event::PeerStatusChanged { node_id: "p".into(), status: "online".into() },
+            Event::PeerStatusChanged { node_id: "p".into(), status: "offline".into() },
+            Event::JobQueued { job_id: job },
+            Event::JobCompleted { job_id: job },
+            Event::DevicePaired { node_id: "d".into(), name: "Handy".into() },
+            Event::DeviceRemoved { node_id: "d".into() },
+            Event::RemoteCatalogChanged { new_entries: 0 },
+        ];
+        for e in expected {
+            assert_eq!(sub.next().await.unwrap(), e);
+        }
+    }
+
+    #[test]
+    fn browse_pages_filters_and_escapes() {
+        let db = DatabaseManager::open_in_memory().unwrap();
+        let key = iroh::SecretKey::generate();
+        let origin = key.public().to_string();
+        let entries: Vec<LedgerEntry> = (0..25)
+            .map(|i| {
+                let mut e = LedgerEntry {
+                    origin: origin.clone(),
+                    entry_id: i + 1,
+                    seq: i + 1,
+                    hash: format!("{:064x}", i),
+                    name: format!("bild_{i:02}.jpg"),
+                    size: 1,
+                    created_at: 0,
+                    deleted: false,
+                    signature: String::new(),
+                };
+                e.signature = e.sign(&key);
+                e
+            })
+            .collect();
+        db.apply_remote_entries(&entries).unwrap();
+        db.upsert_file("/home/notiz%.txt", H1, "notiz%.txt", 1, "t").unwrap();
+        db.add_device(&origin, "Handy").unwrap();
+
+        let (page, total) = db.browse("self", None, None, 0, 10).unwrap();
+        assert_eq!((page.len(), total), (10, 26));
+        assert_eq!(page[0].name, "bild_00.jpg");
+        assert_eq!(page[0].origin_name.as_deref(), Some("Handy"));
+        let (page, total) = db.browse("self", None, None, 20, 10).unwrap();
+        assert_eq!((page.len(), total), (6, 26));
+        assert_eq!(page.last().unwrap().path.as_deref(), Some("/home/notiz%.txt"));
+        let (page, total) = db.browse("self", None, None, 100, 10).unwrap();
+        assert_eq!((page.len(), total), (0, 26));
+
+        // "%" wird wörtlich gesucht, "_" ebenso
+        let (page, _) = db.browse("self", None, Some("%"), 0, 50).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].name, "notiz%.txt");
+        assert_eq!(db.browse("self", None, Some("_1"), 0, 50).unwrap().1, 10);
+        assert_eq!(db.browse("self", None, Some("BILD_2"), 0, 50).unwrap().1, 5, "ohne Groß-/Kleinschreibung");
+
+        // Gerätefilter
+        assert_eq!(db.browse("self", Some(None), None, 0, 50).unwrap().1, 1);
+        assert_eq!(db.browse("self", Some(Some(&origin)), None, 0, 50).unwrap().1, 25);
     }
 
     #[test]

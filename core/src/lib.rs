@@ -2,6 +2,7 @@ pub mod api;
 pub mod backoff;
 pub mod config;
 pub mod daemon;
+pub mod events;
 pub mod database;
 pub mod ipc;
 pub mod ledger;
