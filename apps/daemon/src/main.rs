@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use space_core::database::{DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile};
+use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile};
 use space_core::events::Event;
 use space_core::ipc::{read_frame, write_frame, Envelope, Request, Response, SyncResult};
 use space_core::{Config, Daemon, FileRecord};
@@ -78,6 +78,11 @@ enum Commands {
     Info,
     /// Zeigt Ereignisse des Daemons live an (STRG+C beendet)
     Watch,
+    /// Zeigt, was gekoppelte Geräte versucht haben (Audit-Log)
+    Audit {
+        #[arg(short, long, default_value_t = 50)]
+        limit: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -90,6 +95,21 @@ enum PairAction {
     List,
     /// Entkoppelt ein Gerät (Name oder Node-ID-Präfix)
     Remove { device: String },
+    /// Gewährt einem Gerät ein Recht: catalog.read, files.read, files.write,
+    /// pin.request, files.delete (files.* nur mit --folder)
+    Grant {
+        device: String,
+        capability: String,
+        #[arg(long, value_name = "ORDNER")]
+        folder: Option<PathBuf>,
+    },
+    /// Entzieht ein Recht (ohne --folder: in allen Ordnern)
+    Revoke {
+        device: String,
+        capability: String,
+        #[arg(long, value_name = "ORDNER")]
+        folder: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -142,6 +162,13 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Commands::Pair { action: PairAction::List } => Request::PairList,
         Commands::Pair { action: PairAction::Remove { device } } => Request::PairRemove { device },
+        Commands::Pair { action: PairAction::Grant { device, capability, folder } } => {
+            Request::PairGrant { device, capability, folder: folder.map(|f| absolute(&f)).transpose()? }
+        }
+        Commands::Pair { action: PairAction::Revoke { device, capability, folder } } => {
+            Request::PairRevoke { device, capability, folder: folder.map(|f| absolute(&f)).transpose()? }
+        }
+        Commands::Audit { limit } => Request::Audit { limit },
         Commands::Ticket { hash } => Request::Ticket { hash },
         Commands::Queue { action: None } => Request::Queue,
         Commands::Queue { action: Some(QueueAction::Cancel { id }) } => Request::QueueCancel { id },
@@ -233,6 +260,7 @@ fn describe_event(e: &Event) -> String {
         Event::JobRemoved { job_id } => format!("🗑️  Auftrag {job_id} entfernt"),
         Event::DevicePaired { name, .. } => format!("🔗 Gerät '{name}' gekoppelt"),
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
+        Event::GrantsChanged { node_id } => format!("🔐 Rechte von Gerät {} geändert", short(node_id, 10)),
         Event::Lagged { missed } => format!("⚠️  {missed} Ereignisse verpasst"),
     }
 }
@@ -310,6 +338,7 @@ fn print_response(res: Response) -> ExitCode {
             println!("   Die Dateilisten werden jetzt im Hintergrund abgeglichen. Anzeigen: space-daemon list");
         }
         Response::Devices { devices } => print_devices(&devices),
+        Response::Audit { entries } => print_audit(&entries),
         Response::BrowsePage { items, total, .. } => {
             for i in &items {
                 let wo = i.origin_name.clone().or_else(|| i.origin.as_deref().map(|o| short(o, 10).to_string()));
@@ -430,7 +459,14 @@ fn print_devices(devices: &[DeviceInfo]) {
     for d in devices {
         let sync = d.last_sync_at.map(|t| format!("vor {}", human_duration(now - t))).unwrap_or_else(|| "nie".into());
         println!("{:<20} {:<12} {:<18} {}", d.name, short(&d.node_id, 10), fmt_time(d.paired_at), sync);
+        for g in &d.grants {
+            match &g.folder {
+                Some(f) => println!("    🔐 {:<14} {f}", g.capability),
+                None => println!("    🔐 {}", g.capability),
+            }
+        }
     }
+    println!("\nRechte ändern: space-daemon pair grant|revoke <gerät> <recht> [--folder <ordner>]");
 }
 
 fn print_jobs(jobs: &[PendingJob]) {
@@ -474,6 +510,19 @@ fn print_peers(peers: &[PeerInfo]) {
         println!("{:<12} {:<10} {:<22} {}", short(&p.node_id, 10), status, seen, retry);
     }
     println!("\nDer Status beruht nur auf echten Verbindungen – es werden keine Pings gesendet.");
+}
+
+fn print_audit(entries: &[AuditEntry]) {
+    if entries.is_empty() {
+        println!("Keine Einträge. (Protokolliert werden Zugriffe gekoppelter Geräte außer dem normalen Listenabgleich.)");
+        return;
+    }
+    for e in entries {
+        let icon = if e.allowed { "✅" } else { "⛔" };
+        let target = e.target.as_deref().map(|t| format!(" {t}")).unwrap_or_default();
+        let detail = e.detail.as_deref().map(|d| format!(" – {d}")).unwrap_or_default();
+        println!("{} {icon} {} {}{target}{detail}", fmt_time(e.ts), short(&e.node_id, 10), e.operation);
+    }
 }
 
 fn short(s: &str, n: usize) -> &str {

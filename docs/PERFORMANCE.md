@@ -56,3 +56,15 @@ Schreiblast bleibt bei p99 ≈ 70 µs.
 
 **Maßstab präzisiert:** Blättern/Scrollen < 16 ms, Suche < 100 ms (läuft asynchron und
 blockiert die Oberfläche nicht).
+
+## Review 3 – Rechte & Audit (2026-11-05)
+
+| Hot Path | Erste Version | Nachher | Maßnahme |
+|---|---|---|---|
+| Prüfung lokaler Aufrufer | 0 µs + Vektor-Allokation je Anfrage | **≈ 0 µs** | geschützte Pfade nur für fremde Geräte berechnen |
+| Gerät mit `catalog.read` (Ledger-Abgleich) | 1,7 µs | 1,7 µs | unkritisch, erlaubtes Lesen wird nicht protokolliert |
+| Gerät mit Ordnerrecht (Pfad kanonisieren + Audit) | 36 µs | **6,4 µs** | gleiche Audit-Einträge innerhalb von 60 s nur einmal schreiben |
+
+Das Entdoppeln ist auch eine Sicherheitsmaßnahme: Ohne es könnte ein Gerät mit vielen
+abgelehnten Anfragen das Audit-Log und damit die Platte fluten. Das Log ist zusätzlich auf
+10 000 Einträge begrenzt.

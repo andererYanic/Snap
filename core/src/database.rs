@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -102,6 +102,28 @@ pub struct DeviceInfo {
     pub name: String,
     pub paired_at: i64,
     pub last_sync_at: Option<i64>,
+    /// Gewährte Rechte (nur bei `pair list` befüllt).
+    #[serde(default)]
+    pub grants: Vec<Grant>,
+}
+
+/// Ein gewährtes Recht, optional auf einen Ordner begrenzt.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Grant {
+    pub capability: String,
+    pub folder: Option<String>,
+    pub granted_at: i64,
+}
+
+/// Ein Eintrag im Audit-Log (Operationen fremder Geräte).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditEntry {
+    pub ts: i64,
+    pub node_id: String,
+    pub operation: String,
+    pub target: Option<String>,
+    pub allowed: bool,
+    pub detail: Option<String>,
 }
 
 /// Eine Datei auf einem anderen Gerät (aus dem Ledger).
@@ -127,7 +149,13 @@ pub struct DatabaseManager {
     events: EventBus,
     /// Zwischengespeicherte Gesamtzahlen für `browse`; wird bei jeder Katalogänderung geleert.
     count_cache: Mutex<HashMap<String, u64>>,
+    /// Zuletzt geschriebene Audit-Einträge (Schlüssel → Zeitpunkt) zum Entdoppeln.
+    audit_recent: Mutex<HashMap<String, i64>>,
 }
+
+/// Gleiche Audit-Einträge werden innerhalb dieses Fensters nur einmal geschrieben
+/// (Streaming erzeugt viele gleiche Zugriffe; Angreifer könnten sonst das Log fluten).
+const AUDIT_DEDUP_SECS: i64 = 60;
 
 /// Anzahl der Leseverbindungen.
 const READER_POOL_SIZE: usize = 4;
@@ -268,8 +296,36 @@ impl DatabaseManager {
                 addrs      TEXT    NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+
+            -- Schema 3: Rechte pro Gerät und Audit-Log
+            -- folder = '' bedeutet: ohne Ordnerbeschränkung (nur für Rechte ohne Pfadbezug).
+            CREATE TABLE IF NOT EXISTS device_grants (
+                node_id    TEXT    NOT NULL,
+                capability TEXT    NOT NULL,
+                folder     TEXT    NOT NULL DEFAULT '',
+                granted_at INTEGER NOT NULL,
+                PRIMARY KEY (node_id, capability, folder)
+            );
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id        INTEGER PRIMARY KEY,
+                ts        INTEGER NOT NULL,
+                node_id   TEXT    NOT NULL,
+                operation TEXT    NOT NULL,
+                target    TEXT,
+                allowed   INTEGER NOT NULL,
+                detail    TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
             ",
         )?;
+        if version > 0 && version < 3 {
+            // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
+            conn.execute(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at)
+                 SELECT node_id, 'catalog.read', '', paired_at FROM devices",
+                [],
+            )?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
 
@@ -279,6 +335,7 @@ impl DatabaseManager {
             next_reader: AtomicUsize::new(0),
             events: EventBus::default(),
             count_cache: Mutex::new(HashMap::new()),
+            audit_recent: Mutex::new(HashMap::new()),
         })
     }
 
@@ -1191,6 +1248,11 @@ impl DatabaseManager {
             .execute(params![node_id, name, now_unix()])?
             > 0;
         if inserted {
+            // Standardrecht jeder Kopplung: nur die Dateiliste lesen.
+            conn.prepare_cached(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at) VALUES (?1, 'catalog.read', '', ?2)",
+            )?
+            .execute(params![node_id, now_unix()])?;
             drop(conn);
             self.emit(Event::DevicePaired { node_id: node_id.to_string(), name: name.to_string() });
         } else {
@@ -1214,7 +1276,13 @@ impl DatabaseManager {
             conn.prepare_cached("SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE")?;
         let rows = stmt
             .query_map([], |r| {
-                Ok(DeviceInfo { node_id: r.get(0)?, name: r.get(1)?, paired_at: r.get(2)?, last_sync_at: r.get(3)? })
+                Ok(DeviceInfo {
+                    node_id: r.get(0)?,
+                    name: r.get(1)?,
+                    paired_at: r.get(2)?,
+                    last_sync_at: r.get(3)?,
+                    grants: Vec::new(),
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
@@ -1238,6 +1306,7 @@ impl DatabaseManager {
         let removed = tx.execute("DELETE FROM devices WHERE node_id = ?1", params![node_id])? > 0;
         tx.execute("DELETE FROM ledger_entries WHERE origin = ?1", params![node_id])?;
         tx.execute("DELETE FROM peer_addrs WHERE node_id = ?1", params![node_id])?;
+        tx.execute("DELETE FROM device_grants WHERE node_id = ?1", params![node_id])?;
         tx.commit()?;
         if removed {
             self.emit(Event::DeviceRemoved { node_id: node_id.to_string() });
@@ -1285,6 +1354,117 @@ impl DatabaseManager {
             )
             .optional()?
             .unwrap_or(false))
+    }
+}
+
+impl DatabaseManager {
+    // ------------------------------------------------------------------
+    // Rechte & Audit
+    // ------------------------------------------------------------------
+
+    /// Ordner, in denen ein Gerät ein Recht hat (`""` = ohne Ordnerbeschränkung).
+    /// Leere Liste = Recht nicht gewährt. Gilt nur für gekoppelte Geräte.
+    pub fn grant_folders(&self, node_id: &str, capability: &str) -> Result<Vec<String>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT g.folder FROM device_grants g JOIN devices d ON d.node_id = g.node_id
+             WHERE g.node_id = ?1 AND g.capability = ?2",
+        )?;
+        let rows = stmt.query_map(params![node_id, capability], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
+    pub fn grants_of(&self, node_id: &str) -> Result<Vec<Grant>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT capability, folder, granted_at FROM device_grants WHERE node_id = ?1 ORDER BY capability, folder",
+        )?;
+        let rows = stmt
+            .query_map(params![node_id], |r| {
+                let folder: String = r.get(1)?;
+                Ok(Grant { capability: r.get(0)?, folder: (!folder.is_empty()).then_some(folder), granted_at: r.get(2)? })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Gewährt ein Recht. Gibt `false` zurück, wenn es schon bestand.
+    pub fn add_grant(&self, node_id: &str, capability: &str, folder: Option<&str>) -> Result<bool> {
+        let added = self
+            .conn()
+            .prepare_cached(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at)
+                 SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM devices WHERE node_id = ?1)",
+            )?
+            .execute(params![node_id, capability, folder.unwrap_or(""), now_unix()])?
+            > 0;
+        if added {
+            self.emit(Event::GrantsChanged { node_id: node_id.to_string() });
+        }
+        Ok(added)
+    }
+
+    /// Entzieht ein Recht (`folder = None`: in allen Ordnern). Gibt die Anzahl entfernter zurück.
+    pub fn remove_grant(&self, node_id: &str, capability: &str, folder: Option<&str>) -> Result<usize> {
+        let n = self
+            .conn()
+            .prepare_cached(
+                "DELETE FROM device_grants WHERE node_id = ?1 AND capability = ?2 AND (?3 IS NULL OR folder = ?3)",
+            )?
+            .execute(params![node_id, capability, folder])?;
+        if n > 0 {
+            self.emit(Event::GrantsChanged { node_id: node_id.to_string() });
+        }
+        Ok(n)
+    }
+
+    /// Schreibt einen Audit-Eintrag; hält das Log bei höchstens 10 000 Einträgen.
+    pub fn audit(&self, node_id: &str, operation: &str, target: Option<&str>, allowed: bool, detail: Option<&str>) -> Result<()> {
+        let now = now_unix();
+        {
+            let key = format!("{node_id}|{operation}|{}|{allowed}", target.unwrap_or(""));
+            let mut recent = self.audit_recent.lock().unwrap_or_else(|e| e.into_inner());
+            if recent.get(&key).is_some_and(|t| now - t < AUDIT_DEDUP_SECS) {
+                return Ok(());
+            }
+            if recent.len() >= 4096 {
+                recent.retain(|_, t| now - *t < AUDIT_DEDUP_SECS);
+                if recent.len() >= 4096 {
+                    recent.clear();
+                }
+            }
+            recent.insert(key, now);
+        }
+        let conn = self.conn();
+        conn.prepare_cached(
+            "INSERT INTO audit_log (ts, node_id, operation, target, allowed, detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?
+        .execute(params![now_unix(), node_id, operation, target, allowed, detail])?;
+        let id = conn.last_insert_rowid();
+        if id % 500 == 0 {
+            conn.prepare_cached("DELETE FROM audit_log WHERE id <= ?1")?.execute(params![id - 10_000])?;
+        }
+        Ok(())
+    }
+
+    pub fn audit_log(&self, limit: u32) -> Result<Vec<AuditEntry>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT ts, node_id, operation, target, allowed, detail FROM audit_log ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |r| {
+                Ok(AuditEntry {
+                    ts: r.get(0)?,
+                    node_id: r.get(1)?,
+                    operation: r.get(2)?,
+                    target: r.get(3)?,
+                    allowed: r.get(4)?,
+                    detail: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 }
 

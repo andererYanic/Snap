@@ -26,6 +26,8 @@ Abstriche bei der Sicherheit.
 | 2026-11-05 | **Desktop: Tauri v2 + React · Mobile: React Native (Expo) · gemeinsamer Rust-Core** | Mobile fühlt sich nativer an; Core per FFI eingebettet. Verlangt eine saubere, typisierte API-Schicht im Core. |
 | 2026-11-05 | **Nach Phase 0 zuerst der Drive-Kern** | Baut direkt auf Ledger, Pairing und Warteschlange auf. |
 | 2026-11-05 | Pairing per langem Einmal-Code, signiertes Weiterreichen von Ledger-Einträgen | Siehe README „Pairing & Ledger-Gossip“. |
+| 2026-11-05 | **Rechte pro Gerät**: Standard beim Koppeln nur `catalog.read`; weitere Rechte (`files.read/write/delete` mit Ordner, `pin.request`) ausdrücklich per `pair grant` | Ein kompromittiertes Gerät kann wenig anrichten. Eine einzige Prüfstelle für alle Operationen. |
+| 2026-11-05 | **`admin` (Fernverwaltung) vorerst gesperrt**, später nur mit Bestätigung am Zielgerät | Verhindert, dass ein Gerät sich selbst weitere Rechte oder Kopplungen verschafft. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
 
 ## Sicherheitsprinzipien
@@ -45,8 +47,8 @@ Abstriche bei der Sicherheit.
 
 | Phase | Inhalt | Status |
 |---|---|---|
-| **0a** | Core härten (PR #1), Pairing & Ledger-Gossip (PR #2) | ✅ / in Review |
-| **0b** | **API-Schicht**: typisierte Operationen, die CLI, Desktop (Tauri) und Mobile (FFI) gemeinsam nutzen; Ereignis-Stream für Live-Updates | offen |
+| **0a** | Core härten (PR #1), Pairing & Ledger-Gossip (PR #2) | ✅ |
+| **0b** | **API-Schicht**: Fehlercodes, API-Version, Ereignis-Stream, seitenweiser Katalog, Rechte pro Gerät mit Audit-Log, Modulaufteilung | ✅ PR #3 |
 | **1 – Drive-Kern** | Ordner freigeben und beobachten (Watcher), relative Pfade im Ledger, **Smart-Pinning mit mehreren Quellen** (Server springt ein), kein doppelter Speicher (`TryReference`), Anzeige der Kopien, **Live-Verbindungen** zwischen gekoppelten Geräten | offen |
 | **2 – Explorer-Kern** | Index des lokalen Dateisystems, FTS5-Suche, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
 | **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |

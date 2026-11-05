@@ -176,3 +176,36 @@ fn api_browse_and_events() {
     }
     report("apply mit Abonnent", 5000, t.elapsed());
 }
+
+#[test]
+#[ignore]
+fn auth_checks() {
+    use space_core::api::auth::{authorize, Caller, Capability};
+    let dir = tempfile::tempdir().unwrap();
+    let db = DatabaseManager::open(&dir.path().join("bench.db")).unwrap();
+    let shared = dir.path().join("geteilt/a/b/c");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(shared.join("f.txt"), b"x").unwrap();
+    db.add_device("dev", "Handy").unwrap();
+    let root = std::fs::canonicalize(dir.path().join("geteilt")).unwrap();
+    db.add_grant("dev", "files.read", Some(root.to_str().unwrap())).unwrap();
+    let dev = Caller::Device("dev".into());
+    let prot = vec![dir.path().join("data")];
+
+    let t = Instant::now();
+    for _ in 0..100_000 {
+        authorize(&db, &[], &Caller::Local, Capability::Admin, None, "x").unwrap();
+    }
+    report("authorize lokal", 100_000, t.elapsed());
+    let t = Instant::now();
+    for _ in 0..100_000 {
+        authorize(&db, &[], &dev, Capability::CatalogRead, None, "x").unwrap();
+    }
+    report("authorize Gerät catalog.read", 100_000, t.elapsed());
+    let target = shared.join("f.txt");
+    let t = Instant::now();
+    for _ in 0..10_000 {
+        authorize(&db, &prot, &dev, Capability::FilesRead, Some(&target), "x").unwrap();
+    }
+    report("authorize Gerät files.read + Pfad + Audit", 10_000, t.elapsed());
+}

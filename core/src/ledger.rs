@@ -322,8 +322,10 @@ impl ProtocolHandler for LedgerProtocol {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         let ctx = &self.ctx;
         let peer = conn.remote_id().to_string();
-        if !ctx.db.is_paired(&peer).unwrap_or(false) {
-            tracing::debug!("Ledger-Anfrage von nicht gekoppeltem Node abgelehnt");
+        let caller = crate::api::auth::Caller::Device(peer.clone());
+        let allowed = crate::api::auth::authorize(&ctx.db, &[], &caller, crate::api::auth::Capability::CatalogRead, None, "ledger.sync");
+        if allowed.is_err() {
+            tracing::debug!("Ledger-Anfrage ohne Recht catalog.read abgelehnt");
             conn.close(1u32.into(), b"not paired");
             return Ok(());
         }

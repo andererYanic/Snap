@@ -16,7 +16,7 @@ use crate::secure_fs::{current_uid, ensure_private_dir, load_or_create_secret_ke
 use anyhow::{bail, Context, Result};
 use iroh_blobs::Hash;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use iroh::SecretKey;
@@ -45,6 +45,15 @@ pub struct DaemonInner {
 }
 
 impl DaemonInner {
+    /// Pfade, die über Rechte nie erreichbar sind (Snap-Daten inkl. Schlüssel, Socket).
+    pub(crate) fn protected_paths(&self) -> Vec<PathBuf> {
+        let mut p = vec![self.config.data_dir.clone()];
+        if let Some(dir) = self.config.socket_path.parent() {
+            p.push(dir.to_path_buf());
+        }
+        p
+    }
+
     pub(crate) fn self_id(&self) -> String {
         self.network.node_id().to_string()
     }
@@ -188,7 +197,13 @@ impl Daemon {
 
     /// Verarbeitet eine Anfrage direkt (ohne Socket) – z. B. für Tests oder eingebettete Nutzung.
     pub async fn request(&self, req: Request) -> Response {
-        handle_request(&self.inner, req).await
+        handle_request(&self.inner, &crate::api::auth::Caller::Local, req).await
+    }
+
+    /// Verarbeitet eine Anfrage im Namen eines bestimmten Aufrufers (z. B. eines
+    /// gekoppelten Geräts). Alle Rechte werden geprüft.
+    pub async fn request_as(&self, caller: &crate::api::auth::Caller, req: Request) -> Response {
+        handle_request(&self.inner, caller, req).await
     }
 
     /// Ereignisse abonnieren (eingebettete Nutzung, z. B. Mobile per FFI).
@@ -272,7 +287,8 @@ pub(crate) async fn handle_ipc_connection(inner: &DaemonInner, mut stream: UnixS
     if let Request::Subscribe = envelope.req {
         return stream_events(inner, stream).await;
     }
-    let res = handle_request(inner, envelope.req).await;
+    // Über den Socket sprechen nur Prozesse desselben Benutzers (SO_PEERCRED oben).
+    let res = handle_request(inner, &crate::api::auth::Caller::Local, envelope.req).await;
     write_frame(&mut stream, &res).await
 }
 

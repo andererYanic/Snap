@@ -4,6 +4,7 @@
 //! Unix-Socket (CLI, Desktop), eingebettet per FFI (Mobile) oder direkt in Rust.
 
 
+pub mod auth;
 pub mod devices;
 pub mod error;
 pub mod files;
@@ -18,7 +19,18 @@ use devices::{pair_invite, pair_remove};
 use files::{catalog, delete, publish, ticket};
 use transfer::download;
 
-pub(crate) async fn handle_request(inner: &DaemonInner, req: Request) -> Response {
+pub(crate) async fn handle_request(inner: &DaemonInner, caller: &auth::Caller, req: Request) -> Response {
+    // Einzige Prüfstelle: jede Anfrage braucht das passende Recht (lokal: alle).
+    let cap = auth::required_capability(&req);
+    let op = request_name(&req).unwrap_or("unbekannt");
+    // Geschützte Pfade braucht nur die Prüfung fremder Geräte.
+    let protected = match caller {
+        auth::Caller::Local => Vec::new(),
+        auth::Caller::Device(_) => inner.protected_paths(),
+    };
+    if let Err(e) = auth::authorize(&inner.db, &protected, caller, cap, None, op) {
+        return Response::from_error(&e);
+    }
     let result = match req {
         Request::Publish { path } => publish(inner, &path).await,
         Request::Download { target, output, force } => download(inner, &target, output, force).await,
@@ -45,8 +57,11 @@ pub(crate) async fn handle_request(inner: &DaemonInner, req: Request) -> Respons
                 Err(e) => Err(e),
             }
         }
-        Request::PairList => inner.db.list_devices().map(|devices| Response::Devices { devices }),
         Request::PairRemove { device } => pair_remove(inner, &device),
+        Request::PairList => devices::pair_list(inner),
+        Request::PairGrant { device, capability, folder } => devices::pair_grant(inner, &device, &capability, folder),
+        Request::PairRevoke { device, capability, folder } => devices::pair_revoke(inner, &device, &capability, folder),
+        Request::Audit { limit } => inner.db.audit_log(limit.clamp(1, 1000)).map(|entries| Response::Audit { entries }),
         Request::Ticket { hash } => ticket(inner, &hash),
         Request::Queue => inner.db.list_jobs().map(|jobs| Response::Queue { jobs }),
         Request::QueueCancel { id } => match inner.db.cancel_job(id) {
@@ -88,3 +103,30 @@ pub(crate) fn info(inner: &DaemonInner) -> Result<Response> {
     }))
 }
 
+
+/// Kurzer Name einer Anfrage für das Audit-Log.
+fn request_name(req: &Request) -> Option<&'static str> {
+    Some(match req {
+        Request::Publish { .. } => "publish",
+        Request::Download { .. } => "download",
+        Request::Delete { .. } => "delete",
+        Request::List => "list",
+        Request::Ticket { .. } => "ticket",
+        Request::Queue => "queue",
+        Request::QueueCancel { .. } => "queue.cancel",
+        Request::QueueRetry { .. } => "queue.retry",
+        Request::Peers => "peers",
+        Request::Info => "info",
+        Request::Browse(_) => "browse",
+        Request::Subscribe => "subscribe",
+        Request::Sync => "sync",
+        Request::PairInvite => "pair.invite",
+        Request::PairInviteWait => "pair.invite.wait",
+        Request::PairJoin { .. } => "pair.join",
+        Request::PairList => "pair.list",
+        Request::PairRemove { .. } => "pair.remove",
+        Request::PairGrant { .. } => "pair.grant",
+        Request::PairRevoke { .. } => "pair.revoke",
+        Request::Audit { .. } => "audit",
+    })
+}

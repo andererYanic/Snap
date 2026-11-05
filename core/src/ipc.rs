@@ -4,7 +4,7 @@
 //! Nachrichten über [`MAX_FRAME_LEN`] werden abgelehnt.
 
 use crate::api::error::ErrorCode;
-use crate::database::{DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile};
+use crate::database::{AuditEntry, DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile};
 use anyhow::{bail, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::PathBuf;
@@ -100,6 +100,12 @@ pub enum Request {
     PairList,
     /// Gerät entkoppeln (Name oder Node-ID-Präfix).
     PairRemove { device: String },
+    /// Einem gekoppelten Gerät ein Recht gewähren (z. B. "files.read" für einen Ordner).
+    PairGrant { device: String, capability: String, folder: Option<PathBuf> },
+    /// Ein Recht entziehen (`folder = None`: in allen Ordnern).
+    PairRevoke { device: String, capability: String, folder: Option<PathBuf> },
+    /// Audit-Log der Operationen fremder Geräte (neueste zuerst).
+    Audit { limit: u32 },
     /// Vollständiges Ticket einer freigegebenen Datei abfragen.
     Ticket { hash: String },
     /// Offline-Warteschlange anzeigen.
@@ -161,6 +167,7 @@ pub enum Response {
     PairInvite { code: String, expires_at: i64 },
     Paired { device: DeviceInfo },
     Devices { devices: Vec<DeviceInfo> },
+    Audit { entries: Vec<AuditEntry> },
     BrowsePage {
         items: Vec<CatalogItem>,
         total: u64,
