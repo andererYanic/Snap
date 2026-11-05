@@ -1,8 +1,12 @@
 # Snap – privates P2P-VDFS
 
 Ein Daemon mit CLI zum Teilen von Dateien zwischen eigenen Geräten über
-[Iroh](https://iroh.computer) (QUIC). Der Daemon verträgt Offline-Phasen, sendet keine Pings
-und ermittelt den Peer-Status rein reaktiv.
+[Iroh](https://iroh.computer) (QUIC). Gekoppelte Geräte gleichen ihre Dateilisten automatisch
+ab; Downloads funktionieren per Name, Hash oder Ticket und werden bei Offline-Phasen
+automatisch nachgeholt.
+
+Ziel ist eine umfassende, sichere Alternative zu Dateiexplorer und Google Drive in einer App
+(Desktop und Mobile) – siehe [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Schnellstart
 
@@ -22,14 +26,28 @@ space-daemon download <TICKET> -o ~/foto.jpg   # eigener Zielpfad
 Ist der Peer offline, landet der Auftrag automatisch in der Warteschlange und wird
 nachgeholt, sobald der Peer wieder erreichbar ist.
 
+### Eigene Geräte koppeln
+
+```bash
+# Gerät A
+space-daemon pair invite          # zeigt einen Einmal-Code (10 min gültig) und wartet
+# Gerät B
+space-daemon pair join snap1-…    # koppelt; die Dateilisten werden sofort abgeglichen
+space-daemon list                 # eigene Dateien + Dateien aller gekoppelten Geräte
+space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
+```
+
 ## Befehle
 
 | Befehl | Zweck |
 |---|---|
 | `start` | Daemon starten (STRG+C / SIGTERM beendet sauber) |
 | `publish <datei>` | Datei freigeben, Ticket anzeigen |
-| `download <ticket\|hash> [-o pfad] [--force]` | Herunterladen; ohne `--force` wird nie überschrieben |
-| `list` | Freigegebene Dateien |
+| `download <ticket\|hash\|name> [-o pfad] [--force]` | Herunterladen; ohne `--force` wird nie überschrieben |
+| `list` | Eigene Freigaben und Dateien gekoppelter Geräte (gleicht im Hintergrund ab, wenn der Stand > 5 min alt ist) |
+| `sync` | Sofort mit allen gekoppelten Geräten abgleichen |
+| `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
+| `pair list` / `pair remove <gerät>` | Gekoppelte Geräte anzeigen / entkoppeln |
 | `ticket <hash>` | Vollständiges Ticket einer Freigabe |
 | `delete --hash <h>` / `delete --path <p>` | Freigabe entfernen (sofort nicht mehr abrufbar) |
 | `queue` / `queue retry <id>` / `queue cancel <id>` | Offline-Warteschlange |
@@ -49,7 +67,9 @@ Hashes können abgekürzt werden (mindestens 6 Hexzeichen, müssen eindeutig sei
 
 Weitere Optionen (siehe kommentierte `config.toml`): `retention_days` (Papierkorb, Standard 30),
 `connect_timeout_secs` (10), `bind_port` (fester UDP-Port, z. B. für Docker), `use_relay`
-(`false` = keine n0-Relais/kein n0-DNS, nur direkte Verbindungen; Tickets enthalten dann IP-Adressen).
+(`false` = keine n0-Relais/kein n0-DNS, nur direkte Verbindungen; Tickets enthalten dann IP-Adressen),
+`device_name` (Anzeigename, Standard: Hostname), `sync_interval_hours` (periodischer Abgleich,
+Standard 6, ±30 % Zufall; 0 = aus).
 
 ## Architektur
 
@@ -61,7 +81,9 @@ core/src
   ipc.rs         Protokoll CLI ↔ Daemon (JSON mit Längenpräfix, max. 1 MiB)
   daemon.rs      IPC-Server, Request-Handling, Warteschlangen-Worker, Aufräumen
   network.rs     Iroh-Endpoint, Blob-Store, Zugriffskontrolle, Transfers
-  database.rs    SQLite: files, pending_pins, peer_status
+  pairing.rs     Einmal-Codes, Pairing-Protokoll (snap/pair/1)
+  ledger.rs      signierte Dateilisten, Abgleich per Versionsvektor (snap/ledger/1)
+  database.rs    SQLite: files, pending_pins, peer_status, devices, ledger_entries, peer_addrs
   backoff.rs     30 s → 2 min → 10 min → 1 h, ±20 % Jitter
 ```
 
@@ -77,6 +99,19 @@ core/src
 - **Fehlerarten:**
   - Verbindungsfehler und Abbrüche → Warteschlange
   - Ablehnung durch den Peer (Datei nicht oder nicht mehr freigegeben) und lokale Fehler → sofortige Fehlermeldung bzw. Job-Status „fehlgeschlagen“
+
+### Pairing & Ledger-Gossip
+
+- **Pairing:** `pair invite` erzeugt einen Code aus Node-ID und zufälligem 256-Bit-Token.
+  Das neue Gerät verbindet sich damit; TLS beweist ihm die Identität des Gastgebers, das Token
+  beweist dem Gastgeber die Berechtigung. Der Code gilt einmal, 10 Minuten, nur im Speicher.
+  Falsche Tokens verbrauchen ihn nicht.
+- **Ledger:** Jedes Gerät führt seine eigenen Einträge (Name, Größe, Hash, Löschmarkierung –
+  keine Pfade) und signiert sie mit seinem Node-Schlüssel. Abgleich per Versionsvektor,
+  seitenweise, in beide Richtungen über eine Verbindung. Einträge werden weitergereicht
+  (z. B. über einen Server), bleiben aber dank Signatur fälschungssicher.
+- **Abgleich:** bei `sync`, bei `list` (wenn älter als 5 min), nach dem Koppeln, bei eingehender
+  Verbindung eines gekoppelten Geräts und periodisch.
 
 ### Peer-Status
 
@@ -94,6 +129,9 @@ Unbekannte Node-IDs werden nicht gespeichert.
   abrufbar. Die Frage „besitzt du Hash X?“ (Observe) wird für alles andere abgelehnt.
   `get_many` und `push` sind deaktiviert.
 - **Tickets sind Zugangsschlüssel:** Wer ein Ticket einer freigegebenen Datei hat, kann sie laden.
+- **Pairing ist eng begrenzt:** Ein gekoppeltes Gerät darf nur das Ledger lesen – keine
+  Fernsteuerung, kein Schreibzugriff. Das Ledger bekommen ausschließlich gekoppelte Geräte;
+  `pair remove` sperrt sofort. Ein manipulierter Eintrag verwirft die gesamte Seite.
 - **IPC:**
   - Der Socket liegt in einem Ordner mit den Rechten 0700, der Socket selbst hat 0600.
   - Zusätzlich muss jede Verbindung von derselben Benutzer-ID kommen (`SO_PEERCRED`).
@@ -116,17 +154,14 @@ Unbekannte Node-IDs werden nicht gespeichert.
 cargo test
 ```
 
-Die Integrationstests (`core/tests/two_nodes.rs`) starten mehrere echte Daemons auf 127.0.0.1,
-ohne Internet. Sie prüfen:
-- die Zugriffskontrolle,
-- den Ablauf „Peer offline → Warteschlange → Peer zurück → Download“,
-- das Aufwecken des Workers durch eingehende Verbindungen.
+Die Integrationstests (`core/tests/`) starten mehrere echte Daemons auf 127.0.0.1, ohne Internet.
+Sie prüfen:
+- Zugriffskontrolle und den Ablauf „Peer offline → Warteschlange → Peer zurück → Download“,
+- Pairing, Abgleich in beide Richtungen, Weiterreichen über einen Knotenpunkt,
+- Angriffsfälle: fremde und entkoppelte Geräte, ersetzte, manipulierte und mehrfach genutzte Codes.
 
 ## Roadmap
 
-1. **Ledger-Gossip:** automatischer Austausch der Dateilisten zwischen gekoppelten Geräten
-   (Pairing, eigenes ALPN, Pull statt Push).
-2. Tauri-GUI, Android.
-3. Eigenes Iroh-Relais (Docker), Erweiterung von `peer_status` um `connection_type`.
+Siehe [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 Benötigt Rust ≥ 1.91 (Vorgabe von Iroh 1.4).
