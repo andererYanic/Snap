@@ -3,7 +3,6 @@
 //! Der Wire-Vertrag (`ipc::Request`/`ipc::Response`) ist für alle Oberflächen gleich:
 //! Unix-Socket (CLI, Desktop), eingebettet per FFI (Mobile) oder direkt in Rust.
 
-
 pub mod auth;
 pub mod devices;
 pub mod error;
@@ -11,16 +10,20 @@ pub mod files;
 pub mod shares;
 pub mod transfer;
 
-use crate::ipc::{DaemonInfo, Request, Response};
-use anyhow::Result;
-use std::time::Duration;
 use crate::daemon::*;
+use crate::ipc::{DaemonInfo, Request, Response};
 use crate::sync::{spawn_sync_with, sync_all};
+use anyhow::Result;
 use devices::{pair_invite, pair_remove};
 use files::{catalog, delete, publish, ticket};
+use std::time::Duration;
 use transfer::download;
 
-pub(crate) async fn handle_request(inner: &std::sync::Arc<DaemonInner>, caller: &auth::Caller, req: Request) -> Response {
+pub(crate) async fn handle_request(
+    inner: &std::sync::Arc<DaemonInner>,
+    caller: &auth::Caller,
+    req: Request,
+) -> Response {
     // Einzige Prüfstelle: jede Anfrage braucht das passende Recht (lokal: alle).
     let cap = auth::required_capability(&req);
     let op = request_name(&req).unwrap_or("unbekannt");
@@ -39,15 +42,10 @@ pub(crate) async fn handle_request(inner: &std::sync::Arc<DaemonInner>, caller: 
         Request::List => catalog(inner),
         Request::Sync => Ok(Response::SyncReport { results: sync_all(inner).await }),
         Request::PairInvite => pair_invite(inner).await,
-        Request::PairInviteWait => inner
-            .pairing
-            .state
-            .wait_for_join()
-            .await
-            .map(|device| {
-                spawn_sync_with(inner, &device.node_id);
-                Response::Paired { device }
-            }),
+        Request::PairInviteWait => inner.pairing.state.wait_for_join().await.map(|device| {
+            spawn_sync_with(inner, &device.node_id);
+            Response::Paired { device }
+        }),
         Request::PairJoin { code } => {
             let timeout = Duration::from_secs(inner.config.connect_timeout_secs);
             match crate::pairing::join(&inner.pairing, &code, timeout).await {
@@ -107,7 +105,6 @@ pub(crate) fn info(inner: &DaemonInner) -> Result<Response> {
         paired_devices: inner.db.list_devices()?.len() as u64,
     }))
 }
-
 
 /// Kurzer Name einer Anfrage für das Audit-Log.
 fn request_name(req: &Request) -> Option<&'static str> {

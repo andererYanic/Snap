@@ -147,9 +147,7 @@ impl LedgerEntry {
             .ok()
             .and_then(|b| <[u8; 64]>::try_from(b.as_slice()).ok())
             .context("ungültiges Signaturformat")?;
-        origin
-            .verify(&self.signing_bytes(), &Signature::from_bytes(&sig_bytes))
-            .context("Signatur ungültig")?;
+        origin.verify(&self.signing_bytes(), &Signature::from_bytes(&sig_bytes)).context("Signatur ungültig")?;
         Ok(())
     }
 }
@@ -225,12 +223,16 @@ impl std::fmt::Display for SyncError {
 pub async fn sync_with(ctx: &LedgerCtx, peer: EndpointId, connect_timeout: Duration) -> Result<PullStats, SyncError> {
     let peer_str = peer.to_string();
     let hints = ctx.db.addr_hints(&peer_str).unwrap_or_default();
-    let conn = match tokio::time::timeout(connect_timeout, ctx.endpoint.connect(endpoint_addr(peer, &hints), LEDGER_ALPN)).await
-    {
-        Ok(Ok(c)) => c,
-        Ok(Err(e)) => return Err(SyncError::Unreachable(e.to_string())),
-        Err(_) => return Err(SyncError::Unreachable(format!("Zeitüberschreitung nach {} s", connect_timeout.as_secs()))),
-    };
+    let conn =
+        match tokio::time::timeout(connect_timeout, ctx.endpoint.connect(endpoint_addr(peer, &hints), LEDGER_ALPN))
+            .await
+        {
+            Ok(Ok(c)) => c,
+            Ok(Err(e)) => return Err(SyncError::Unreachable(e.to_string())),
+            Err(_) => {
+                return Err(SyncError::Unreachable(format!("Zeitüberschreitung nach {} s", connect_timeout.as_secs())))
+            }
+        };
 
     let stats = pull_on(ctx, &conn, &peer_str).await.map_err(SyncError::Failed);
     if stats.is_ok() {
@@ -320,13 +322,9 @@ pub fn verify_all(entries: &[LedgerEntry]) -> Result<()> {
     }
     let chunk = entries.len().div_ceil(threads).max(MIN_PER_THREAD);
     std::thread::scope(|scope| {
-        let handles: Vec<_> = entries
-            .chunks(chunk)
-            .map(|c| scope.spawn(move || c.iter().try_for_each(LedgerEntry::verify)))
-            .collect();
-        handles
-            .into_iter()
-            .try_for_each(|h| h.join().unwrap_or_else(|_| bail!("Prüfung abgebrochen")))
+        let handles: Vec<_> =
+            entries.chunks(chunk).map(|c| scope.spawn(move || c.iter().try_for_each(LedgerEntry::verify))).collect();
+        handles.into_iter().try_for_each(|h| h.join().unwrap_or_else(|_| bail!("Prüfung abgebrochen")))
     })
 }
 
@@ -355,10 +353,11 @@ async fn serve(
     peer: &str,
 ) -> Result<()> {
     loop {
-        let req: SyncRequest = match tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_REQUEST_FRAME)).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_)) | Err(_) => break, // Ende des Streams oder Zeitüberschreitung
-        };
+        let req: SyncRequest =
+            match tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_REQUEST_FRAME)).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(_)) | Err(_) => break, // Ende des Streams oder Zeitüberschreitung
+            };
         if req.version != PROTOCOL_VERSION {
             bail!("Nicht unterstützte Protokollversion {}", req.version);
         }
@@ -373,12 +372,8 @@ async fn serve(
             .context("Abgleich-Task abgebrochen")??;
         let more = entries.len() > PAGE_SIZE;
         entries.truncate(PAGE_SIZE);
-        let resp = SyncResponse {
-            entries,
-            more,
-            addrs: direct_addrs(&ctx.endpoint),
-            device_name: ctx.device_name.clone(),
-        };
+        let resp =
+            SyncResponse { entries, more, addrs: direct_addrs(&ctx.endpoint), device_name: ctx.device_name.clone() };
         write_frame_max(&mut send, &resp, MAX_RESPONSE_FRAME).await?;
     }
     send.finish()?;
@@ -413,7 +408,14 @@ impl ProtocolHandler for LedgerProtocol {
         let ctx = &self.ctx;
         let peer = conn.remote_id().to_string();
         let caller = crate::api::auth::Caller::Device(peer.clone());
-        let allowed = crate::api::auth::authorize(&ctx.db, &[], &caller, crate::api::auth::Capability::CatalogRead, None, "ledger.sync");
+        let allowed = crate::api::auth::authorize(
+            &ctx.db,
+            &[],
+            &caller,
+            crate::api::auth::Capability::CatalogRead,
+            None,
+            "ledger.sync",
+        );
         if allowed.is_err() {
             tracing::debug!("Ledger-Anfrage ohne Recht catalog.read abgelehnt");
             conn.close(1u32.into(), b"not paired");
@@ -434,7 +436,11 @@ impl ProtocolHandler for LedgerProtocol {
         // 2. Über dieselbe Verbindung die Neuigkeiten des Initiators holen
         match pull_on(ctx, &conn, &peer).await {
             Ok(stats) if stats.new_entries > 0 => {
-                tracing::info!("Ledger: {} neue Einträge von '{}'", stats.new_entries, stats.device_name.unwrap_or_default());
+                tracing::info!(
+                    "Ledger: {} neue Einträge von '{}'",
+                    stats.new_entries,
+                    stats.device_name.unwrap_or_default()
+                );
             }
             Ok(_) => {}
             Err(e) => tracing::debug!("Rück-Abgleich fehlgeschlagen: {e:#}"),

@@ -1,14 +1,14 @@
 //! Operationen auf dem Dateikatalog: freigeben, löschen, Tickets, Katalog.
 
+use crate::api_bail;
+use crate::daemon::*;
 use crate::database::{now_unix, DatabaseManager};
 use crate::ipc::Response;
+use crate::sync::spawn_sync_all;
 use anyhow::{Context, Result};
 use iroh_blobs::Hash;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use crate::sync::spawn_sync_all;
-use crate::api_bail;
-use crate::daemon::*;
 
 // ----------------------------------------------------------------------
 // Publish / Ticket / Delete
@@ -18,22 +18,15 @@ pub(crate) async fn publish(inner: &DaemonInner, path: &Path) -> Result<Response
     if !path.is_absolute() {
         api_bail!(InvalidInput, "Pfad muss absolut sein: {}", path.display());
     }
-    let canon = tokio::fs::canonicalize(path)
-        .await
-        .with_context(|| format!("Datei nicht gefunden: {}", path.display()))?;
+    let canon =
+        tokio::fs::canonicalize(path).await.with_context(|| format!("Datei nicht gefunden: {}", path.display()))?;
     let meta = tokio::fs::metadata(&canon).await?;
     if !meta.is_file() {
         api_bail!(InvalidInput, "Nur einzelne Dateien können freigegeben werden: {}", canon.display());
     }
-    let path_str = canon
-        .to_str()
-        .with_context(|| format!("Pfad ist kein gültiges UTF-8: {}", canon.display()))?
-        .to_string();
-    let file_name = canon
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unbenannt")
-        .to_string();
+    let path_str =
+        canon.to_str().with_context(|| format!("Pfad ist kein gültiges UTF-8: {}", canon.display()))?.to_string();
+    let file_name = canon.file_name().and_then(|n| n.to_str()).unwrap_or("unbenannt").to_string();
 
     let (hash, ticket) = inner
         .network
@@ -59,10 +52,8 @@ pub(crate) fn resolve_unique_hash(db: &DatabaseManager, prefix: &str) -> Result<
         0 => api_bail!(NotFound, "Keine freigegebene Datei mit Hash '{prefix}' im lokalen Katalog."),
         1 => Ok(matches.into_iter().next().unwrap()),
         _ => {
-            let list: Vec<String> = matches
-                .iter()
-                .map(|f| format!("  {}  {}", &f.blake3_hash[..16], f.file_name))
-                .collect();
+            let list: Vec<String> =
+                matches.iter().map(|f| format!("  {}  {}", &f.blake3_hash[..16], f.file_name)).collect();
             api_bail!(Ambiguous, "Hash '{prefix}' ist mehrdeutig – bitte mehr Zeichen angeben:\n{}", list.join("\n"))
         }
     }

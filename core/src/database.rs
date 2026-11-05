@@ -3,9 +3,9 @@
 use crate::events::{Event, EventBus};
 use crate::ledger::LedgerEntry;
 use anyhow::{bail, Result};
-use std::collections::HashMap;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -61,11 +61,23 @@ pub struct KnownShareFile {
 /// Änderung aus einem Scan.
 #[derive(Clone, Debug)]
 pub enum ScanChange {
-    Upsert { rel_path: String, abs_path: String, name: String, hash: String, size: u64, mtime: i64 },
-    Delete { file_id: i64 },
+    Upsert {
+        rel_path: String,
+        abs_path: String,
+        name: String,
+        hash: String,
+        size: u64,
+        mtime: i64,
+    },
+    Delete {
+        file_id: i64,
+    },
     /// Inhalt unverändert (gleicher Hash), nur die Änderungszeit ist neu –
     /// kein neuer Ledger-Eintrag, kein Abgleichverkehr.
-    Touch { file_id: i64, mtime: i64 },
+    Touch {
+        file_id: i64,
+        mtime: i64,
+    },
 }
 
 /// Wer einen Blob abrufen darf.
@@ -557,9 +569,7 @@ impl DatabaseManager {
 "SELECT f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at, s.name, f.rel_path
              FROM files f LEFT JOIN shares s ON s.id = f.share_id WHERE f.deleted_at IS NULL ORDER BY f.file_name COLLATE NOCASE",
         )?;
-        let rows = stmt
-            .query_map([], Self::map_file)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt.query_map([], Self::map_file)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -582,7 +592,7 @@ impl DatabaseManager {
         let prefix = normalize_hash_prefix(prefix)?;
         let conn = self.read();
         let mut stmt = conn.prepare_cached(
-"SELECT f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at, s.name, f.rel_path
+            "SELECT f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at, s.name, f.rel_path
              FROM files f LEFT JOIN shares s ON s.id = f.share_id
              WHERE f.deleted_at IS NULL AND substr(f.blake3_hash, 1, ?2) = ?1 ORDER BY f.created_at",
         )?;
@@ -606,8 +616,7 @@ impl DatabaseManager {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let ids: Vec<i64> = {
-            let mut stmt =
-                tx.prepare_cached(&format!("SELECT id FROM files WHERE {cond} AND deleted_at IS NULL"))?;
+            let mut stmt = tx.prepare_cached(&format!("SELECT id FROM files WHERE {cond} AND deleted_at IS NULL"))?;
             let rows = stmt.query_map(params![value], |r| r.get(0))?.collect::<rusqlite::Result<Vec<i64>>>()?;
             rows
         };
@@ -632,21 +641,14 @@ impl DatabaseManager {
             let mut stmt = tx.prepare_cached(
                 "SELECT DISTINCT blake3_hash FROM files WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
             )?;
-            let rows = stmt
-                .query_map(params![cutoff], |r| r.get(0))?
-                .collect::<rusqlite::Result<Vec<String>>>()?;
+            let rows = stmt.query_map(params![cutoff], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
             rows
         };
-        tx.execute(
-            "DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
-            params![cutoff],
-        )?;
+        tx.execute("DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at <= ?1", params![cutoff])?;
         let mut orphaned = Vec::new();
         for hash in candidates {
             let still_used: bool = tx
-                .query_row("SELECT 1 FROM files WHERE blake3_hash = ?1 LIMIT 1", params![hash], |_| {
-                    Ok(true)
-                })
+                .query_row("SELECT 1 FROM files WHERE blake3_hash = ?1 LIMIT 1", params![hash], |_| Ok(true))
                 .optional()?
                 .unwrap_or(false);
             if !still_used {
@@ -659,9 +661,7 @@ impl DatabaseManager {
 
     pub fn count_shared(&self) -> Result<u64> {
         let conn = self.read();
-        Ok(conn.query_row("SELECT COUNT(*) FROM files WHERE deleted_at IS NULL", [], |r| {
-            r.get::<_, i64>(0)
-        })? as u64)
+        Ok(conn.query_row("SELECT COUNT(*) FROM files WHERE deleted_at IS NULL", [], |r| r.get::<_, i64>(0))? as u64)
     }
 
     // ------------------------------------------------------------------
@@ -740,9 +740,7 @@ impl DatabaseManager {
     pub fn list_jobs(&self) -> Result<Vec<PendingJob>> {
         let conn = self.read();
         let mut stmt = conn.prepare_cached(&format!("{} ORDER BY j.id", Self::JOB_SELECT))?;
-        let rows = stmt
-            .query_map([], Self::map_job)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt.query_map([], Self::map_job)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -754,9 +752,7 @@ impl DatabaseManager {
              ORDER BY j.id",
             Self::JOB_SELECT
         ))?;
-        let rows = stmt
-            .query_map(params![now], Self::map_job)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt.query_map(params![now], Self::map_job)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -784,9 +780,8 @@ impl DatabaseManager {
 
     pub fn count_waiting_jobs(&self) -> Result<u64> {
         let conn = self.read();
-        Ok(conn.query_row("SELECT COUNT(*) FROM pending_pins WHERE state = 'waiting'", [], |r| {
-            r.get::<_, i64>(0)
-        })? as u64)
+        Ok(conn.query_row("SELECT COUNT(*) FROM pending_pins WHERE state = 'waiting'", [], |r| r.get::<_, i64>(0))?
+            as u64)
     }
 
     pub fn complete_job(&self, id: i64) -> Result<()> {
@@ -827,17 +822,13 @@ impl DatabaseManager {
     pub fn retry_job(&self, id: i64) -> Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let peer: Option<String> = tx
-            .query_row("SELECT peer_id FROM pending_pins WHERE id = ?1", params![id], |r| r.get(0))
-            .optional()?;
+        let peer: Option<String> =
+            tx.query_row("SELECT peer_id FROM pending_pins WHERE id = ?1", params![id], |r| r.get(0)).optional()?;
         let Some(peer) = peer else {
             return Ok(false);
         };
         tx.execute("UPDATE pending_pins SET state = 'waiting' WHERE id = ?1", params![id])?;
-        tx.execute(
-            "UPDATE peer_status SET next_retry_at = NULL WHERE node_id = ?1",
-            params![peer],
-        )?;
+        tx.execute("UPDATE peer_status SET next_retry_at = NULL WHERE node_id = ?1", params![peer])?;
         tx.commit()?;
         Ok(true)
     }
@@ -896,10 +887,7 @@ impl DatabaseManager {
         if !escalate {
             if let Some((_, Some(next), _)) = existing {
                 if next > now {
-                    tx.execute(
-                        "UPDATE peer_status SET status = 'offline' WHERE node_id = ?1",
-                        params![node_id],
-                    )?;
+                    tx.execute("UPDATE peer_status SET status = 'offline' WHERE node_id = ?1", params![node_id])?;
                     tx.commit()?;
                     self.emit_status_change(node_id, prev.as_deref(), "offline");
                     return Ok(next);
@@ -1192,10 +1180,8 @@ impl DatabaseManager {
     pub fn find_remote_by_hash_prefix(&self, prefix: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
         let prefix = normalize_hash_prefix(prefix)?;
         let conn = self.read();
-        let mut stmt = conn.prepare_cached(&format!(
-            "{} AND substr(l.hash, 1, ?3) = ?2 ORDER BY l.created_at",
-            Self::REMOTE_SELECT
-        ))?;
+        let mut stmt = conn
+            .prepare_cached(&format!("{} AND substr(l.hash, 1, ?3) = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
         let rows = stmt
             .query_map(params![self_origin, prefix, prefix.len() as i64], Self::map_remote)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1204,8 +1190,10 @@ impl DatabaseManager {
 
     pub fn find_remote_by_name(&self, name: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
         let conn = self.read();
-        let mut stmt = conn.prepare_cached(&format!("{} AND l.name = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
-        let rows = stmt.query_map(params![self_origin, name], Self::map_remote)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut stmt =
+            conn.prepare_cached(&format!("{} AND l.name = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
+        let rows =
+            stmt.query_map(params![self_origin, name], Self::map_remote)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -1337,7 +1325,8 @@ impl DatabaseManager {
                          WHERE deleted = 0 AND origin != ?2 AND (?3 IS NULL OR origin = ?3)
                            AND (?1 IS NULL OR name LIKE ?1 ESCAPE '\\')",
                     )?
-                    .query_row(params![pattern, self_origin, origin], |r| r.get::<_, i64>(0))? as u64;
+                    .query_row(params![pattern, self_origin, origin], |r| r.get::<_, i64>(0))?
+                    as u64;
             }
         }
         drop(conn);
@@ -1382,7 +1371,9 @@ impl DatabaseManager {
     pub fn add_device(&self, node_id: &str, name: &str) -> Result<()> {
         let conn = self.conn();
         let inserted = conn
-            .prepare_cached("INSERT INTO devices (node_id, name, paired_at) VALUES (?1, ?2, ?3) ON CONFLICT(node_id) DO NOTHING")?
+            .prepare_cached(
+                "INSERT INTO devices (node_id, name, paired_at) VALUES (?1, ?2, ?3) ON CONFLICT(node_id) DO NOTHING",
+            )?
             .execute(params![node_id, name, now_unix()])?
             > 0;
         if inserted {
@@ -1416,8 +1407,9 @@ impl DatabaseManager {
 
     pub fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
         let conn = self.read();
-        let mut stmt =
-            conn.prepare_cached("SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE",
+        )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(DeviceInfo {
@@ -1460,15 +1452,13 @@ impl DatabaseManager {
     }
 
     pub fn set_last_sync(&self, node_id: &str) -> Result<()> {
-        self.conn()
-            .execute("UPDATE devices SET last_sync_at = ?2 WHERE node_id = ?1", params![node_id, now_unix()])?;
+        self.conn().execute("UPDATE devices SET last_sync_at = ?2 WHERE node_id = ?1", params![node_id, now_unix()])?;
         Ok(())
     }
 
     /// Speichert direkte Adress-Hinweise (max. 16, nur gültige Socket-Adressen).
     pub fn set_addr_hints(&self, node_id: &str, addrs: &[String]) -> Result<()> {
-        let valid: Vec<&String> =
-            addrs.iter().filter(|a| a.parse::<std::net::SocketAddr>().is_ok()).take(16).collect();
+        let valid: Vec<&String> = addrs.iter().filter(|a| a.parse::<std::net::SocketAddr>().is_ok()).take(16).collect();
         if valid.is_empty() {
             return Ok(());
         }
@@ -1514,7 +1504,8 @@ impl DatabaseManager {
             "SELECT g.folder FROM device_grants g JOIN devices d ON d.node_id = g.node_id
              WHERE g.node_id = ?1 AND g.capability = ?2",
         )?;
-        let rows = stmt.query_map(params![node_id, capability], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        let rows =
+            stmt.query_map(params![node_id, capability], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(rows)
     }
 
@@ -1526,7 +1517,11 @@ impl DatabaseManager {
         let rows = stmt
             .query_map(params![node_id], |r| {
                 let folder: String = r.get(1)?;
-                Ok(Grant { capability: r.get(0)?, folder: (!folder.is_empty()).then_some(folder), granted_at: r.get(2)? })
+                Ok(Grant {
+                    capability: r.get(0)?,
+                    folder: (!folder.is_empty()).then_some(folder),
+                    granted_at: r.get(2)?,
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
@@ -1563,7 +1558,14 @@ impl DatabaseManager {
     }
 
     /// Schreibt einen Audit-Eintrag; hält das Log bei höchstens 10 000 Einträgen.
-    pub fn audit(&self, node_id: &str, operation: &str, target: Option<&str>, allowed: bool, detail: Option<&str>) -> Result<()> {
+    pub fn audit(
+        &self,
+        node_id: &str,
+        operation: &str,
+        target: Option<&str>,
+        allowed: bool,
+        detail: Option<&str>,
+    ) -> Result<()> {
         let now = now_unix();
         {
             let key = format!("{node_id}|{operation}|{}|{allowed}", target.unwrap_or(""));
@@ -1632,7 +1634,10 @@ impl DatabaseManager {
             )
             .optional()?;
         if let Some(other) = exists {
-            crate::api_bail!(AlreadyExists, "Überschneidet sich mit der bestehenden Freigabe '{other}' (gleicher Name oder Ordner ineinander)");
+            crate::api_bail!(
+                AlreadyExists,
+                "Überschneidet sich mit der bestehenden Freigabe '{other}' (gleicher Name oder Ordner ineinander)"
+            );
         }
         tx.execute(
             "INSERT INTO shares (name, root, auto_grant, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -1650,7 +1655,15 @@ impl DatabaseManager {
         for node in grant_to {
             self.emit(Event::GrantsChanged { node_id: node.clone() });
         }
-        Ok(ShareInfo { id, name: name.into(), root: root.into(), auto_grant, created_at: now, file_count: 0, total_size: 0 })
+        Ok(ShareInfo {
+            id,
+            name: name.into(),
+            root: root.into(),
+            auto_grant,
+            created_at: now,
+            file_count: 0,
+            total_size: 0,
+        })
     }
 
     pub fn list_shares(&self) -> Result<Vec<ShareInfo>> {
@@ -1688,7 +1701,12 @@ impl DatabaseManager {
             .query_map(params![share_id], |r| {
                 Ok((
                     r.get::<_, String>(1)?,
-                    KnownShareFile { id: r.get(0)?, hash: r.get(2)?, size: r.get::<_, i64>(3)? as u64, mtime: r.get(4)? },
+                    KnownShareFile {
+                        id: r.get(0)?,
+                        hash: r.get(2)?,
+                        size: r.get::<_, i64>(3)? as u64,
+                        mtime: r.get(4)?,
+                    },
                 ))
             })?
             .collect::<rusqlite::Result<HashMap<_, _>>>()?;
@@ -1710,11 +1728,10 @@ impl DatabaseManager {
         let now = now_unix();
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let mut seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(seq), 0) FROM ledger_entries WHERE origin = ?1",
-            params![origin],
-            |r| r.get(0),
-        )?;
+        let mut seq: i64 =
+            tx.query_row("SELECT COALESCE(MAX(seq), 0) FROM ledger_entries WHERE origin = ?1", params![origin], |r| {
+                r.get(0)
+            })?;
         let mut applied = 0;
         for change in changes {
             let (id, hash, name, size, created_at, rel_path, deleted) = match change {
@@ -1747,7 +1764,8 @@ impl DatabaseManager {
                         .query_row(params![file_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
                         .optional()?;
                     let Some((hash, name, size, created_at, rel_path)) = row else { continue };
-                    tx.prepare_cached("UPDATE files SET deleted_at = ?2 WHERE id = ?1")?.execute(params![file_id, now])?;
+                    tx.prepare_cached("UPDATE files SET deleted_at = ?2 WHERE id = ?1")?
+                        .execute(params![file_id, now])?;
                     (*file_id, hash, name, size as u64, created_at, rel_path, true)
                 }
             };
@@ -1788,7 +1806,10 @@ impl DatabaseManager {
             let rows = stmt.query_map(params![share_id], |r| r.get(0))?.collect::<rusqlite::Result<Vec<i64>>>()?;
             rows
         };
-        tx.execute("UPDATE files SET deleted_at = ?2, share_id = NULL WHERE share_id = ?1 AND deleted_at IS NULL", params![share_id, now])?;
+        tx.execute(
+            "UPDATE files SET deleted_at = ?2, share_id = NULL WHERE share_id = ?1 AND deleted_at IS NULL",
+            params![share_id, now],
+        )?;
         tx.execute("DELETE FROM device_grants WHERE capability = 'files.read' AND folder = ?1", params![root])?;
         tx.execute("DELETE FROM shares WHERE id = ?1", params![share_id])?;
         tx.commit()?;
@@ -2053,8 +2074,22 @@ mod tests {
                 "me",
                 &share,
                 &[
-                    ScanChange::Upsert { rel_path: "2024/a.jpg".into(), abs_path: "/home/u/Fotos/2024/a.jpg".into(), name: "a.jpg".into(), hash: H1.into(), size: 3, mtime: 10 },
-                    ScanChange::Upsert { rel_path: "b.jpg".into(), abs_path: "/home/u/Fotos/b.jpg".into(), name: "b.jpg".into(), hash: H2.into(), size: 4, mtime: 11 },
+                    ScanChange::Upsert {
+                        rel_path: "2024/a.jpg".into(),
+                        abs_path: "/home/u/Fotos/2024/a.jpg".into(),
+                        name: "a.jpg".into(),
+                        hash: H1.into(),
+                        size: 3,
+                        mtime: 10,
+                    },
+                    ScanChange::Upsert {
+                        rel_path: "b.jpg".into(),
+                        abs_path: "/home/u/Fotos/b.jpg".into(),
+                        name: "b.jpg".into(),
+                        hash: H2.into(),
+                        size: 4,
+                        mtime: 11,
+                    },
                 ],
                 &sign,
             )

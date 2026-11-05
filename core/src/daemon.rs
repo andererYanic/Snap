@@ -5,21 +5,21 @@ use crate::api::handle_request;
 use crate::sync::run_periodic_sync;
 use crate::worker::run_pending_pin_worker;
 
+use crate::api::error::ErrorCode;
 use crate::config::Config;
 use crate::database::DatabaseManager;
-use crate::api::error::ErrorCode;
-use crate::ipc::{Envelope, API_VERSION, read_frame, write_frame, Request, Response};
+use crate::ipc::{read_frame, write_frame, Envelope, Request, Response, API_VERSION};
 use crate::ledger::{LedgerCtx, LedgerEntry, LedgerProtocol, LEDGER_ALPN};
 use crate::network::{AccessCheck, ConnectHook, NetworkOptions, P2pNetwork};
 use crate::pairing::{PairingCtx, PairingProtocol, PairingState, PAIR_ALPN};
 use crate::secure_fs::{current_uid, ensure_private_dir, load_or_create_secret_key};
 use anyhow::{bail, Context, Result};
+use iroh::SecretKey;
 use iroh_blobs::Hash;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use iroh::SecretKey;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -63,7 +63,12 @@ impl DaemonInner {
     }
 
     /// Schreibt einen eigenen, signierten Ledger-Eintrag für eine Datei.
-    pub(crate) fn record_entry(&self, file_id: i64, record: &crate::database::FileRecord, deleted: bool) -> Result<LedgerEntry> {
+    pub(crate) fn record_entry(
+        &self,
+        file_id: i64,
+        record: &crate::database::FileRecord,
+        deleted: bool,
+    ) -> Result<LedgerEntry> {
         let key = self.secret_key.clone();
         self.db.record_own_entry(
             &self.self_id(),
@@ -101,11 +106,7 @@ impl Daemon {
 
     async fn start_inner(config: Config, loopback_only: bool) -> Result<Self> {
         ensure_private_dir(&config.data_dir)?;
-        let socket_dir = config
-            .socket_path
-            .parent()
-            .context("Ungültiger Socket-Pfad")?
-            .to_path_buf();
+        let socket_dir = config.socket_path.parent().context("Ungültiger Socket-Pfad")?.to_path_buf();
         ensure_private_dir(&socket_dir)?;
         prepare_socket_path(&config.socket_path).await?;
 
@@ -342,7 +343,6 @@ async fn stream_events(inner: &DaemonInner, mut stream: UnixStream) -> Result<()
     }
 }
 
-
 // ----------------------------------------------------------------------
 // Katalog, Ledger-Abgleich & Pairing
 // ----------------------------------------------------------------------
@@ -358,7 +358,6 @@ pub(crate) fn backfill_ledger(inner: &DaemonInner) -> Result<()> {
     }
     Ok(())
 }
-
 
 // ----------------------------------------------------------------------
 // Aufräumen (Papierkorb → Blob-Store)
@@ -386,7 +385,6 @@ pub(crate) async fn prune_once(inner: &DaemonInner) -> Result<()> {
     }
     Ok(())
 }
-
 
 /// Startet Beobachtung und Abgleich aller Freigaben (Änderungen während der Daemon
 /// aus war, werden so nachgeholt).

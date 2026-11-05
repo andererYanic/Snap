@@ -4,7 +4,7 @@
 //! Nachrichten über [`MAX_FRAME_LEN`] werden abgelehnt.
 
 use crate::api::error::ErrorCode;
-use crate::database::{AuditEntry, ShareInfo, DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile};
+use crate::database::{AuditEntry, DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile, ShareInfo};
 use anyhow::{bail, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::PathBuf;
@@ -88,7 +88,9 @@ pub struct CatalogItem {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Request {
     /// Datei freigeben. `path` muss absolut sein (die CLI löst relative Pfade auf).
-    Publish { path: PathBuf },
+    Publish {
+        path: PathBuf,
+    },
     /// Datei herunterladen. `target` ist ein Ticket oder ein Hash(-Präfix) aus dem Katalog.
     Download {
         target: String,
@@ -110,31 +112,59 @@ pub enum Request {
     /// Warten, bis die aktuelle Einladung angenommen wurde (oder abläuft).
     PairInviteWait,
     /// Mit einem Einladungscode koppeln.
-    PairJoin { code: String },
+    PairJoin {
+        code: String,
+    },
     /// Gekoppelte Geräte auflisten.
     PairList,
     /// Gerät entkoppeln (Name oder Node-ID-Präfix).
-    PairRemove { device: String },
+    PairRemove {
+        device: String,
+    },
     /// Einem gekoppelten Gerät ein Recht gewähren (z. B. "files.read" für einen Ordner).
-    PairGrant { device: String, capability: String, folder: Option<PathBuf> },
+    PairGrant {
+        device: String,
+        capability: String,
+        folder: Option<PathBuf>,
+    },
     /// Ein Recht entziehen (`folder = None`: in allen Ordnern).
-    PairRevoke { device: String, capability: String, folder: Option<PathBuf> },
+    PairRevoke {
+        device: String,
+        capability: String,
+        folder: Option<PathBuf>,
+    },
     /// Audit-Log der Operationen fremder Geräte (neueste zuerst).
-    Audit { limit: u32 },
+    Audit {
+        limit: u32,
+    },
     /// Ordner freigeben. `devices = None`: alle gekoppelten (auch künftige) Geräte.
-    ShareAdd { path: PathBuf, name: Option<String>, devices: Option<Vec<String>> },
+    ShareAdd {
+        path: PathBuf,
+        name: Option<String>,
+        devices: Option<Vec<String>>,
+    },
     ShareList,
-    ShareRemove { name: String },
+    ShareRemove {
+        name: String,
+    },
     /// Freigabe(n) sofort neu scannen (`None` = alle).
-    ShareRescan { name: Option<String> },
+    ShareRescan {
+        name: Option<String>,
+    },
     /// Vollständiges Ticket einer freigegebenen Datei abfragen.
-    Ticket { hash: String },
+    Ticket {
+        hash: String,
+    },
     /// Offline-Warteschlange anzeigen.
     Queue,
     /// Job aus der Warteschlange entfernen.
-    QueueCancel { id: i64 },
+    QueueCancel {
+        id: i64,
+    },
     /// Job sofort erneut versuchen (setzt auch das Backoff des Peers zurück).
-    QueueRetry { id: i64 },
+    QueueRetry {
+        id: i64,
+    },
     /// Bekannte Peers mit Status anzeigen.
     Peers,
     /// Informationen über den laufenden Daemon.
@@ -170,12 +200,28 @@ pub struct SyncResult {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Response {
-    Success { message: String },
-    Published { ticket: String, hash: String, file_name: String, already_shared: bool },
-    Downloaded { path: PathBuf },
+    Success {
+        message: String,
+    },
+    Published {
+        ticket: String,
+        hash: String,
+        file_name: String,
+        already_shared: bool,
+    },
+    Downloaded {
+        path: PathBuf,
+    },
     /// Peer nicht erreichbar – Auftrag liegt in der Warteschlange.
-    Queued { job_id: i64, peer: String, reason: String, already_queued: bool },
-    Ticket { ticket: String },
+    Queued {
+        job_id: i64,
+        peer: String,
+        reason: String,
+        already_queued: bool,
+    },
+    Ticket {
+        ticket: String,
+    },
     Catalog {
         local: Vec<FileRecord>,
         remote: Vec<RemoteFile>,
@@ -184,14 +230,32 @@ pub enum Response {
         /// Ein Abgleich läuft gerade im Hintergrund.
         syncing: bool,
     },
-    SyncReport { results: Vec<SyncResult> },
-    PairInvite { code: String, expires_at: i64 },
-    Paired { device: DeviceInfo },
-    Devices { devices: Vec<DeviceInfo> },
-    Audit { entries: Vec<AuditEntry> },
-    Shares { shares: Vec<ShareInfo> },
-    ShareAdded { share: ShareInfo, granted: Vec<String> },
-    Scanned { results: Vec<ScanResult> },
+    SyncReport {
+        results: Vec<SyncResult>,
+    },
+    PairInvite {
+        code: String,
+        expires_at: i64,
+    },
+    Paired {
+        device: DeviceInfo,
+    },
+    Devices {
+        devices: Vec<DeviceInfo>,
+    },
+    Audit {
+        entries: Vec<AuditEntry>,
+    },
+    Shares {
+        shares: Vec<ShareInfo>,
+    },
+    ShareAdded {
+        share: ShareInfo,
+        granted: Vec<String>,
+    },
+    Scanned {
+        results: Vec<ScanResult>,
+    },
     BrowsePage {
         items: Vec<CatalogItem>,
         total: u64,
@@ -199,10 +263,17 @@ pub enum Response {
         next: Option<BrowseCursor>,
     },
     Event(crate::events::Event),
-    Queue { jobs: Vec<PendingJob> },
-    Peers { peers: Vec<PeerInfo> },
+    Queue {
+        jobs: Vec<PendingJob>,
+    },
+    Peers {
+        peers: Vec<PeerInfo>,
+    },
     Info(DaemonInfo),
-    Error { code: ErrorCode, message: String },
+    Error {
+        code: ErrorCode,
+        message: String,
+    },
 }
 
 impl Response {

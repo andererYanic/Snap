@@ -90,15 +90,14 @@ impl Config {
         };
 
         let file = if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Konfiguration {} nicht lesbar", path.display()))?;
+            let contents =
+                fs::read_to_string(&path).with_context(|| format!("Konfiguration {} nicht lesbar", path.display()))?;
             toml::from_str::<ConfigFile>(&contents)
                 .with_context(|| format!("Konfiguration {} ist ungültig", path.display()))?
         } else {
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("Konfigurationsordner {} nicht anlegbar", parent.display())
-                })?;
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Konfigurationsordner {} nicht anlegbar", parent.display()))?;
             }
             fs::write(&path, CONFIG_TEMPLATE)
                 .with_context(|| format!("Konfiguration {} nicht schreibbar", path.display()))?;
@@ -116,16 +115,15 @@ impl Config {
             .or(file.data_dir.map(expand_tilde))
             .unwrap_or_else(|| dirs.data_dir().to_path_buf());
 
-        let socket_path = env_path("SPACE_SOCKET")
-            .or(file.socket_path.map(expand_tilde))
-            .unwrap_or_else(|| match dirs.runtime_dir() {
-                Some(rt) => rt.join("snap.sock"),
-                None => data_dir.join("snap.sock"),
-            });
+        let socket_path = env_path("SPACE_SOCKET").or(file.socket_path.map(expand_tilde)).unwrap_or_else(|| match dirs
+            .runtime_dir()
+        {
+            Some(rt) => rt.join("snap.sock"),
+            None => data_dir.join("snap.sock"),
+        });
 
-        let download_dir = env_path("SPACE_DOWNLOAD_DIR")
-            .or(file.download_dir.map(expand_tilde))
-            .unwrap_or_else(|| {
+        let download_dir =
+            env_path("SPACE_DOWNLOAD_DIR").or(file.download_dir.map(expand_tilde)).unwrap_or_else(|| {
                 directories::UserDirs::new()
                     .and_then(|u| u.download_dir().map(|d| d.to_path_buf()))
                     .unwrap_or_else(|| data_dir.join("downloads"))
@@ -181,9 +179,7 @@ fn project_dirs() -> Result<directories::ProjectDirs> {
 }
 
 fn env_path(var: &str) -> Option<PathBuf> {
-    std::env::var_os(var)
-        .filter(|v| !v.is_empty())
-        .map(|v| expand_tilde(PathBuf::from(v)))
+    std::env::var_os(var).filter(|v| !v.is_empty()).map(|v| expand_tilde(PathBuf::from(v)))
 }
 
 /// Ersetzt ein führendes `~/` durch das Home-Verzeichnis.

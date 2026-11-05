@@ -1,11 +1,13 @@
 //! Iroh-Netzwerkschicht: Endpoint, Blob-Store, Zugriffskontrolle und Transfers.
 
 use anyhow::{Context, Result};
-use iroh::{endpoint::{presets, BindOpts}, Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey};
+use iroh::protocol::RouterBuilder;
+use iroh::{
+    endpoint::{presets, BindOpts},
+    Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey,
+};
 use iroh_blobs::{
-    provider::events::{
-        AbortReason, ConnectMode, EventMask, EventSender, ObserveMode, ProviderMessage, RequestMode,
-    },
+    provider::events::{AbortReason, ConnectMode, EventMask, EventSender, ObserveMode, ProviderMessage, RequestMode},
     store::{
         fs::{options::Options, FsStore},
         GcConfig,
@@ -13,7 +15,6 @@ use iroh_blobs::{
     ticket::BlobTicket,
     BlobFormat, BlobsProtocol, Hash, HashAndFormat,
 };
-use iroh::protocol::RouterBuilder;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -156,10 +157,7 @@ impl P2pNetwork {
     pub async fn publish_file(&self, abs_path: &Path) -> Result<(Hash, String)> {
         let temp = self.store.add_path(abs_path).temp_tag().await?;
         let hash = temp.hash();
-        self.store
-            .tags()
-            .set(format!("{PUBLISH_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash))
-            .await?;
+        self.store.tags().set(format!("{PUBLISH_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash)).await?;
         drop(temp);
         Ok((hash, self.ticket_for(hash)))
     }
@@ -169,13 +167,11 @@ impl P2pNetwork {
     /// Empfänger würde veraltete Daten ohnehin an der BLAKE3-Prüfung ablehnen.
     pub async fn import_reference(&self, abs_path: &Path) -> Result<Hash> {
         use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
-        let opts = AddPathOptions { path: abs_path.to_path_buf(), format: BlobFormat::Raw, mode: ImportMode::TryReference };
+        let opts =
+            AddPathOptions { path: abs_path.to_path_buf(), format: BlobFormat::Raw, mode: ImportMode::TryReference };
         let temp = self.store.add_path_with_opts(opts).temp_tag().await?;
         let hash = temp.hash();
-        self.store
-            .tags()
-            .set(format!("{PUBLISH_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash))
-            .await?;
+        self.store.tags().set(format!("{PUBLISH_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash)).await?;
         drop(temp);
         Ok(hash)
     }
@@ -192,12 +188,7 @@ impl P2pNetwork {
         let hash = ticket.hash();
         let content = HashAndFormat::raw(hash);
         // Schutz vor der GC schon während des Downloads (auch für Teilstücke).
-        let temp = self
-            .store
-            .tags()
-            .temp_tag(content)
-            .await
-            .map_err(|e| FetchError::Local(e.into()))?;
+        let temp = self.store.tags().temp_tag(content).await.map_err(|e| FetchError::Local(e.into()))?;
 
         if ticket.addr().id == self.endpoint.id() {
             // Eigene Datei: liegt bereits lokal vor.

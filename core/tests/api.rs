@@ -213,7 +213,8 @@ mod permissions {
 
         // catalog.read entziehen -> auch Lesen verboten, Ledger-Abgleich von B scheitert
         assert!(matches!(
-            a.request(Request::PairRevoke { device: "B".into(), capability: "catalog.read".into(), folder: None }).await,
+            a.request(Request::PairRevoke { device: "B".into(), capability: "catalog.read".into(), folder: None })
+                .await,
             Response::Success { .. }
         ));
         assert!(is_denied(&a.request_as(&paired, Request::List).await));
@@ -237,7 +238,11 @@ mod permissions {
         assert!(matches!(b.request(Request::PairJoin { code }).await, Response::Paired { .. }));
         let shared = tmp.path().join("geteilt");
         std::fs::create_dir_all(&shared).unwrap();
-        let grant = |cap: &str, folder: Option<PathBuf>| Request::PairGrant { device: "B".into(), capability: cap.into(), folder };
+        let grant = |cap: &str, folder: Option<PathBuf>| Request::PairGrant {
+            device: "B".into(),
+            capability: cap.into(),
+            folder,
+        };
         let code_of = |r: Response| match r {
             Response::Error { code, .. } => Some(code),
             _ => None,
@@ -250,8 +255,18 @@ mod permissions {
         assert_eq!(code_of(a.request(grant("files.read", Some("/".into()))).await), Some(ErrorCode::InvalidInput));
         assert_eq!(code_of(a.request(grant("files.read", Some("/etc".into()))).await), Some(ErrorCode::InvalidInput));
         let data_dir = a.config().data_dir.clone();
-        assert_eq!(code_of(a.request(grant("files.read", Some(data_dir))).await), Some(ErrorCode::InvalidInput), "Snap-Daten");
-        assert_eq!(code_of(a.request(Request::PairGrant { device: "X".into(), capability: "pin.request".into(), folder: None }).await), Some(ErrorCode::NotFound));
+        assert_eq!(
+            code_of(a.request(grant("files.read", Some(data_dir))).await),
+            Some(ErrorCode::InvalidInput),
+            "Snap-Daten"
+        );
+        assert_eq!(
+            code_of(
+                a.request(Request::PairGrant { device: "X".into(), capability: "pin.request".into(), folder: None })
+                    .await
+            ),
+            Some(ErrorCode::NotFound)
+        );
 
         assert!(matches!(a.request(grant("files.read", Some(shared.clone()))).await, Response::Success { .. }));
         assert!(matches!(a.request(grant("pin.request", None)).await, Response::Success { .. }));

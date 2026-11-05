@@ -73,7 +73,8 @@ pub(crate) fn share_remove(inner: &Arc<DaemonInner>, name: &str) -> Result<Respo
 }
 
 pub(crate) async fn share_rescan(inner: &Arc<DaemonInner>, name: Option<String>) -> Result<Response> {
-    let shares: Vec<_> = inner.db.list_shares()?.into_iter().filter(|s| name.as_deref().is_none_or(|n| s.name == n)).collect();
+    let shares: Vec<_> =
+        inner.db.list_shares()?.into_iter().filter(|s| name.as_deref().is_none_or(|n| s.name == n)).collect();
     if shares.is_empty() {
         api_bail!(NotFound, "Keine passende Freigabe gefunden.");
     }
