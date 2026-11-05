@@ -35,7 +35,7 @@ const REVERSE_WAIT: Duration = Duration::from_secs(5);
 pub const MAX_NAME_LEN: usize = 255;
 
 /// Ein signierter Katalogeintrag. Pfade werden bewusst nicht geteilt.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEntry {
     /// Node-ID des Ursprungsgeräts (Hex) – zugleich der öffentliche Schlüssel.
     pub origin: String,
@@ -50,6 +50,47 @@ pub struct LedgerEntry {
     pub deleted: bool,
     /// Ed25519-Signatur (Hex) über [`LedgerEntry::signing_bytes`].
     pub signature: String,
+    /// Name der Ordner-Freigabe (leer = einzeln veröffentlichte Datei).
+    #[serde(default)]
+    pub share: String,
+    /// Pfad relativ zur Freigabe mit `/` als Trenner (leer = nur `name`).
+    #[serde(default)]
+    pub rel_path: String,
+}
+
+/// Maximale Länge eines relativen Pfads.
+pub const MAX_REL_PATH_LEN: usize = 4096;
+/// Maximale Länge eines Freigabe-Namens.
+pub const MAX_SHARE_NAME_LEN: usize = 64;
+
+/// Prüft einen relativen Pfad aus dem Ledger. Er darf später nie aus einem
+/// Zielordner herausführen (z. B. beim Pinning).
+pub fn validate_rel_path(rel: &str) -> Result<()> {
+    if rel.len() > MAX_REL_PATH_LEN {
+        bail!("relativer Pfad zu lang");
+    }
+    if rel.starts_with('/') || rel.contains('\\') || rel.chars().any(char::is_control) {
+        bail!("ungültiger relativer Pfad");
+    }
+    if rel.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..") {
+        bail!("ungültiger relativer Pfad");
+    }
+    Ok(())
+}
+
+/// Prüft einen Freigabe-Namen.
+pub fn validate_share_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.len() > MAX_SHARE_NAME_LEN
+        || name.contains('/')
+        || name.contains('\\')
+        || name == "."
+        || name == ".."
+        || name.chars().any(char::is_control)
+    {
+        bail!("ungültiger Freigabe-Name");
+    }
+    Ok(())
 }
 
 impl LedgerEntry {
@@ -60,7 +101,9 @@ impl LedgerEntry {
             buf.extend_from_slice(bytes);
         }
         let mut buf = Vec::with_capacity(256);
-        buf.extend_from_slice(b"snap-ledger-entry-v1\0");
+        // v1 (ohne Freigabe) bleibt byte-identisch, damit bestehende Signaturen gültig bleiben.
+        let v2 = !self.share.is_empty() || !self.rel_path.is_empty();
+        buf.extend_from_slice(if v2 { b"snap-ledger-entry-v2\0" } else { b"snap-ledger-entry-v1\0" });
         put(&mut buf, self.origin.as_bytes());
         buf.extend_from_slice(&self.entry_id.to_be_bytes());
         buf.extend_from_slice(&self.seq.to_be_bytes());
@@ -69,6 +112,10 @@ impl LedgerEntry {
         buf.extend_from_slice(&self.size.to_be_bytes());
         buf.extend_from_slice(&self.created_at.to_be_bytes());
         buf.push(self.deleted as u8);
+        if v2 {
+            put(&mut buf, self.share.as_bytes());
+            put(&mut buf, self.rel_path.as_bytes());
+        }
         buf
     }
 
@@ -86,6 +133,13 @@ impl LedgerEntry {
         }
         if self.seq <= 0 {
             bail!("ungültige Sequenznummer");
+        }
+        if !self.share.is_empty() || !self.rel_path.is_empty() {
+            validate_share_name(&self.share)?;
+            validate_rel_path(&self.rel_path)?;
+            if self.rel_path.rsplit('/').next() != Some(self.name.as_str()) {
+                bail!("Dateiname passt nicht zum relativen Pfad");
+            }
         }
         let origin: PublicKey = self.origin.parse().context("ungültige Ursprungs-ID")?;
         let sig_bytes = data_encoding::HEXLOWER
@@ -369,6 +423,7 @@ mod tests {
             created_at: 1_700_000_000,
             deleted: false,
             signature: String::new(),
+            ..Default::default()
         };
         e.signature = e.sign(key);
         e
@@ -439,6 +494,61 @@ mod tests {
         verify_all(&entries).unwrap();
         entries[177].size += 1;
         assert!(verify_all(&entries).is_err());
+    }
+
+    #[test]
+    fn v1_signatures_stay_valid_and_v2_covers_paths() {
+        let key = SecretKey::generate();
+        let v1 = entry(&key);
+        // v1-Bytes beginnen mit der alten Domäne
+        assert!(v1.signing_bytes().starts_with(b"snap-ledger-entry-v1\0"));
+        v1.verify().unwrap();
+
+        let mut v2 = entry(&key);
+        v2.share = "Fotos".into();
+        v2.rel_path = "2024/foto.jpg".into();
+        v2.signature = v2.sign(&key);
+        v2.verify().unwrap();
+        // Freigabe oder Pfad manipulieren -> Signatur ungültig
+        let mut t = v2.clone();
+        t.rel_path = "2025/foto.jpg".into();
+        assert!(t.verify().is_err());
+        let mut t = v2.clone();
+        t.share = "Privat".into();
+        assert!(t.verify().is_err());
+        // v2-Eintrag auf v1 "zurückgestuft" -> ungültig
+        let mut t = v2.clone();
+        t.share.clear();
+        t.rel_path.clear();
+        assert!(t.verify().is_err());
+    }
+
+    #[test]
+    fn malicious_paths_are_rejected_even_if_signed() {
+        let key = SecretKey::generate();
+        for (share, rel) in [
+            ("Fotos", "../../.bashrc"),
+            ("Fotos", "/etc/foto.jpg"),
+            ("Fotos", "a/./foto.jpg"),
+            ("Fotos", "a//foto.jpg"),
+            ("Fotos", "a\\..\\foto.jpg"),
+            ("Fotos", "a/\nfoto.jpg"),
+            ("..", "foto.jpg"),
+            ("a/b", "foto.jpg"),
+            ("", "foto.jpg"),
+        ] {
+            let mut e = entry(&key);
+            e.share = share.into();
+            e.rel_path = rel.into();
+            e.signature = e.sign(&key);
+            assert!(e.verify().is_err(), "{share} / {rel}");
+        }
+        // Name muss zum Pfad passen
+        let mut e = entry(&key);
+        e.share = "Fotos".into();
+        e.rel_path = "a/anders.jpg".into();
+        e.signature = e.sign(&key);
+        assert!(e.verify().is_err());
     }
 
     #[test]

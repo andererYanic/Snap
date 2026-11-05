@@ -68,6 +68,12 @@ pub struct CatalogItem {
     pub created_at: i64,
     /// Lokaler Pfad (nur bei eigenen Dateien).
     pub path: Option<String>,
+    /// Ordner-Freigabe (`None` = einzeln veröffentlicht).
+    #[serde(default)]
+    pub share: Option<String>,
+    /// Pfad relativ zur Freigabe.
+    #[serde(default)]
+    pub rel_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

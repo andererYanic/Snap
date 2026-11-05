@@ -69,6 +69,8 @@ impl DaemonInner {
             record.file_size,
             record.created_at,
             deleted,
+            record.share.as_deref().unwrap_or(""),
+            record.rel_path.as_deref().unwrap_or(""),
             &move |e: &LedgerEntry| e.sign(&key),
         )
     }

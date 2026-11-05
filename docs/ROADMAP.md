@@ -28,6 +28,9 @@ Abstriche bei der Sicherheit.
 | 2026-11-05 | Pairing per langem Einmal-Code, signiertes Weiterreichen von Ledger-Einträgen | Siehe README „Pairing & Ledger-Gossip“. |
 | 2026-11-05 | **Rechte pro Gerät**: Standard beim Koppeln nur `catalog.read`; weitere Rechte (`files.read/write/delete` mit Ordner, `pin.request`) ausdrücklich per `pair grant` | Ein kompromittiertes Gerät kann wenig anrichten. Eine einzige Prüfstelle für alle Operationen. |
 | 2026-11-05 | **`admin` (Fernverwaltung) vorerst gesperrt**, später nur mit Bestätigung am Zielgerät | Verhindert, dass ein Gerät sich selbst weitere Rechte oder Kopplungen verschafft. |
+| 2026-11-05 | **Ordner-Freigaben**: neue Freigaben gelten für alle gekoppelten Geräte (auch später gekoppelte), einschränkbar per `--devices`; Zugriff auf Share-Dateien nur mit `files.read` auf den Ordner – Einzeldateien per `publish` behalten „Ticket reicht“ | Drive-Erlebnis ohne den Hash als einzigen Schlüssel. |
+| 2026-11-05 | **Symlinks in Freigaben werden nicht verfolgt** | Verhindert versehentliches Teilen von Dateien außerhalb des Ordners (z. B. `~/.ssh`). |
+| 2026-11-05 | **Gepinnte Dateien sichtbar unter `~/Snap/<Gerät>/<Freigabe>/…`**, Pfad und Kontingent einstellbar | Für alle Programme nutzbar. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
 
 ## Sicherheitsprinzipien
@@ -48,8 +51,8 @@ Abstriche bei der Sicherheit.
 | Phase | Inhalt | Status |
 |---|---|---|
 | **0a** | Core härten (PR #1), Pairing & Ledger-Gossip (PR #2) | ✅ |
-| **0b** | **API-Schicht**: Fehlercodes, API-Version, Ereignis-Stream, seitenweiser Katalog, Rechte pro Gerät mit Audit-Log, Modulaufteilung | ✅ PR #3 |
-| **1 – Drive-Kern** | Ordner freigeben und beobachten (Watcher), relative Pfade im Ledger, **Smart-Pinning mit mehreren Quellen** (Server springt ein), kein doppelter Speicher (`TryReference`), Anzeige der Kopien, **Live-Verbindungen** zwischen gekoppelten Geräten | offen |
+| **0b** | **API-Schicht**: Fehlercodes, API-Version, Ereignis-Stream, seitenweiser Katalog, Rechte pro Gerät mit Audit-Log, Modulaufteilung | ✅ |
+| **1 – Drive-Kern** (1a Shares + Rechte · 1b Live · 1c Pinning) | Ordner freigeben und beobachten (Watcher), relative Pfade im Ledger, **Smart-Pinning mit mehreren Quellen** (Server springt ein), kein doppelter Speicher (`TryReference`), Anzeige der Kopien, **Live-Verbindungen** zwischen gekoppelten Geräten | offen |
 | **2 – Explorer-Kern** | Index des lokalen Dateisystems, FTS5-Suche, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
 | **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |

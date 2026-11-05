@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -25,6 +25,53 @@ pub struct FileRecord {
     pub path: String,
     pub ticket: String,
     pub created_at: i64,
+    /// Name der Ordner-Freigabe (`None` = einzeln veröffentlicht).
+    #[serde(default)]
+    pub share: Option<String>,
+    /// Pfad relativ zur Freigabe.
+    #[serde(default)]
+    pub rel_path: Option<String>,
+}
+
+/// Eine Ordner-Freigabe.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareInfo {
+    pub id: i64,
+    pub name: String,
+    pub root: String,
+    /// Neue gekoppelte Geräte erhalten automatisch `files.read`.
+    pub auto_grant: bool,
+    pub created_at: i64,
+    /// Anzahl aktiver Dateien (nur bei `share list` befüllt).
+    #[serde(default)]
+    pub file_count: u64,
+    #[serde(default)]
+    pub total_size: u64,
+}
+
+/// Bekannter Zustand einer Share-Datei (für den Abgleich beim Scannen).
+#[derive(Clone, Debug)]
+pub struct KnownShareFile {
+    pub id: i64,
+    pub hash: String,
+    pub size: u64,
+    pub mtime: i64,
+}
+
+/// Änderung aus einem Scan.
+#[derive(Clone, Debug)]
+pub enum ScanChange {
+    Upsert { rel_path: String, abs_path: String, name: String, hash: String, size: u64, mtime: i64 },
+    Delete { file_id: i64 },
+}
+
+/// Wer einen Blob abrufen darf.
+#[derive(Clone, Debug, Default)]
+pub struct BlobAccess {
+    /// Einzeln veröffentlicht: Ticket reicht.
+    pub published: bool,
+    /// Absolute Pfade in Ordner-Freigaben: nur mit `files.read`.
+    pub share_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +183,11 @@ pub struct RemoteFile {
     pub name: String,
     pub size: u64,
     pub created_at: i64,
+    /// Ordner-Freigabe des Ursprungsgeräts (`None` = einzeln veröffentlicht).
+    #[serde(default)]
+    pub share: Option<String>,
+    #[serde(default)]
+    pub rel_path: Option<String>,
 }
 
 /// SQLite mit einem Schreiber und einem Pool aus Leseverbindungen.
@@ -318,6 +370,26 @@ impl DatabaseManager {
             CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
             ",
         )?;
+        if version < 4 {
+            // Migration -> 4: Ordner-Freigaben, relative Pfade im Ledger.
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS shares (
+                    id         INTEGER PRIMARY KEY,
+                    name       TEXT    NOT NULL UNIQUE,
+                    root       TEXT    NOT NULL UNIQUE,
+                    auto_grant INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                ALTER TABLE files ADD COLUMN share_id INTEGER;
+                ALTER TABLE files ADD COLUMN rel_path TEXT;
+                ALTER TABLE files ADD COLUMN mtime INTEGER;
+                CREATE INDEX IF NOT EXISTS idx_files_share ON files(share_id, rel_path);
+                ALTER TABLE ledger_entries ADD COLUMN share TEXT NOT NULL DEFAULT '';
+                ALTER TABLE ledger_entries ADD COLUMN rel_path TEXT NOT NULL DEFAULT '';
+                ",
+            )?;
+        }
         if version > 0 && version < 3 {
             // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
             conn.execute(
@@ -436,14 +508,34 @@ impl DatabaseManager {
         let conn = self.read();
         Ok(conn
             .query_row(
-                "SELECT blake3_hash, file_name, file_size, path, ticket, created_at FROM files WHERE id = ?1",
+                "SELECT f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at, s.name, f.rel_path
+                 FROM files f LEFT JOIN shares s ON s.id = f.share_id WHERE f.id = ?1",
                 params![id],
                 Self::map_file,
             )
             .optional()?)
     }
 
-    /// Darf dieser Hash an andere Peers ausgeliefert werden?
+    /// Wer diesen Hash abrufen darf: einzeln veröffentlicht (Ticket reicht) und/oder
+    /// in Ordner-Freigaben (nur mit `files.read` auf den Pfad).
+    pub fn blob_access(&self, hash: &str) -> Result<BlobAccess> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT share_id IS NULL, path FROM files WHERE blake3_hash = ?1 AND deleted_at IS NULL LIMIT 64",
+        )?;
+        let mut access = BlobAccess::default();
+        for row in stmt.query_map(params![hash], |r| Ok((r.get::<_, bool>(0)?, r.get::<_, String>(1)?)))? {
+            let (published, path) = row?;
+            if published {
+                access.published = true;
+            } else {
+                access.share_paths.push(path);
+            }
+        }
+        Ok(access)
+    }
+
+    /// Gibt es überhaupt eine aktive Datei mit diesem Hash?
     pub fn is_shared(&self, hash: &str) -> Result<bool> {
         let conn = self.read();
         Ok(conn
@@ -459,8 +551,8 @@ impl DatabaseManager {
     pub fn list_files(&self) -> Result<Vec<FileRecord>> {
         let conn = self.read();
         let mut stmt = conn.prepare_cached(
-            "SELECT blake3_hash, file_name, file_size, path, ticket, created_at
-             FROM files WHERE deleted_at IS NULL ORDER BY file_name COLLATE NOCASE",
+"SELECT f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at, s.name, f.rel_path
+             FROM files f LEFT JOIN shares s ON s.id = f.share_id WHERE f.deleted_at IS NULL ORDER BY f.file_name COLLATE NOCASE",
         )?;
         let rows = stmt
             .query_map([], Self::map_file)?
@@ -476,6 +568,8 @@ impl DatabaseManager {
             path: row.get(3)?,
             ticket: row.get(4)?,
             created_at: row.get(5)?,
+            share: row.get(6)?,
+            rel_path: row.get(7)?,
         })
     }
 
@@ -485,9 +579,9 @@ impl DatabaseManager {
         let prefix = normalize_hash_prefix(prefix)?;
         let conn = self.read();
         let mut stmt = conn.prepare_cached(
-            "SELECT blake3_hash, file_name, file_size, path, ticket, created_at
-             FROM files WHERE deleted_at IS NULL AND substr(blake3_hash, 1, ?2) = ?1
-             ORDER BY created_at",
+"SELECT f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at, s.name, f.rel_path
+             FROM files f LEFT JOIN shares s ON s.id = f.share_id
+             WHERE f.deleted_at IS NULL AND substr(f.blake3_hash, 1, ?2) = ?1 ORDER BY f.created_at",
         )?;
         let rows = stmt
             .query_map(params![prefix, prefix.len() as i64], Self::map_file)?
@@ -905,6 +999,8 @@ impl DatabaseManager {
         size: u64,
         created_at: i64,
         deleted: bool,
+        share: &str,
+        rel_path: &str,
         sign: &dyn Fn(&LedgerEntry) -> String,
     ) -> Result<LedgerEntry> {
         let mut conn = self.conn();
@@ -924,6 +1020,8 @@ impl DatabaseManager {
             created_at,
             deleted,
             signature: String::new(),
+            share: share.to_string(),
+            rel_path: rel_path.to_string(),
         };
         entry.signature = sign(&entry);
         Self::upsert_entry(&tx, &entry)?;
@@ -933,14 +1031,27 @@ impl DatabaseManager {
 
     fn upsert_entry(conn: &Connection, e: &LedgerEntry) -> rusqlite::Result<usize> {
         conn.prepare_cached(
-            "INSERT INTO ledger_entries (origin, entry_id, seq, hash, name, size, created_at, deleted, signature)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO ledger_entries (origin, entry_id, seq, hash, name, size, created_at, deleted, signature, share, rel_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(origin, entry_id) DO UPDATE SET
                 seq = excluded.seq, hash = excluded.hash, name = excluded.name, size = excluded.size,
-                created_at = excluded.created_at, deleted = excluded.deleted, signature = excluded.signature
+                created_at = excluded.created_at, deleted = excluded.deleted, signature = excluded.signature,
+                share = excluded.share, rel_path = excluded.rel_path
              WHERE excluded.seq > ledger_entries.seq",
         )?
-        .execute(params![e.origin, e.entry_id, e.seq, e.hash, e.name, e.size as i64, e.created_at, e.deleted, e.signature])
+        .execute(params![
+            e.origin,
+            e.entry_id,
+            e.seq,
+            e.hash,
+            e.name,
+            e.size as i64,
+            e.created_at,
+            e.deleted,
+            e.signature,
+            e.share,
+            e.rel_path
+        ])
     }
 
     /// Übernimmt einen (bereits verifizierten) fremden Eintrag, falls er neuer ist.
@@ -967,8 +1078,8 @@ impl DatabaseManager {
     pub fn files_missing_entries(&self, origin: &str) -> Result<Vec<(i64, FileRecord)>> {
         let conn = self.read();
         let mut stmt = conn.prepare_cached(
-            "SELECT f.id, f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at
-             FROM files f
+            "SELECT f.id, f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at, s.name, f.rel_path
+             FROM files f LEFT JOIN shares s ON s.id = f.share_id
              WHERE f.deleted_at IS NULL
                AND NOT EXISTS (SELECT 1 FROM ledger_entries l WHERE l.origin = ?1 AND l.entry_id = f.id)",
         )?;
@@ -983,6 +1094,8 @@ impl DatabaseManager {
                         path: r.get(4)?,
                         ticket: r.get(5)?,
                         created_at: r.get(6)?,
+                        share: r.get(7)?,
+                        rel_path: r.get(8)?,
                     },
                 ))
             })?
@@ -1010,7 +1123,7 @@ impl DatabaseManager {
             rows
         };
         let mut stmt = conn.prepare_cached(
-            "SELECT origin, entry_id, seq, hash, name, size, created_at, deleted, signature
+            "SELECT origin, entry_id, seq, hash, name, size, created_at, deleted, signature, share, rel_path
              FROM ledger_entries WHERE origin = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
         )?;
         let mut out = Vec::new();
@@ -1039,11 +1152,13 @@ impl DatabaseManager {
             created_at: r.get(6)?,
             deleted: r.get(7)?,
             signature: r.get(8)?,
+            share: r.get(9)?,
+            rel_path: r.get(10)?,
         })
     }
 
     const REMOTE_SELECT: &'static str = "
-        SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at
+        SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at, NULLIF(l.share, ''), NULLIF(l.rel_path, '')
         FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
         WHERE l.deleted = 0 AND l.origin != ?1";
 
@@ -1055,6 +1170,8 @@ impl DatabaseManager {
             name: r.get(3)?,
             size: r.get::<_, i64>(4)? as u64,
             created_at: r.get(5)?,
+            share: r.get(6)?,
+            rel_path: r.get(7)?,
         })
     }
 
@@ -1141,8 +1258,9 @@ impl DatabaseManager {
         if include_local {
             let cond = after_cond.replace("{n}", "file_name").replace("{o}", "''").replace("{h}", "blake3_hash");
             let sql = format!(
-                "SELECT blake3_hash, file_name, file_size, created_at, path FROM files
-                 WHERE +deleted_at IS NULL AND (?1 IS NULL OR file_name LIKE ?1 ESCAPE '\\') {cond}
+                "SELECT f.blake3_hash, f.file_name, f.file_size, f.created_at, f.path, s.name, f.rel_path
+                 FROM files f LEFT JOIN shares s ON s.id = f.share_id
+                 WHERE +f.deleted_at IS NULL AND (?1 IS NULL OR file_name LIKE ?1 ESCAPE '\\') {cond}
                  ORDER BY file_name COLLATE NOCASE, blake3_hash LIMIT ?5"
             );
             let mut stmt = conn.prepare_cached(&sql)?;
@@ -1155,6 +1273,8 @@ impl DatabaseManager {
                     size: r.get::<_, i64>(2)? as u64,
                     created_at: r.get(3)?,
                     path: r.get(4)?,
+                    share: r.get(5)?,
+                    rel_path: r.get(6)?,
                 })
             })?;
             for row in rows {
@@ -1171,7 +1291,7 @@ impl DatabaseManager {
         if include_remote {
             let cond = after_cond.replace("{n}", "l.name").replace("{o}", "l.origin").replace("{h}", "l.hash");
             let sql = format!(
-                "SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at
+                "SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at, NULLIF(l.share, ''), NULLIF(l.rel_path, '')
                  FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
                  WHERE +l.deleted = 0 AND l.origin != ?6 AND (?7 IS NULL OR l.origin = ?7)
                    AND (?1 IS NULL OR l.name LIKE ?1 ESCAPE '\\') {cond}
@@ -1187,6 +1307,8 @@ impl DatabaseManager {
                     size: r.get::<_, i64>(4)? as u64,
                     created_at: r.get(5)?,
                     path: None,
+                    share: r.get(6)?,
+                    rel_path: r.get(7)?,
                 })
             })?;
             for row in rows {
@@ -1251,6 +1373,12 @@ impl DatabaseManager {
             // Standardrecht jeder Kopplung: nur die Dateiliste lesen.
             conn.prepare_cached(
                 "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at) VALUES (?1, 'catalog.read', '', ?2)",
+            )?
+            .execute(params![node_id, now_unix()])?;
+            // Freigaben mit auto_grant gelten auch für später gekoppelte Geräte.
+            conn.prepare_cached(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at)
+                 SELECT ?1, 'files.read', root, ?2 FROM shares WHERE auto_grant = 1",
             )?
             .execute(params![node_id, now_unix()])?;
             drop(conn);
@@ -1468,6 +1596,187 @@ impl DatabaseManager {
     }
 }
 
+impl DatabaseManager {
+    // ------------------------------------------------------------------
+    // Ordner-Freigaben
+    // ------------------------------------------------------------------
+
+    /// Legt eine Freigabe an und vergibt `files.read` an die angegebenen Geräte.
+    pub fn create_share(&self, name: &str, root: &str, auto_grant: bool, grant_to: &[String]) -> Result<ShareInfo> {
+        let now = now_unix();
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let exists: Option<String> = tx
+            .query_row(
+                "SELECT name FROM shares WHERE name = ?1 OR root = ?2
+                    OR substr(?2, 1, length(root) + 1) = root || '/'
+                    OR substr(root, 1, length(?2) + 1) = ?2 || '/'",
+                params![name, root],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(other) = exists {
+            crate::api_bail!(AlreadyExists, "Überschneidet sich mit der bestehenden Freigabe '{other}' (gleicher Name oder Ordner ineinander)");
+        }
+        tx.execute(
+            "INSERT INTO shares (name, root, auto_grant, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![name, root, auto_grant, now],
+        )?;
+        let id = tx.last_insert_rowid();
+        for node in grant_to {
+            tx.execute(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at)
+                 SELECT ?1, 'files.read', ?2, ?3 WHERE EXISTS (SELECT 1 FROM devices WHERE node_id = ?1)",
+                params![node, root, now],
+            )?;
+        }
+        tx.commit()?;
+        for node in grant_to {
+            self.emit(Event::GrantsChanged { node_id: node.clone() });
+        }
+        Ok(ShareInfo { id, name: name.into(), root: root.into(), auto_grant, created_at: now, file_count: 0, total_size: 0 })
+    }
+
+    pub fn list_shares(&self) -> Result<Vec<ShareInfo>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT s.id, s.name, s.root, s.auto_grant, s.created_at,
+                    (SELECT COUNT(*) FROM files f WHERE f.share_id = s.id AND f.deleted_at IS NULL),
+                    (SELECT COALESCE(SUM(file_size), 0) FROM files f WHERE f.share_id = s.id AND f.deleted_at IS NULL)
+             FROM shares s ORDER BY s.name COLLATE NOCASE",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(ShareInfo {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    root: r.get(2)?,
+                    auto_grant: r.get(3)?,
+                    created_at: r.get(4)?,
+                    file_count: r.get::<_, i64>(5)? as u64,
+                    total_size: r.get::<_, i64>(6)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Bekannte aktive Dateien einer Freigabe, nach relativem Pfad.
+    pub fn known_share_files(&self, share_id: i64) -> Result<HashMap<String, KnownShareFile>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, rel_path, blake3_hash, file_size, COALESCE(mtime, 0) FROM files
+             WHERE share_id = ?1 AND deleted_at IS NULL",
+        )?;
+        let rows = stmt
+            .query_map(params![share_id], |r| {
+                Ok((
+                    r.get::<_, String>(1)?,
+                    KnownShareFile { id: r.get(0)?, hash: r.get(2)?, size: r.get::<_, i64>(3)? as u64, mtime: r.get(4)? },
+                ))
+            })?
+            .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+        Ok(rows)
+    }
+
+    /// Übernimmt Scan-Ergebnisse einer Freigabe in **einer** Transaktion: Dateien
+    /// anlegen/aktualisieren/löschen und die passenden signierten Ledger-Einträge schreiben.
+    pub fn apply_scan(
+        &self,
+        origin: &str,
+        share: &ShareInfo,
+        changes: &[ScanChange],
+        sign: &dyn Fn(&LedgerEntry) -> String,
+    ) -> Result<usize> {
+        if changes.is_empty() {
+            return Ok(0);
+        }
+        let now = now_unix();
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) FROM ledger_entries WHERE origin = ?1",
+            params![origin],
+            |r| r.get(0),
+        )?;
+        let mut applied = 0;
+        for change in changes {
+            let (id, hash, name, size, created_at, rel_path, deleted) = match change {
+                ScanChange::Upsert { rel_path, abs_path, name, hash, size, mtime } => {
+                    tx.prepare_cached(
+                        "INSERT INTO files (blake3_hash, path, file_name, file_size, ticket, created_at, share_id, rel_path, mtime)
+                         VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7, ?8)
+                         ON CONFLICT(path) DO UPDATE SET
+                            blake3_hash = excluded.blake3_hash, file_name = excluded.file_name,
+                            file_size = excluded.file_size, created_at = excluded.created_at,
+                            share_id = excluded.share_id, rel_path = excluded.rel_path,
+                            mtime = excluded.mtime, deleted_at = NULL",
+                    )?
+                    .execute(params![hash, abs_path, name, *size as i64, now, share.id, rel_path, mtime])?;
+                    let id: i64 = tx
+                        .prepare_cached("SELECT id FROM files WHERE path = ?1")?
+                        .query_row(params![abs_path], |r| r.get(0))?;
+                    (id, hash.clone(), name.clone(), *size, now, rel_path.clone(), false)
+                }
+                ScanChange::Delete { file_id } => {
+                    let row: Option<(String, String, i64, i64, String)> = tx
+                        .prepare_cached(
+                            "SELECT blake3_hash, file_name, file_size, created_at, COALESCE(rel_path, '') FROM files
+                             WHERE id = ?1 AND deleted_at IS NULL",
+                        )?
+                        .query_row(params![file_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+                        .optional()?;
+                    let Some((hash, name, size, created_at, rel_path)) = row else { continue };
+                    tx.prepare_cached("UPDATE files SET deleted_at = ?2 WHERE id = ?1")?.execute(params![file_id, now])?;
+                    (*file_id, hash, name, size as u64, created_at, rel_path, true)
+                }
+            };
+            seq += 1;
+            let mut entry = LedgerEntry {
+                origin: origin.to_string(),
+                entry_id: id,
+                seq,
+                hash,
+                name,
+                size,
+                created_at,
+                deleted,
+                signature: String::new(),
+                share: share.name.clone(),
+                rel_path,
+            };
+            entry.signature = sign(&entry);
+            Self::upsert_entry(&tx, &entry)?;
+            applied += 1;
+        }
+        tx.commit()?;
+        if applied > 0 {
+            self.emit(Event::LocalCatalogChanged);
+        }
+        Ok(applied)
+    }
+
+    /// Entfernt eine Freigabe: Dateien in den Papierkorb (IDs zurück), automatische
+    /// Leserechte auf den Ordner entziehen.
+    pub fn remove_share(&self, share_id: i64) -> Result<Vec<i64>> {
+        let now = now_unix();
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let root: String = tx.query_row("SELECT root FROM shares WHERE id = ?1", params![share_id], |r| r.get(0))?;
+        let ids: Vec<i64> = {
+            let mut stmt = tx.prepare_cached("SELECT id FROM files WHERE share_id = ?1 AND deleted_at IS NULL")?;
+            let rows = stmt.query_map(params![share_id], |r| r.get(0))?.collect::<rusqlite::Result<Vec<i64>>>()?;
+            rows
+        };
+        tx.execute("UPDATE files SET deleted_at = ?2, share_id = NULL WHERE share_id = ?1 AND deleted_at IS NULL", params![share_id, now])?;
+        tx.execute("DELETE FROM device_grants WHERE capability = 'files.read' AND folder = ?1", params![root])?;
+        tx.execute("DELETE FROM shares WHERE id = ?1", params![share_id])?;
+        tx.commit()?;
+        self.emit(Event::LocalCatalogChanged);
+        Ok(ids)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1658,6 +1967,7 @@ mod tests {
                     created_at: 0,
                     deleted: false,
                     signature: String::new(),
+                    ..Default::default()
                 };
                 e.signature = e.sign(&key);
                 e
@@ -1703,6 +2013,58 @@ mod tests {
         let (all, _, none) = db.browse("self", None, None, 0, 100, None).unwrap();
         assert!(none.is_none());
         assert_eq!(seen, all.into_iter().map(|i| i.name).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn shares_scan_batch_and_access() {
+        let db = DatabaseManager::open_in_memory().unwrap();
+        db.add_device("dev", "Handy").unwrap();
+        let share = db.create_share("Fotos", "/home/u/Fotos", true, &["dev".into()]).unwrap();
+        // Überschneidende Freigaben werden abgelehnt
+        assert!(db.create_share("Fotos", "/x", true, &[]).is_err());
+        assert!(db.create_share("Andere", "/home/u/Fotos/2024", true, &[]).is_err());
+        assert!(db.create_share("Andere", "/home/u", true, &[]).is_err());
+        assert!(db.create_share("Andere", "/home/u/Fotos2", true, &[]).is_ok(), "Präfix ohne / ist kein Unterordner");
+        assert!(db.create_share("Unter_strich", "/home/u/F_tos", true, &[]).is_ok(), "_ ist kein Platzhalter");
+
+        let sign = |e: &LedgerEntry| format!("sig{}", e.seq);
+        let n = db
+            .apply_scan(
+                "me",
+                &share,
+                &[
+                    ScanChange::Upsert { rel_path: "2024/a.jpg".into(), abs_path: "/home/u/Fotos/2024/a.jpg".into(), name: "a.jpg".into(), hash: H1.into(), size: 3, mtime: 10 },
+                    ScanChange::Upsert { rel_path: "b.jpg".into(), abs_path: "/home/u/Fotos/b.jpg".into(), name: "b.jpg".into(), hash: H2.into(), size: 4, mtime: 11 },
+                ],
+                &sign,
+            )
+            .unwrap();
+        assert_eq!(n, 2);
+        let known = db.known_share_files(share.id).unwrap();
+        assert_eq!(known["2024/a.jpg"].mtime, 10);
+        // Ledger-Einträge tragen Freigabe + relativen Pfad
+        let entries = db.entries_since(&HashMap::new(), 10).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!((entries[0].share.as_str(), entries[0].rel_path.as_str()), ("Fotos", "2024/a.jpg"));
+        assert_eq!(entries[1].seq, entries[0].seq + 1);
+        // Zugriff: Share-Datei ist nicht "veröffentlicht"
+        let acc = db.blob_access(H1).unwrap();
+        assert!(!acc.published);
+        assert_eq!(acc.share_paths, vec!["/home/u/Fotos/2024/a.jpg".to_string()]);
+        // Gerät hat files.read auf den Ordner bekommen, später gekoppelte auch (auto_grant)
+        assert_eq!(db.grant_folders("dev", "files.read").unwrap(), vec!["/home/u/Fotos".to_string()]);
+        db.add_device("neu", "Laptop").unwrap();
+        assert!(db.grant_folders("neu", "files.read").unwrap().contains(&"/home/u/Fotos".to_string()));
+        // Löschen per Scan -> Tombstone
+        db.apply_scan("me", &share, &[ScanChange::Delete { file_id: known["b.jpg"].id }], &sign).unwrap();
+        assert!(!db.is_shared(H2).unwrap());
+        let last = db.entries_since(&HashMap::from([("me".to_string(), 2)]), 10).unwrap();
+        assert!(last[0].deleted && last[0].rel_path == "b.jpg");
+        // Freigabe entfernen: Dateien weg, Rechte weg
+        let removed = db.remove_share(share.id).unwrap();
+        assert_eq!(removed.len(), 1);
+        assert!(db.grant_folders("dev", "files.read").unwrap().iter().all(|f| f != "/home/u/Fotos"));
+        assert!(db.blob_access(H1).unwrap().share_paths.is_empty());
     }
 
     #[test]

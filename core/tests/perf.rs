@@ -25,6 +25,7 @@ fn signed_entries(key: &SecretKey, n: usize) -> Vec<LedgerEntry> {
                 created_at: 1_700_000_000,
                 deleted: false,
                 signature: String::new(),
+                ..Default::default()
             };
             e.signature = e.sign(key);
             e
@@ -67,7 +68,7 @@ fn db_hot_paths() {
     for i in 0..2000 {
         let (_, id) = db.upsert_file(&format!("/data/f{i}"), &hash(100_000 + i), &format!("f{i}"), 1, "t").unwrap();
         let k = own.clone();
-        db.record_own_entry(&origin, id, &hash(100_000 + i), &format!("f{i}"), 1, 0, false, &move |e: &LedgerEntry| e.sign(&k))
+        db.record_own_entry(&origin, id, &hash(100_000 + i), &format!("f{i}"), 1, 0, false, "", "", &move |e: &LedgerEntry| e.sign(&k))
             .unwrap();
     }
     report("publish (upsert + record_own_entry)", 2000, t.elapsed());
