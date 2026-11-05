@@ -63,6 +63,9 @@ pub struct KnownShareFile {
 pub enum ScanChange {
     Upsert { rel_path: String, abs_path: String, name: String, hash: String, size: u64, mtime: i64 },
     Delete { file_id: i64 },
+    /// Inhalt unverändert (gleicher Hash), nur die Änderungszeit ist neu –
+    /// kein neuer Ledger-Eintrag, kein Abgleichverkehr.
+    Touch { file_id: i64, mtime: i64 },
 }
 
 /// Wer einen Blob abrufen darf.
@@ -1730,6 +1733,10 @@ impl DatabaseManager {
                         .prepare_cached("SELECT id FROM files WHERE path = ?1")?
                         .query_row(params![abs_path], |r| r.get(0))?;
                     (id, hash.clone(), name.clone(), *size, now, rel_path.clone(), false)
+                }
+                ScanChange::Touch { file_id, mtime } => {
+                    tx.prepare_cached("UPDATE files SET mtime = ?2 WHERE id = ?1")?.execute(params![file_id, mtime])?;
+                    continue;
                 }
                 ScanChange::Delete { file_id } => {
                     let row: Option<(String, String, i64, i64, String)> = tx

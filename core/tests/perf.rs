@@ -210,3 +210,74 @@ fn auth_checks() {
     }
     report("authorize Gerät files.read + Pfad + Audit", 10_000, t.elapsed());
 }
+
+#[test]
+#[ignore]
+fn share_scan() {
+    use space_core::events::Event;
+    use space_core::ipc::{Request, Response};
+    use space_core::{Config, Daemon};
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let share = dir.path().join("share");
+        // 10 000 Dateien à 4 KiB in 100 Ordnern
+        for d in 0..100 {
+            let sub = share.join(format!("ordner-{d:03}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            for f in 0..100 {
+                let mut data = vec![0u8; 4096];
+                data[..8].copy_from_slice(&((d * 100 + f) as u64).to_le_bytes());
+                std::fs::write(sub.join(format!("datei-{f:03}.bin")), data).unwrap();
+            }
+        }
+        let mut c = Config::portable(&dir.path().join("node"));
+        c.use_relay = false;
+        let d = Daemon::start_loopback(c).await.unwrap();
+        let mut sub = d.subscribe();
+
+        let t = Instant::now();
+        assert!(matches!(
+            d.request(Request::ShareAdd { path: share.clone(), name: Some("S".into()), devices: Some(vec![]) }).await,
+            Response::ShareAdded { .. }
+        ));
+        loop {
+            if let Some(Event::ShareScanned { total, .. }) = sub.next().await {
+                if total >= 10_000 {
+                    break;
+                }
+            }
+        }
+        report("Erstscan (hashen + importieren)", 10_000, t.elapsed());
+
+        let t = Instant::now();
+        match d.request(Request::ShareRescan { name: Some("S".into()) }).await {
+            Response::Scanned { results } => assert_eq!(results[0].unchanged, 10_000),
+            other => panic!("{other:?}"),
+        }
+        report("Rescan ohne Änderungen (nur stat)", 10_000, t.elapsed());
+
+        // Eine Datei ändern -> Watcher -> Katalog. Vorher prüfen, dass der Watcher ruhig ist
+        // (keine Scans durch eigene Lesezugriffe).
+        let quiet = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+            loop {
+                if let Some(e @ Event::ShareScanned { .. }) = sub.next().await {
+                    return e;
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "Watcher hat ohne Änderung gescannt: {quiet:?}");
+        let t = Instant::now();
+        std::fs::write(share.join("ordner-042/datei-007.bin"), b"geaendert").unwrap();
+        loop {
+            if let Some(Event::ShareScanned { changed, .. }) = sub.next().await {
+                if changed >= 1 {
+                    break;
+                }
+            }
+        }
+        report("Änderung -> Katalog (inkl. 2 s Bündelung)", 1, t.elapsed());
+        d.shutdown().await;
+    });
+}

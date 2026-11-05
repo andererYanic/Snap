@@ -44,6 +44,8 @@ pub struct DaemonInner {
     pub(crate) sync_lock: Arc<tokio::sync::Mutex<()>>,
     /// Aktive Watcher je Freigabe (Fallenlassen beendet die Beobachtung).
     pub(crate) watchers: Mutex<std::collections::HashMap<i64, notify::RecommendedWatcher>>,
+    /// Pro Freigabe höchstens ein Scan gleichzeitig.
+    pub(crate) scan_locks: Mutex<std::collections::HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl DaemonInner {
@@ -201,6 +203,7 @@ impl Daemon {
             pairing,
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             watchers: Mutex::new(std::collections::HashMap::new()),
+            scan_locks: Mutex::new(std::collections::HashMap::new()),
         });
         backfill_ledger(&inner)?;
         let daemon = Self { inner: inner.clone(), tasks: Arc::new(Mutex::new(Vec::new())) };

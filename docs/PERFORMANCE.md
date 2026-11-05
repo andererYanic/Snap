@@ -25,7 +25,7 @@ Messungen: `cargo test --release -p space-core --test perf -- --ignored --nocapt
 |---|---|---|
 | ~~`remote_files` lädt alle Einträge~~ | erledigt in Review 2 (`Browse` mit Cursor) | ✅ |
 | Publish 260–290 µs/Datei (2 Commits + Signatur) | Beim Ordner-Import Stapelverarbeitung in einer Transaktion | Phase 1 |
-| Publish kopiert die Datei in den Blob-Store | doppelter Platz + Kopierzeit → `ImportMode::TryReference` | Phase 1 |
+| ~~Publish kopiert die Datei in den Blob-Store~~ | Freigaben importieren per Referenz (Review 4); Einzel-`publish` kopiert weiterhin (sicherer, da nicht beobachtet) | ✅ teilweise |
 | Jeder Download öffnet eine neue QUIC-Verbindung | bei vielen kleinen Dateien teuer → Verbindungs-Pool/Downloader von iroh-blobs | Phase 1 |
 | Warteschlangen-Worker arbeitet seriell | bei Ordner-Sync parallel pro Peer mit Limit | Phase 1 |
 | Export kopiert den Blob ein zweites Mal | Reflink/Hardlink wo möglich | Phase 1 |
@@ -68,3 +68,25 @@ blockiert die Oberfläche nicht).
 Das Entdoppeln ist auch eine Sicherheitsmaßnahme: Ohne es könnte ein Gerät mit vielen
 abgelehnten Anfragen das Audit-Log und damit die Platte fluten. Das Log ist zusätzlich auf
 10 000 Einträge begrenzt.
+
+## Review 4 – Ordner-Freigaben (2026-11-05)
+
+Messung: 10 000 Dateien à 4 KiB in 100 Ordnern.
+
+| Messung | Erste Version | Nachher | Maßnahme |
+|---|---|---|---|
+| Erstscan (hashen + importieren) | 2,4 s (doppelt importiert) | **1,7 s** (173 µs/Datei) | ein Scan pro Freigabe gleichzeitig |
+| Rescan ohne Änderungen (Daemon-Start) | 45–78 ms | 45–78 ms (5–8 µs/Datei) | nur `stat`, kein Hashen bei gleicher Größe + mtime |
+| Änderung → Katalog | – | **2,02 s** | 2 s Bündelung + 25 ms Arbeit, nur betroffener Unterordner |
+| Watcher nach dem Scan | scannte erneut (eigene Lesezugriffe) | **ruhig** | `Access`-Ereignisse werden ignoriert |
+| Nur mtime geändert, Inhalt gleich | neue Ledger-Version → Abgleichverkehr | **nur mtime aktualisiert** | `ScanChange::Touch` |
+
+**Gefundene Fehler:** (1) Der Watcher reagierte auf Lesezugriffe – der Import löste so
+selbst neue Scans aus. (2) Zwei gleichzeitige Scans derselben Freigabe importierten alles
+doppelt und verdoppelten die Ledger-Versionen (und damit den Verkehr zu allen Geräten).
+
+**Weitere Eigenschaften:** Import per Referenz (keine Kopie), parallel auf allen Kernen,
+Datenbank-Übernahme in Stapeln à 500 in einer Transaktion.
+
+**Offen:** Pro Datei werden Temp-Tag und Tag einzeln gesetzt (~170 µs/Datei bei kleinen
+Dateien) – bei sehr vielen kleinen Dateien ließe sich das bündeln (Batch-API von iroh-blobs).

@@ -44,6 +44,8 @@ pub struct ScanStats {
 
 /// Eine Datei, die (neu) gehasht werden muss.
 struct Candidate {
+    /// Bisher bekannte Datei (ID, Hash), falls vorhanden.
+    known: Option<(i64, String)>,
     abs: PathBuf,
     rel: String,
     name: String,
@@ -114,7 +116,8 @@ fn walk(
                 continue;
             }
             let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
-            candidates.push(Candidate { abs: entry.into_path(), rel, name, size, mtime });
+            let known_file = known.get(&rel).map(|k| (k.id, k.hash.clone()));
+            candidates.push(Candidate { known: known_file, abs: entry.into_path(), rel, name, size, mtime });
         }
     }
     // Gelöscht: bekannt, im gescannten Bereich, aber nicht mehr gesehen.
@@ -133,6 +136,10 @@ fn walk(
 
 /// Scannt eine Freigabe (ganz oder nur bestimmte Unterordner) und übernimmt Änderungen.
 pub async fn scan_share(inner: &Arc<DaemonInner>, share: &ShareInfo, prefixes: Option<Vec<String>>) -> Result<ScanStats> {
+    // Gleichzeitige Scans derselben Freigabe würden doppelt importieren und doppelte
+    // Ledger-Versionen erzeugen – daher seriell.
+    let lock = inner.scan_locks.lock().unwrap().entry(share.id).or_default().clone();
+    let _guard = lock.lock().await;
     let root = PathBuf::from(&share.root);
     let db = inner.db.clone();
     let share_id = share.id;
@@ -165,6 +172,11 @@ pub async fn scan_share(inner: &Arc<DaemonInner>, share: &ShareInfo, prefixes: O
     while let Some(res) = set.join_next().await {
         let Ok((c, hash, stable)) = res else { continue };
         match (hash, stable) {
+            (Ok(hash), true) if c.known.as_ref().is_some_and(|(_, h)| *h == hash.to_string()) => {
+                // Nur die Zeit hat sich geändert (z. B. touch, Kopie mit gleichem Inhalt).
+                changes.push(ScanChange::Touch { file_id: c.known.as_ref().unwrap().0, mtime: c.mtime });
+                stats.unchanged += 1;
+            }
             (Ok(hash), true) => {
                 changes.push(ScanChange::Upsert {
                     rel_path: c.rel,
@@ -223,6 +235,11 @@ pub fn watch_share(inner: Arc<DaemonInner>, share: ShareInfo) -> Result<notify::
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PathBuf>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
+            // Nur echte Änderungen. Lesezugriffe (auch durch unseren eigenen Import)
+            // würden sonst ständig neue Scans auslösen.
+            if matches!(event.kind, notify::EventKind::Access(_)) {
+                return;
+            }
             for p in event.paths {
                 let _ = tx.send(p);
             }
