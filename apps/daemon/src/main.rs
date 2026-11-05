@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile};
+use space_core::database::{AuditEntry, DeviceInfo, ShareInfo, JobState, PeerInfo, PendingJob, RemoteFile};
 use space_core::events::Event;
-use space_core::ipc::{read_frame, write_frame, Envelope, Request, Response, SyncResult};
+use space_core::ipc::{read_frame, write_frame, Envelope, Request, Response, ScanResult, SyncResult};
 use space_core::{Config, Daemon, FileRecord};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -78,11 +78,36 @@ enum Commands {
     Info,
     /// Zeigt Ereignisse des Daemons live an (STRG+C beendet)
     Watch,
+    /// Ordner freigeben und verwalten (wie Google Drive)
+    Share {
+        #[command(subcommand)]
+        action: ShareAction,
+    },
     /// Zeigt, was gekoppelte Geräte versucht haben (Audit-Log)
     Audit {
         #[arg(short, long, default_value_t = 50)]
         limit: u32,
     },
+}
+
+#[derive(Subcommand)]
+enum ShareAction {
+    /// Ordner freigeben. Ohne --devices: alle gekoppelten Geräte (auch künftige)
+    Add {
+        path: PathBuf,
+        /// Anzeigename (Standard: Ordnername)
+        #[arg(long)]
+        name: Option<String>,
+        /// Nur diese Geräte (Name oder Node-ID-Präfix), kommagetrennt
+        #[arg(long, value_delimiter = ',')]
+        devices: Option<Vec<String>>,
+    },
+    /// Freigaben mit Dateizahl und Größe anzeigen
+    List,
+    /// Freigabe beenden (Dateien bleiben auf der Platte)
+    Remove { name: String },
+    /// Sofort neu scannen (ohne Name: alle)
+    Rescan { name: Option<String> },
 }
 
 #[derive(Subcommand)]
@@ -169,6 +194,15 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Request::PairRevoke { device, capability, folder: folder.map(|f| absolute(&f)).transpose()? }
         }
         Commands::Audit { limit } => Request::Audit { limit },
+        Commands::Share { action: ShareAction::Add { path, name, devices } } => {
+            Request::ShareAdd { path: absolute(&path)?, name, devices }
+        }
+        Commands::Share { action: ShareAction::List } => Request::ShareList,
+        Commands::Share { action: ShareAction::Remove { name } } => Request::ShareRemove { name },
+        Commands::Share { action: ShareAction::Rescan { name } } => {
+            eprintln!("🔍 Scanne …");
+            Request::ShareRescan { name }
+        }
         Commands::Ticket { hash } => Request::Ticket { hash },
         Commands::Queue { action: None } => Request::Queue,
         Commands::Queue { action: Some(QueueAction::Cancel { id }) } => Request::QueueCancel { id },
@@ -260,6 +294,9 @@ fn describe_event(e: &Event) -> String {
         Event::JobRemoved { job_id } => format!("🗑️  Auftrag {job_id} entfernt"),
         Event::DevicePaired { name, .. } => format!("🔗 Gerät '{name}' gekoppelt"),
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
+        Event::ShareScanned { name, changed, deleted, total } => {
+            format!("📂 Freigabe '{name}': {changed} neu/geändert, {deleted} gelöscht, {total} insgesamt")
+        }
         Event::GrantsChanged { node_id } => format!("🔐 Rechte von Gerät {} geändert", short(node_id, 10)),
         Event::Lagged { missed } => format!("⚠️  {missed} Ereignisse verpasst"),
     }
@@ -339,6 +376,20 @@ fn print_response(res: Response) -> ExitCode {
         }
         Response::Devices { devices } => print_devices(&devices),
         Response::Audit { entries } => print_audit(&entries),
+        Response::Shares { shares } => print_shares(&shares),
+        Response::ShareAdded { share, granted } => {
+            println!("✅ Ordner freigegeben als '{}': {}", share.name, share.root);
+            if granted.is_empty() {
+                println!("   Noch kein Gerät hat Zugriff.");
+            } else {
+                println!("   Lesezugriff für: {}", granted.join(", "));
+            }
+            if share.auto_grant {
+                println!("   Später gekoppelte Geräte erhalten ebenfalls Zugriff.");
+            }
+            println!("   Der erste Scan läuft im Hintergrund – Fortschritt: space-daemon watch");
+        }
+        Response::Scanned { results } => print_scanned(&results),
         Response::BrowsePage { items, total, .. } => {
             for i in &items {
                 let wo = i.origin_name.clone().or_else(|| i.origin.as_deref().map(|o| short(o, 10).to_string()));
@@ -409,7 +460,11 @@ fn print_catalog(
         let via = if device.is_none() { " · über anderes Gerät" } else { "" };
         println!("\n{status} {name}{via}");
         for f in files {
-            println!("   {:<14} {:>10}  {}", short(&f.hash, 12), human_size(f.size), f.name);
+            let shown = match (&f.share, &f.rel_path) {
+                (Some(s), Some(r)) => format!("{s}/{r}"),
+                _ => f.name.clone(),
+            };
+            println!("   {:<14} {:>10}  {}", short(&f.hash, 12), human_size(f.size), shown);
         }
     }
     // Gekoppelte Geräte ohne Dateien trotzdem anzeigen
@@ -510,6 +565,31 @@ fn print_peers(peers: &[PeerInfo]) {
         println!("{:<12} {:<10} {:<22} {}", short(&p.node_id, 10), status, seen, retry);
     }
     println!("\nDer Status beruht nur auf echten Verbindungen – es werden keine Pings gesendet.");
+}
+
+fn print_shares(shares: &[ShareInfo]) {
+    if shares.is_empty() {
+        println!("Noch keine Ordner freigegeben: space-daemon share add <ordner>");
+        return;
+    }
+    println!("{:<20} {:>8} {:>10}  ORDNER", "NAME", "DATEIEN", "GRÖSSE");
+    for s in shares {
+        let auto = if s.auto_grant { "" } else { "  (nur ausgewählte Geräte)" };
+        println!("{:<20} {:>8} {:>10}  {}{auto}", s.name, s.file_count, human_size(s.total_size), s.root);
+    }
+}
+
+fn print_scanned(results: &[ScanResult]) {
+    for r in results {
+        println!(
+            "📂 {}: {} neu/geändert, {} gelöscht, {} unverändert{}",
+            r.name,
+            r.added_or_changed,
+            r.deleted,
+            r.unchanged,
+            if r.skipped > 0 { format!(", {} übersprungen", r.skipped) } else { String::new() }
+        );
+    }
 }
 
 fn print_audit(entries: &[AuditEntry]) {

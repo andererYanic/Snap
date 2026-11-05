@@ -9,6 +9,7 @@ pub mod ledger;
 pub mod network;
 pub mod pairing;
 pub mod secure_fs;
+pub mod shares;
 pub mod sync;
 pub mod worker;
 

@@ -1206,6 +1206,19 @@ impl DatabaseManager {
         Ok(rows)
     }
 
+    /// Dateien anderer Geräte per Freigabe und relativem Pfad.
+    pub fn find_remote_by_share_path(&self, share: &str, rel_path: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
+            "{} AND l.share = ?2 AND l.rel_path = ?3 ORDER BY l.created_at",
+            Self::REMOTE_SELECT
+        ))?;
+        let rows = stmt
+            .query_map(params![self_origin, share, rel_path], Self::map_remote)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Seitenweise Katalogabfrage über eigene und fremde Dateien, sortiert nach Name
     /// (ohne Groß-/Kleinschreibung), dann Gerät, dann Hash.
     ///

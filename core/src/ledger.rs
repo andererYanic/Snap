@@ -199,6 +199,9 @@ impl LedgerCtx {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PullStats {
     pub new_entries: usize,
+    /// Verworfene (ungültige) Einträge.
+    #[serde(default)]
+    pub rejected: usize,
     pub device_name: Option<String>,
 }
 
@@ -260,22 +263,38 @@ async fn pull_on(ctx: &LedgerCtx, conn: &Connection, peer: &str) -> Result<PullS
         let SyncResponse { entries, more, addrs, device_name } = resp;
         let page_empty = entries.is_empty();
         let resp_entries = entries;
-        // Erst alles prüfen, dann übernehmen: ein manipulierter Eintrag verwirft die ganze Seite.
-        // Prüfung (CPU-lastig) und Übernahme (blockierendes SQLite) laufen außerhalb der
-        // async-Runtime, damit andere Aufgaben (IPC, Transfers) nicht ausgebremst werden.
+        // Jeden Eintrag prüfen; ungültige werden verworfen (nie übernommen), gültige trotzdem
+        // übernommen – ein einzelner fehlerhafter Eintrag darf den Abgleich nicht dauerhaft
+        // blockieren. Prüfung (CPU) und Übernahme (SQLite) laufen außerhalb der async-Runtime.
         let db = ctx.db.clone();
         let self_id_c = self_id.clone();
-        let peer_short = peer[..10.min(peer.len())].to_string();
-        let applied = tokio::task::spawn_blocking(move || -> Result<usize> {
-            verify_all(&resp_entries).with_context(|| format!("Ungültiger Ledger-Eintrag von {peer_short}"))?;
+        let vv_before = ctx.db.version_vector()?;
+        let (applied, rejected) = tokio::task::spawn_blocking(move || -> Result<(usize, usize)> {
+            let valid = verify_each(&resp_entries);
+            let rejected = valid.iter().filter(|v| !**v).count();
             // Für eigene Einträge sind wir allein zuständig.
-            let foreign: Vec<LedgerEntry> = resp_entries.into_iter().filter(|e| e.origin != self_id_c).collect();
-            db.apply_remote_entries(&foreign)
-        });
-        stats.new_entries += applied.await.context("Abgleich-Task abgebrochen")??;
+            let foreign: Vec<LedgerEntry> = resp_entries
+                .into_iter()
+                .zip(valid)
+                .filter(|(e, ok)| *ok && e.origin != self_id_c)
+                .map(|(e, _)| e)
+                .collect();
+            Ok((db.apply_remote_entries(&foreign)?, rejected))
+        })
+        .await
+        .context("Abgleich-Task abgebrochen")??;
+        stats.new_entries += applied;
+        stats.rejected += rejected;
+        if rejected > 0 {
+            tracing::warn!("{rejected} ungültige Ledger-Einträge von {} verworfen", &peer[..10.min(peer.len())]);
+        }
         let _ = ctx.db.set_addr_hints(peer, &addrs);
         stats.device_name = Some(sanitize_device_name(&device_name, peer));
         if !more {
+            break;
+        }
+        // Ohne Fortschritt (z. B. nur ungültige Einträge) nicht endlos dieselbe Seite holen.
+        if !page_empty && ctx.db.version_vector()? == vv_before {
             break;
         }
         if page_empty {
@@ -308,6 +327,23 @@ pub fn verify_all(entries: &[LedgerEntry]) -> Result<()> {
         handles
             .into_iter()
             .try_for_each(|h| h.join().unwrap_or_else(|_| bail!("Prüfung abgebrochen")))
+    })
+}
+
+/// Prüft jeden Eintrag einzeln (parallel bei großen Seiten). `true` = gültig.
+pub fn verify_each(entries: &[LedgerEntry]) -> Vec<bool> {
+    const MIN_PER_THREAD: usize = 64;
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    if entries.len() < MIN_PER_THREAD * 2 || threads < 2 {
+        return entries.iter().map(|e| e.verify().is_ok()).collect();
+    }
+    let chunk = entries.len().div_ceil(threads).max(MIN_PER_THREAD);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = entries
+            .chunks(chunk)
+            .map(|c| scope.spawn(move || c.iter().map(|e| e.verify().is_ok()).collect::<Vec<_>>()))
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
     })
 }
 
@@ -494,6 +530,9 @@ mod tests {
         verify_all(&entries).unwrap();
         entries[177].size += 1;
         assert!(verify_all(&entries).is_err());
+        let each = verify_each(&entries);
+        assert_eq!(each.iter().filter(|v| !**v).count(), 1);
+        assert!(!each[177]);
     }
 
     #[test]

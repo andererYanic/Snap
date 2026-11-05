@@ -100,7 +100,11 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::PairRemove { .. }
         | Request::PairGrant { .. }
         | Request::PairRevoke { .. }
-        | Request::Audit { .. } => Capability::Admin,
+        | Request::Audit { .. }
+        | Request::ShareAdd { .. }
+        | Request::ShareList
+        | Request::ShareRemove { .. }
+        | Request::ShareRescan { .. } => Capability::Admin,
     }
 }
 

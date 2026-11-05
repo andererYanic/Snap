@@ -65,7 +65,15 @@ pub(crate) fn resolve_download_target(inner: &DaemonInner, target: &str) -> Resu
         }
     }
 
-    // 3. Dateiname aus den Listen gekoppelter Geräte
+    // 3. Pfad in einer Freigabe eines anderen Geräts: "Freigabe/unter/datei.jpg"
+    if let Some((share, rel)) = target.split_once('/') {
+        let remote = db.find_remote_by_share_path(share, rel, &self_id)?;
+        if !remote.is_empty() {
+            return remote_target(inner, remote, target);
+        }
+    }
+
+    // 4. Dateiname aus den Listen gekoppelter Geräte
     let remote = db.find_remote_by_name(target, &self_id)?;
     if !remote.is_empty() {
         return remote_target(inner, remote, target);

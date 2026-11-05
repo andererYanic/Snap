@@ -31,6 +31,7 @@ Abstriche bei der Sicherheit.
 | 2026-11-05 | **Ordner-Freigaben**: neue Freigaben gelten für alle gekoppelten Geräte (auch später gekoppelte), einschränkbar per `--devices`; Zugriff auf Share-Dateien nur mit `files.read` auf den Ordner – Einzeldateien per `publish` behalten „Ticket reicht“ | Drive-Erlebnis ohne den Hash als einzigen Schlüssel. |
 | 2026-11-05 | **Symlinks in Freigaben werden nicht verfolgt** | Verhindert versehentliches Teilen von Dateien außerhalb des Ordners (z. B. `~/.ssh`). |
 | 2026-11-05 | **Gepinnte Dateien sichtbar unter `~/Snap/<Gerät>/<Freigabe>/…`**, Pfad und Kontingent einstellbar | Für alle Programme nutzbar. |
+| 2026-11-05 | **Öffentliche Veröffentlichung auf GitHub geplant**, sobald fertig – andere sollen Snap für ihre Geräte nutzen | Der Code muss für fremde Nutzer und Umgebungen sicher sein (sichere Standardwerte, Mehrbenutzer-Rechner, Docker/root). Checkliste: Phase 7. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
 
 ## Sicherheitsprinzipien
@@ -58,3 +59,17 @@ Abstriche bei der Sicherheit.
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |
 | **5 – Medien & Teilen** | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | offen |
 | **6 – Schutz** | Versionen und Snapshots, verschlüsselte Backup-Ziele, Duplikat-Bereinigung, Speicheranalyse | offen |
+| **7 – Veröffentlichung** | Sicherheits-Checkliste unten abarbeiten, dann öffentliches Repository | offen |
+
+## Checkliste vor der Veröffentlichung (Phase 7)
+
+- [ ] **Git-Historie bereinigen**: Der erste Upload enthält `space.db`, `space_ledger.db` und Testdateien (Tickets sind wertlos, trotzdem entfernen) – neues Repository oder `git filter-repo`.
+- [ ] **Lizenz** festlegen (z. B. Apache-2.0 oder MIT/Apache dual).
+- [ ] **`SECURITY.md`** mit vertraulichem Meldeweg; **Bedrohungsmodell** (`docs/SECURITY_MODEL.md`).
+- [ ] **CI** (GitHub Actions): `cargo test`, `cargo clippy -- -D warnings`, `cargo audit` (RustSec), `cargo deny` (Lizenzen, doppelte/unsichere Abhängigkeiten).
+- [ ] **Fuzzing** aller Parser für fremde Eingaben: Einladungscodes, Ledger-Einträge/-Seiten, IPC-Frames, Pfadprüfung, Tickets.
+- [ ] **Sichere Standardwerte** für fremde Umgebungen prüfen: Mehrbenutzer-Rechner, Betrieb als root/Docker, fehlendes `$XDG_RUNTIME_DIR`, Netzwerk-Dateisysteme.
+- [ ] **`unsafe`-Audit** (derzeit nur `libc::geteuid`) und Abhängigkeits-Review.
+- [ ] **Signierte Releases**, reproduzierbare Builds, SBOM.
+- [ ] Unabhängiges **Sicherheits-Review** (zweites Augenpaar) vor Version 1.0.
+

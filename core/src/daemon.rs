@@ -42,6 +42,8 @@ pub struct DaemonInner {
     pub(crate) pairing: Arc<PairingCtx>,
     /// Verhindert parallele Ledger-Abgleiche.
     pub(crate) sync_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Aktive Watcher je Freigabe (Fallenlassen beendet die Beobachtung).
+    pub(crate) watchers: Mutex<std::collections::HashMap<i64, notify::RecommendedWatcher>>,
 }
 
 impl DaemonInner {
@@ -69,8 +71,9 @@ impl DaemonInner {
             record.file_size,
             record.created_at,
             deleted,
-            record.share.as_deref().unwrap_or(""),
-            record.rel_path.as_deref().unwrap_or(""),
+            // Freigabe und Pfad nur gemeinsam (sonst wäre der Eintrag ungültig).
+            record.share.as_deref().filter(|_| record.rel_path.is_some()).unwrap_or(""),
+            record.rel_path.as_deref().filter(|_| record.share.is_some()).unwrap_or(""),
             &move |e: &LedgerEntry| e.sign(&key),
         )
     }
@@ -108,9 +111,30 @@ impl Daemon {
         let secret_key = load_or_create_secret_key(&config.secret_key_path())?;
         let sync_notifier = Arc::new(Notify::new());
 
+        // Blob-Zugriff: Einzeln veröffentlicht -> Ticket reicht. Share-Datei -> nur mit
+        // files.read auf ihren Pfad (gleiche Prüfstelle wie alle Operationen).
         let access: AccessCheck = {
             let db = db.clone();
-            Arc::new(move |hash: &Hash| db.is_shared(&hash.to_string()).unwrap_or(false))
+            let protected = vec![config.data_dir.clone(), socket_dir.clone()];
+            Arc::new(move |hash: &Hash, node: Option<iroh::EndpointId>| {
+                let Ok(acc) = db.blob_access(&hash.to_string()) else { return false };
+                if acc.published {
+                    return true;
+                }
+                let Some(node) = node else { return false };
+                let caller = crate::api::auth::Caller::Device(node.to_string());
+                acc.share_paths.iter().any(|p| {
+                    crate::api::auth::authorize(
+                        &db,
+                        &protected,
+                        &caller,
+                        crate::api::auth::Capability::FilesRead,
+                        Some(Path::new(p)),
+                        "blob.get",
+                    )
+                    .is_ok()
+                })
+            })
         };
         let on_connect: ConnectHook = {
             let db = db.clone();
@@ -176,6 +200,7 @@ impl Daemon {
             ledger,
             pairing,
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
+            watchers: Mutex::new(std::collections::HashMap::new()),
         });
         backfill_ledger(&inner)?;
         let daemon = Self { inner: inner.clone(), tasks: Arc::new(Mutex::new(Vec::new())) };
@@ -184,7 +209,8 @@ impl Daemon {
         let worker = tokio::spawn(run_pending_pin_worker(inner.clone()));
         let pruner = tokio::spawn(run_pruner(inner.clone()));
         let periodic = tokio::spawn(run_periodic_sync(inner.clone()));
-        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic]);
+        let shares = tokio::spawn(start_shares(inner.clone()));
+        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic, shares]);
 
         Ok(daemon)
     }
@@ -219,6 +245,7 @@ impl Daemon {
     }
 
     pub async fn shutdown(&self) {
+        self.inner.watchers.lock().unwrap().clear();
         let tasks: Vec<_> = std::mem::take(&mut *self.tasks.lock().unwrap());
         for t in tasks {
             t.abort();
@@ -266,7 +293,7 @@ pub(crate) async fn run_ipc_server(inner: Arc<DaemonInner>, listener: UnixListen
     }
 }
 
-pub(crate) async fn handle_ipc_connection(inner: &DaemonInner, mut stream: UnixStream) -> Result<()> {
+pub(crate) async fn handle_ipc_connection(inner: &Arc<DaemonInner>, mut stream: UnixStream) -> Result<()> {
     // Nur Prozesse desselben Benutzers dürfen den Daemon steuern.
     let cred = stream.peer_cred().context("Peer-Credentials nicht lesbar")?;
     if cred.uid() != current_uid() {
@@ -357,3 +384,35 @@ pub(crate) async fn prune_once(inner: &DaemonInner) -> Result<()> {
     Ok(())
 }
 
+
+/// Startet Beobachtung und Abgleich aller Freigaben (Änderungen während der Daemon
+/// aus war, werden so nachgeholt).
+pub(crate) async fn start_shares(inner: Arc<DaemonInner>) {
+    let shares = match inner.db.list_shares() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Freigaben nicht lesbar: {e:#}");
+            return;
+        }
+    };
+    for share in shares {
+        start_share(&inner, share).await;
+    }
+}
+
+/// Beobachtet eine Freigabe und scannt sie einmal vollständig.
+pub(crate) async fn start_share(inner: &Arc<DaemonInner>, share: crate::database::ShareInfo) {
+    match crate::shares::watch_share(inner.clone(), share.clone()) {
+        Ok(w) => {
+            inner.watchers.lock().unwrap().insert(share.id, w);
+        }
+        Err(e) => tracing::warn!("Freigabe '{}' kann nicht beobachtet werden: {e:#} – nur manuelle Scans", share.name),
+    }
+    match crate::shares::scan_share(inner, &share, None).await {
+        Ok(st) if st.added_or_changed + st.deleted > 0 => {
+            tracing::info!("Freigabe '{}': {} neu/geändert, {} gelöscht", share.name, st.added_or_changed, st.deleted)
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Scan von '{}' fehlgeschlagen: {e:#}", share.name),
+    }
+}
