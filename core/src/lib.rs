@@ -1,3 +1,4 @@
+pub mod api;
 pub mod backoff;
 pub mod config;
 pub mod daemon;
@@ -7,6 +8,8 @@ pub mod ledger;
 pub mod network;
 pub mod pairing;
 pub mod secure_fs;
+pub mod sync;
+pub mod worker;
 
 pub use config::Config;
 pub use daemon::Daemon;
