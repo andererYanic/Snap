@@ -36,7 +36,7 @@ pub struct DaemonInner {
     ledger: Arc<LedgerCtx>,
     pairing: Arc<PairingCtx>,
     /// Verhindert parallele Ledger-Abgleiche.
-    sync_lock: tokio::sync::Mutex<()>,
+    sync_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl DaemonInner {
@@ -159,7 +159,7 @@ impl Daemon {
             secret_key,
             ledger,
             pairing,
-            sync_lock: tokio::sync::Mutex::new(()),
+            sync_lock: Arc::new(tokio::sync::Mutex::new(())),
         });
         backfill_ledger(&inner)?;
         let daemon = Self { inner: inner.clone(), tasks: Arc::new(Mutex::new(Vec::new())) };
@@ -880,15 +880,34 @@ async fn sync_one(ctx: &LedgerCtx, db: &DatabaseManager, node_id: String, name: 
     result
 }
 
+/// Startet einen Hintergrund-Abgleich, sofern keiner läuft. Geräte, die gerade im
+/// Backoff sind (zuletzt nicht erreichbar), werden übersprungen – sonst würde jeder
+/// `list`-Aufruf erneut bis zum Timeout auf sie warten.
 fn spawn_sync_all(inner: &DaemonInner) {
-    // `inner` lebt in einem Arc; für den Hintergrund-Task brauchen wir die Einzelteile.
+    let Ok(guard) = inner.sync_lock.clone().try_lock_owned() else {
+        return; // läuft bereits
+    };
     let ctx = inner.ledger.clone();
     let db = inner.db.clone();
     let timeout = Duration::from_secs(inner.config.connect_timeout_secs);
     tokio::spawn(async move {
-        let devices = db.list_devices().unwrap_or_default();
-        for d in devices {
-            let r = sync_one(&ctx, &db, d.node_id, d.name, timeout).await;
+        let _guard = guard;
+        let now = now_unix();
+        let mut set = tokio::task::JoinSet::new();
+        for d in db.list_devices().unwrap_or_default() {
+            let in_backoff = db
+                .get_peer(&d.node_id)
+                .ok()
+                .flatten()
+                .and_then(|p| p.next_retry_at)
+                .is_some_and(|t| t > now);
+            if in_backoff {
+                continue;
+            }
+            let (ctx, db) = (ctx.clone(), db.clone());
+            set.spawn(async move { sync_one(&ctx, &db, d.node_id, d.name, timeout).await });
+        }
+        while let Some(Ok(r)) = set.join_next().await {
             if r.new_entries > 0 {
                 tracing::info!("Ledger: {} neue Einträge von '{}'", r.new_entries, r.name);
             }

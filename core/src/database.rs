@@ -3,9 +3,10 @@
 use crate::ledger::LedgerEntry;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 const SCHEMA_VERSION: i64 = 2;
@@ -114,9 +115,20 @@ pub struct RemoteFile {
     pub created_at: i64,
 }
 
+/// SQLite mit einem Schreiber und einem Pool aus Leseverbindungen.
+///
+/// Im WAL-Modus blockieren Leser weder sich gegenseitig noch den Schreiber. So
+/// bleiben Abfragen der Oberfläche auch während großer Abgleiche flüssig.
 pub struct DatabaseManager {
     conn: Mutex<Connection>,
+    readers: Vec<Mutex<Connection>>,
+    next_reader: AtomicUsize,
 }
+
+/// Anzahl der Leseverbindungen.
+const READER_POOL_SIZE: usize = 4;
+/// Gecachte vorbereitete Statements pro Verbindung.
+const STATEMENT_CACHE: usize = 64;
 
 /// Prüft und normalisiert einen Hash bzw. Hash-Präfix: nur Hexzeichen,
 /// 6 bis 64 Zeichen. Verhindert u. a. SQL-Wildcards (`%`, `_`) in Suchen.
@@ -137,9 +149,20 @@ pub fn normalize_hash_prefix(input: &str) -> Result<String> {
 impl DatabaseManager {
     pub fn open(db_path: &Path) -> Result<Self> {
         let conn = Connection::open(db_path)?;
-        Self::init(conn)
+        let mut db = Self::init(conn)?;
+        for _ in 0..READER_POOL_SIZE {
+            let r = Connection::open_with_flags(
+                db_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+            )?;
+            r.busy_timeout(std::time::Duration::from_secs(5))?;
+            r.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
+            db.readers.push(Mutex::new(r));
+        }
+        Ok(db)
     }
 
+    /// In-Memory-Datenbank (Tests). Ohne Leser-Pool: alle Zugriffe über eine Verbindung.
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
@@ -241,13 +264,30 @@ impl DatabaseManager {
             ",
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
 
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self { conn: Mutex::new(conn), readers: Vec::new(), next_reader: AtomicUsize::new(0) })
     }
 
+    /// Schreibverbindung (auch für Lese-nach-Schreib innerhalb einer Methode).
     fn conn(&self) -> MutexGuard<'_, Connection> {
         // Ein Panic in einem anderen Thread soll die DB nicht dauerhaft blockieren.
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Eine freie Leseverbindung aus dem Pool (fällt ohne Pool auf den Schreiber zurück).
+    fn read(&self) -> MutexGuard<'_, Connection> {
+        let n = self.readers.len();
+        if n == 0 {
+            return self.conn();
+        }
+        let start = self.next_reader.fetch_add(1, Ordering::Relaxed);
+        for i in 0..n {
+            if let Ok(guard) = self.readers[(start + i) % n].try_lock() {
+                return guard;
+            }
+        }
+        self.readers[start % n].lock().unwrap_or_else(|e| e.into_inner())
     }
 
     // ------------------------------------------------------------------
@@ -264,7 +304,8 @@ impl DatabaseManager {
         file_size: u64,
         ticket: &str,
     ) -> Result<(bool, i64)> {
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let conn = conn.transaction()?;
         let already: bool = conn
             .query_row(
                 "SELECT 1 FROM files WHERE path = ?1 AND blake3_hash = ?2 AND deleted_at IS NULL",
@@ -288,12 +329,13 @@ impl DatabaseManager {
             params![hash, path, file_name, file_size as i64, ticket, now_unix()],
         )?;
         let id: i64 = conn.query_row("SELECT id FROM files WHERE path = ?1", params![path], |r| r.get(0))?;
+        conn.commit()?;
         Ok((already, id))
     }
 
     /// Daten einer Datei per ID (auch gelöschte).
     pub fn file_by_id(&self, id: i64) -> Result<Option<FileRecord>> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn
             .query_row(
                 "SELECT blake3_hash, file_name, file_size, path, ticket, created_at FROM files WHERE id = ?1",
@@ -305,7 +347,7 @@ impl DatabaseManager {
 
     /// Darf dieser Hash an andere Peers ausgeliefert werden?
     pub fn is_shared(&self, hash: &str) -> Result<bool> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn
             .query_row(
                 "SELECT 1 FROM files WHERE blake3_hash = ?1 AND deleted_at IS NULL LIMIT 1",
@@ -317,8 +359,8 @@ impl DatabaseManager {
     }
 
     pub fn list_files(&self) -> Result<Vec<FileRecord>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT blake3_hash, file_name, file_size, path, ticket, created_at
              FROM files WHERE deleted_at IS NULL ORDER BY file_name COLLATE NOCASE",
         )?;
@@ -343,8 +385,8 @@ impl DatabaseManager {
     /// Gibt alle passenden Dateien zurück; der Aufrufer prüft auf Eindeutigkeit.
     pub fn find_by_hash_prefix(&self, prefix: &str) -> Result<Vec<FileRecord>> {
         let prefix = normalize_hash_prefix(prefix)?;
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT blake3_hash, file_name, file_size, path, ticket, created_at
              FROM files WHERE deleted_at IS NULL AND substr(blake3_hash, 1, ?2) = ?1
              ORDER BY created_at",
@@ -370,7 +412,7 @@ impl DatabaseManager {
         let tx = conn.transaction()?;
         let ids: Vec<i64> = {
             let mut stmt =
-                tx.prepare(&format!("SELECT id FROM files WHERE {cond} AND deleted_at IS NULL"))?;
+                tx.prepare_cached(&format!("SELECT id FROM files WHERE {cond} AND deleted_at IS NULL"))?;
             let rows = stmt.query_map(params![value], |r| r.get(0))?.collect::<rusqlite::Result<Vec<i64>>>()?;
             rows
         };
@@ -389,7 +431,7 @@ impl DatabaseManager {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let candidates: Vec<String> = {
-            let mut stmt = tx.prepare(
+            let mut stmt = tx.prepare_cached(
                 "SELECT DISTINCT blake3_hash FROM files WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
             )?;
             let rows = stmt
@@ -418,7 +460,7 @@ impl DatabaseManager {
     }
 
     pub fn count_shared(&self) -> Result<u64> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn.query_row("SELECT COUNT(*) FROM files WHERE deleted_at IS NULL", [], |r| {
             r.get::<_, i64>(0)
         })? as u64)
@@ -493,8 +535,8 @@ impl DatabaseManager {
     }
 
     pub fn list_jobs(&self) -> Result<Vec<PendingJob>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!("{} ORDER BY j.id", Self::JOB_SELECT))?;
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!("{} ORDER BY j.id", Self::JOB_SELECT))?;
         let rows = stmt
             .query_map([], Self::map_job)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -503,8 +545,8 @@ impl DatabaseManager {
 
     /// Wartende Aufträge, deren Peer nicht (mehr) im Backoff ist.
     pub fn due_jobs(&self, now: i64) -> Result<Vec<PendingJob>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
             "{} WHERE j.state = 'waiting' AND (p.next_retry_at IS NULL OR p.next_retry_at <= ?1)
              ORDER BY j.id",
             Self::JOB_SELECT
@@ -518,7 +560,7 @@ impl DatabaseManager {
     /// Zeitpunkt, zu dem der nächste wartende Auftrag fällig wird.
     /// `None` = keine wartenden Aufträge (Worker darf unbegrenzt schlafen).
     pub fn next_wakeup(&self) -> Result<Option<i64>> {
-        let conn = self.conn();
+        let conn = self.read();
         let (count, min_retry, any_due): (i64, Option<i64>, i64) = conn.query_row(
             "SELECT COUNT(*),
                     MIN(p.next_retry_at),
@@ -538,7 +580,7 @@ impl DatabaseManager {
     }
 
     pub fn count_waiting_jobs(&self) -> Result<u64> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn.query_row("SELECT COUNT(*) FROM pending_pins WHERE state = 'waiting'", [], |r| {
             r.get::<_, i64>(0)
         })? as u64)
@@ -674,8 +716,8 @@ impl DatabaseManager {
     }
 
     pub fn list_peers(&self) -> Result<Vec<PeerInfo>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT node_id, status, last_seen, failures, next_retry_at FROM peer_status
              ORDER BY last_seen DESC NULLS LAST, node_id",
         )?;
@@ -694,7 +736,21 @@ impl DatabaseManager {
     }
 
     pub fn get_peer(&self, node_id: &str) -> Result<Option<PeerInfo>> {
-        Ok(self.list_peers()?.into_iter().find(|p| p.node_id == node_id))
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT node_id, status, last_seen, failures, next_retry_at FROM peer_status WHERE node_id = ?1",
+        )?;
+        Ok(stmt
+            .query_row(params![node_id], |r| {
+                Ok(PeerInfo {
+                    node_id: r.get(0)?,
+                    status: r.get(1)?,
+                    last_seen: r.get(2)?,
+                    failures: r.get::<_, i64>(3)? as u32,
+                    next_retry_at: r.get(4)?,
+                })
+            })
+            .optional()?)
     }
 }
 
@@ -742,15 +798,15 @@ impl DatabaseManager {
     }
 
     fn upsert_entry(conn: &Connection, e: &LedgerEntry) -> rusqlite::Result<usize> {
-        conn.execute(
+        conn.prepare_cached(
             "INSERT INTO ledger_entries (origin, entry_id, seq, hash, name, size, created_at, deleted, signature)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(origin, entry_id) DO UPDATE SET
                 seq = excluded.seq, hash = excluded.hash, name = excluded.name, size = excluded.size,
                 created_at = excluded.created_at, deleted = excluded.deleted, signature = excluded.signature
              WHERE excluded.seq > ledger_entries.seq",
-            params![e.origin, e.entry_id, e.seq, e.hash, e.name, e.size as i64, e.created_at, e.deleted, e.signature],
-        )
+        )?
+        .execute(params![e.origin, e.entry_id, e.seq, e.hash, e.name, e.size as i64, e.created_at, e.deleted, e.signature])
     }
 
     /// Übernimmt einen (bereits verifizierten) fremden Eintrag, falls er neuer ist.
@@ -758,10 +814,22 @@ impl DatabaseManager {
         Ok(Self::upsert_entry(&self.conn(), e)? > 0)
     }
 
+    /// Übernimmt mehrere (bereits verifizierte) Einträge. Gibt die Anzahl übernommener zurück.
+    pub fn apply_remote_entries(&self, entries: &[LedgerEntry]) -> Result<usize> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut n = 0;
+        for e in entries {
+            n += Self::upsert_entry(&tx, e)?;
+        }
+        tx.commit()?;
+        Ok(n)
+    }
+
     /// Aktive eigene Dateien ohne Ledger-Eintrag (z. B. aus Schema 1).
     pub fn files_missing_entries(&self, origin: &str) -> Result<Vec<(i64, FileRecord)>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT f.id, f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at
              FROM files f
              WHERE f.deleted_at IS NULL
@@ -787,8 +855,8 @@ impl DatabaseManager {
 
     /// Höchste bekannte Sequenznummer je Ursprungsgerät.
     pub fn version_vector(&self) -> Result<HashMap<String, i64>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT origin, MAX(seq) FROM ledger_entries GROUP BY origin")?;
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached("SELECT origin, MAX(seq) FROM ledger_entries GROUP BY origin")?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
             .collect::<rusqlite::Result<HashMap<_, _>>>()?;
@@ -798,13 +866,13 @@ impl DatabaseManager {
     /// Alle Einträge, die neuer sind als der übergebene Versionsvektor –
     /// je Ursprung aufsteigend nach `seq`, maximal `limit` Stück.
     pub fn entries_since(&self, have: &HashMap<String, i64>, limit: usize) -> Result<Vec<LedgerEntry>> {
-        let conn = self.conn();
+        let conn = self.read();
         let origins: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT DISTINCT origin FROM ledger_entries ORDER BY origin")?;
+            let mut stmt = conn.prepare_cached("SELECT DISTINCT origin FROM ledger_entries ORDER BY origin")?;
             let rows = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
             rows
         };
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT origin, entry_id, seq, hash, name, size, created_at, deleted, signature
              FROM ledger_entries WHERE origin = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
         )?;
@@ -855,8 +923,8 @@ impl DatabaseManager {
 
     /// Dateien anderer Geräte (ohne gelöschte).
     pub fn remote_files(&self, self_origin: &str) -> Result<Vec<RemoteFile>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
             "{} ORDER BY COALESCE(d.name, l.origin), l.name COLLATE NOCASE",
             Self::REMOTE_SELECT
         ))?;
@@ -866,8 +934,8 @@ impl DatabaseManager {
 
     pub fn find_remote_by_hash_prefix(&self, prefix: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
         let prefix = normalize_hash_prefix(prefix)?;
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
             "{} AND substr(l.hash, 1, ?3) = ?2 ORDER BY l.created_at",
             Self::REMOTE_SELECT
         ))?;
@@ -878,8 +946,8 @@ impl DatabaseManager {
     }
 
     pub fn find_remote_by_name(&self, name: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!("{} AND l.name = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!("{} AND l.name = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
         let rows = stmt.query_map(params![self_origin, name], Self::map_remote)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -900,16 +968,16 @@ impl DatabaseManager {
 
     pub fn is_paired(&self, node_id: &str) -> Result<bool> {
         Ok(self
-            .conn()
+            .read()
             .query_row("SELECT 1 FROM devices WHERE node_id = ?1", params![node_id], |_| Ok(true))
             .optional()?
             .unwrap_or(false))
     }
 
     pub fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
-        let conn = self.conn();
+        let conn = self.read();
         let mut stmt =
-            conn.prepare("SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE")?;
+            conn.prepare_cached("SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE")?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(DeviceInfo { node_id: r.get(0)?, name: r.get(1)?, paired_at: r.get(2)?, last_sync_at: r.get(3)? })
@@ -963,7 +1031,7 @@ impl DatabaseManager {
 
     pub fn addr_hints(&self, node_id: &str) -> Result<Vec<String>> {
         let json: Option<String> = self
-            .conn()
+            .read()
             .query_row("SELECT addrs FROM peer_addrs WHERE node_id = ?1", params![node_id], |r| r.get(0))
             .optional()?;
         Ok(json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
@@ -971,7 +1039,7 @@ impl DatabaseManager {
 
     pub fn has_waiting_jobs(&self, peer_id: &str) -> Result<bool> {
         Ok(self
-            .conn()
+            .read()
             .query_row(
                 "SELECT 1 FROM pending_pins WHERE peer_id = ?1 AND state = 'waiting' LIMIT 1",
                 params![peer_id],
