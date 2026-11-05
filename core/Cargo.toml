@@ -1,0 +1,21 @@
+[package]
+name = "space-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"]}
+blake3 = "1.5"
+iroh = "1.4.1"
+iroh-blobs = { version= "0.103.1", features = ["fs-store"] }
+walkdir = "2.5"
+uuid = { version = "1.0", features = ["v4"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+directories = "5.0"
