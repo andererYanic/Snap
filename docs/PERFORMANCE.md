@@ -23,7 +23,7 @@ Messungen: `cargo test --release -p space-core --test perf -- --ignored --nocapt
 
 | Punkt | Wirkung | Wann |
 |---|---|---|
-| `remote_files` lädt alle Einträge (18 ms bei 10 000) | Für die GUI seitenweise laden + Suche | Phase 0b (API) |
+| ~~`remote_files` lädt alle Einträge~~ | erledigt in Review 2 (`Browse` mit Cursor) | ✅ |
 | Publish 260–290 µs/Datei (2 Commits + Signatur) | Beim Ordner-Import Stapelverarbeitung in einer Transaktion | Phase 1 |
 | Publish kopiert die Datei in den Blob-Store | doppelter Platz + Kopierzeit → `ImportMode::TryReference` | Phase 1 |
 | Jeder Download öffnet eine neue QUIC-Verbindung | bei vielen kleinen Dateien teuer → Verbindungs-Pool/Downloader von iroh-blobs | Phase 1 |
@@ -31,3 +31,28 @@ Messungen: `cargo test --release -p space-core --test perf -- --ignored --nocapt
 | Export kopiert den Blob ein zweites Mal | Reflink/Hardlink wo möglich | Phase 1 |
 | Hashes als 64-Zeichen-Text in SQLite | 2× Platz ggü. BLOB(32); erst bei sehr großen Katalogen relevant | Phase 2 |
 | Synchrone SQLite-Aufrufe in async-Handlern | bei kurzen Abfragen unkritisch; lange Abfragen in `spawn_blocking` | laufend |
+
+## Review 2 – API-Schicht: Browse & Ereignisse (2026-11-05)
+
+Messung mit 100 000 Einträgen eines anderen Geräts + 5 000 eigenen Dateien.
+
+| Hot Path | Erste Version | Nachher | Maßnahme |
+|---|---|---|---|
+| Erste Seite (100 Einträge) | 167 ms | **0,97 ms** | Getrennte Abfragen je Tabelle über den Namensindex, Zusammenführen in Rust, Gesamtzahl zwischengespeichert |
+| Tiefe Seite (~Eintrag 90 000) | 340 ms (`OFFSET`) | **0,2 ms** (Cursor) | Keyset-Pagination mit indexfähiger Bedingung (`>=`) |
+| Tiefe Seite per `OFFSET` | 340 ms | 140 ms | bleibt O(Offset) – API begrenzt Offset auf 100 000 und verweist auf `after` |
+| Suche (Teilstring) | 30 ms | 22 ms | `LIKE '%…%'` nutzt keinen Index → FTS5 (Trigram) in Phase 2 |
+| Gesamtzahl | 9–13 ms je Abfrage | einmal je Katalogänderung | Cache, geleert bei `LocalCatalogChanged`/`RemoteCatalogChanged` |
+| Ereignisse | – | ~3 µs pro übernommenem Eintrag | unkritisch |
+
+**Ursache der ersten Version:** `UNION ALL` + `COUNT(*) OVER ()` und die Wahl des
+Lösch-Index (`deleted = 0`) zwangen SQLite, alle Zeilen in einem temporären B-Baum zu
+sortieren. `+l.deleted` / `+deleted_at` schaltet diesen Index für die Seitenabfrage ab;
+der Namensindex liefert die Reihenfolge direkt (`EXPLAIN QUERY PLAN` geprüft).
+
+**Kosten:** Die zusätzlichen Indizes verteuern das Schreiben leicht – Veröffentlichen
+~270 → ~360 µs/Datei, Übernahme fremder Einträge unverändert ~11 µs. Lesen während
+Schreiblast bleibt bei p99 ≈ 70 µs.
+
+**Maßstab präzisiert:** Blättern/Scrollen < 16 ms, Suche < 100 ms (läuft asynchron und
+blockiert die Oberfläche nicht).

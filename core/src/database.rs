@@ -125,6 +125,8 @@ pub struct DatabaseManager {
     readers: Vec<Mutex<Connection>>,
     next_reader: AtomicUsize,
     events: EventBus,
+    /// Zwischengespeicherte Gesamtzahlen für `browse`; wird bei jeder Katalogänderung geleert.
+    count_cache: Mutex<HashMap<String, u64>>,
 }
 
 /// Anzahl der Leseverbindungen.
@@ -256,8 +258,9 @@ impl DatabaseManager {
             );
             CREATE INDEX IF NOT EXISTS idx_ledger_origin_seq ON ledger_entries(origin, seq);
             CREATE INDEX IF NOT EXISTS idx_ledger_hash ON ledger_entries(hash);
-            CREATE INDEX IF NOT EXISTS idx_ledger_name ON ledger_entries(name COLLATE NOCASE);
-            CREATE INDEX IF NOT EXISTS idx_files_name ON files(file_name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_ledger_name ON ledger_entries(name COLLATE NOCASE, origin, hash);
+            CREATE INDEX IF NOT EXISTS idx_ledger_live ON ledger_entries(deleted, origin);
+            CREATE INDEX IF NOT EXISTS idx_files_name ON files(file_name COLLATE NOCASE, blake3_hash);
 
             -- Direkte Adress-Hinweise, nur von authentifizierten Gegenstellen über sich selbst.
             CREATE TABLE IF NOT EXISTS peer_addrs (
@@ -270,12 +273,38 @@ impl DatabaseManager {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
 
-        Ok(Self { conn: Mutex::new(conn), readers: Vec::new(), next_reader: AtomicUsize::new(0), events: EventBus::default() })
+        Ok(Self {
+            conn: Mutex::new(conn),
+            readers: Vec::new(),
+            next_reader: AtomicUsize::new(0),
+            events: EventBus::default(),
+            count_cache: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Ereignis-Bus: meldet jede Änderung nach dem Commit.
     pub fn events(&self) -> &EventBus {
         &self.events
+    }
+
+    /// Sendet ein Ereignis; Katalogänderungen leeren den Zähler-Cache.
+    fn emit(&self, event: Event) {
+        if matches!(event, Event::LocalCatalogChanged | Event::RemoteCatalogChanged { .. }) {
+            self.count_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+        self.events.emit(event);
+    }
+
+    fn cached_count(&self, key: &str) -> Option<u64> {
+        self.count_cache.lock().unwrap_or_else(|e| e.into_inner()).get(key).copied()
+    }
+
+    fn store_count(&self, key: String, total: u64) {
+        let mut cache = self.count_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= 64 {
+            cache.clear(); // einfache Begrenzung; Suchbegriffe wechseln häufig
+        }
+        cache.insert(key, total);
     }
 
     /// Schreibverbindung (auch für Lese-nach-Schreib innerhalb einer Methode).
@@ -340,7 +369,7 @@ impl DatabaseManager {
         let id: i64 = conn.query_row("SELECT id FROM files WHERE path = ?1", params![path], |r| r.get(0))?;
         conn.commit()?;
         if !already {
-            self.events.emit(Event::LocalCatalogChanged);
+            self.emit(Event::LocalCatalogChanged);
         }
         Ok((already, id))
     }
@@ -434,7 +463,7 @@ impl DatabaseManager {
         )?;
         tx.commit()?;
         if !ids.is_empty() {
-            self.events.emit(Event::LocalCatalogChanged);
+            self.emit(Event::LocalCatalogChanged);
         }
         Ok(ids)
     }
@@ -505,7 +534,7 @@ impl DatabaseManager {
                 params![id, job.last_error, job.ticket, job.peer_id, job.force],
             )?;
             drop(conn);
-            self.events.emit(Event::JobQueued { job_id: id });
+            self.emit(Event::JobQueued { job_id: id });
             return Ok((id, true));
         }
         conn.execute(
@@ -526,7 +555,7 @@ impl DatabaseManager {
         )?;
         let id = conn.last_insert_rowid();
         drop(conn);
-        self.events.emit(Event::JobQueued { job_id: id });
+        self.emit(Event::JobQueued { job_id: id });
         Ok((id, false))
     }
 
@@ -608,7 +637,7 @@ impl DatabaseManager {
 
     pub fn complete_job(&self, id: i64) -> Result<()> {
         self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])?;
-        self.events.emit(Event::JobCompleted { job_id: id });
+        self.emit(Event::JobCompleted { job_id: id });
         Ok(())
     }
 
@@ -627,14 +656,14 @@ impl DatabaseManager {
             "UPDATE pending_pins SET attempts = attempts + 1, state = ?3, last_error = ?2 WHERE id = ?1",
             params![id, error, JobState::Failed.as_str()],
         )?;
-        self.events.emit(Event::JobFailed { job_id: id, error: error.to_string() });
+        self.emit(Event::JobFailed { job_id: id, error: error.to_string() });
         Ok(())
     }
 
     pub fn cancel_job(&self, id: i64) -> Result<bool> {
         let removed = self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])? > 0;
         if removed {
-            self.events.emit(Event::JobRemoved { job_id: id });
+            self.emit(Event::JobRemoved { job_id: id });
         }
         Ok(removed)
     }
@@ -688,7 +717,7 @@ impl DatabaseManager {
 
     fn emit_status_change(&self, node_id: &str, prev: Option<&str>, now: &str) {
         if prev != Some(now) {
-            self.events.emit(Event::PeerStatusChanged { node_id: node_id.to_string(), status: now.to_string() });
+            self.emit(Event::PeerStatusChanged { node_id: node_id.to_string(), status: now.to_string() });
         }
     }
 
@@ -872,7 +901,7 @@ impl DatabaseManager {
         }
         tx.commit()?;
         if n > 0 {
-            self.events.emit(Event::RemoteCatalogChanged { new_entries: n });
+            self.emit(Event::RemoteCatalogChanged { new_entries: n });
         }
         Ok(n)
     }
@@ -1003,8 +1032,14 @@ impl DatabaseManager {
         Ok(rows)
     }
 
-    /// Seitenweise Katalogabfrage über eigene und fremde Dateien.
+    /// Seitenweise Katalogabfrage über eigene und fremde Dateien, sortiert nach Name
+    /// (ohne Groß-/Kleinschreibung), dann Gerät, dann Hash.
+    ///
     /// `device`: `None` = alle, `Some(None)` = nur eigene, `Some(Some(id))` = ein Gerät.
+    /// Beide Tabellen werden getrennt über ihren Namensindex gelesen und in Rust
+    /// zusammengeführt; mit `after` (Keyset) bleibt jede Seite unabhängig von ihrer
+    /// Position gleich schnell.
+    #[allow(clippy::too_many_arguments)]
     pub fn browse(
         &self,
         self_origin: &str,
@@ -1012,9 +1047,10 @@ impl DatabaseManager {
         search: Option<&str>,
         offset: u32,
         limit: u32,
-    ) -> Result<(Vec<crate::ipc::CatalogItem>, u64)> {
-        // LIKE-Muster mit maskierten Platzhaltern: Nutzereingaben wie "%" oder "_"
-        // werden wörtlich gesucht.
+        after: Option<&crate::ipc::BrowseCursor>,
+    ) -> Result<(Vec<crate::ipc::CatalogItem>, u64, Option<crate::ipc::BrowseCursor>)> {
+        use crate::ipc::{BrowseCursor, CatalogItem};
+        // LIKE-Muster mit maskierten Platzhaltern: "%" und "_" werden wörtlich gesucht.
         let pattern = search.filter(|s| !s.is_empty()).map(|s| {
             let escaped = s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
             format!("%{escaped}%")
@@ -1024,58 +1060,121 @@ impl DatabaseManager {
             Some(None) => (true, false, None),
             Some(Some(id)) => (false, true, Some(id)),
         };
-        let sql = 
-            "WITH items AS (
-                SELECT NULL AS origin, NULL AS origin_name, blake3_hash AS hash, file_name AS name,
-                       file_size AS size, created_at, path
-                FROM files
-                WHERE ?1 AND deleted_at IS NULL AND (?3 IS NULL OR file_name LIKE ?3 ESCAPE '\\')
-                UNION ALL
-                SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at, NULL
-                FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
-                WHERE ?2 AND l.deleted = 0 AND l.origin != ?4
-                  AND (?5 IS NULL OR l.origin = ?5)
-                  AND (?3 IS NULL OR l.name LIKE ?3 ESCAPE '\\')
-            )
-            SELECT origin, origin_name, hash, name, size, created_at, path, COUNT(*) OVER () AS total
-            FROM items ORDER BY name COLLATE NOCASE, origin LIMIT ?6 OFFSET ?7";
-        let mut total = 0u64;
-        // Verbindung nur innerhalb dieses Blocks halten (der Rückfall unten fragt erneut an).
-        let items = {
-            let conn = self.read();
-            let mut stmt = conn.prepare_cached(sql)?;
-            let rows = stmt
-            .query_map(
-                params![include_local, include_remote, pattern, self_origin, origin, limit, offset],
-                |r| {
-                    Ok((
-                        crate::ipc::CatalogItem {
-                            origin: r.get(0)?,
-                            origin_name: r.get(1)?,
-                            hash: r.get(2)?,
-                            name: r.get(3)?,
-                            size: r.get::<_, i64>(4)? as u64,
-                            created_at: r.get(5)?,
-                            path: r.get(6)?,
-                        },
-                        r.get::<_, i64>(7)? as u64,
-                    ))
-                },
-            )?
-            .map(|row| row.map(|(item, t)| {
-                total = t;
-                item
-            }))
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
+        let want = offset as i64 + limit as i64 + 1; // +1: gibt es eine weitere Seite?
+        let (c_name, c_origin, c_hash) = match after {
+            Some(c) => (Some(c.name.as_str()), c.origin.as_str(), c.hash.as_str()),
+            None => (None, "", ""),
         };
-        if items.is_empty() && offset > 0 {
-            // Hinter dem Ende: Gesamtzahl trotzdem liefern.
-            let (all, t) = self.browse(self_origin, device, search, 0, 1)?;
-            drop(all);
-            return Ok((Vec::new(), t));
+        // Keyset-Bedingung in Sortierreihenfolge (Name NOCASE, Gerät, Hash). Der erste Teil
+        // (`>=`) erlaubt SQLite den direkten Sprung im Namensindex; ohne Cursor entfällt sie.
+        let after_cond = if after.is_some() {
+            "AND {n} COLLATE NOCASE >= ?2 AND ({n} COLLATE NOCASE > ?2 OR ({o}, {h}) > (?3, ?4))"
+        } else {
+            ""
+        };
+
+        // Hinweis: `+deleted…` in den Seitenabfragen verhindert, dass SQLite den
+        // Lösch-Index wählt und danach alles sortiert; so liefert der Namensindex die
+        // Reihenfolge direkt (100k Einträge: 0,2 ms statt 32 ms).
+        let count_key = format!("{include_local}|{include_remote}|{origin:?}|{pattern:?}");
+        let cached_total = self.cached_count(&count_key);
+        let conn = self.read();
+        let mut items: Vec<CatalogItem> = Vec::new();
+        let mut total = 0u64;
+        if include_local {
+            let cond = after_cond.replace("{n}", "file_name").replace("{o}", "''").replace("{h}", "blake3_hash");
+            let sql = format!(
+                "SELECT blake3_hash, file_name, file_size, created_at, path FROM files
+                 WHERE +deleted_at IS NULL AND (?1 IS NULL OR file_name LIKE ?1 ESCAPE '\\') {cond}
+                 ORDER BY file_name COLLATE NOCASE, blake3_hash LIMIT ?5"
+            );
+            let mut stmt = conn.prepare_cached(&sql)?;
+            let rows = stmt.query_map(params![pattern, c_name, c_origin, c_hash, want], |r| {
+                Ok(CatalogItem {
+                    origin: None,
+                    origin_name: None,
+                    hash: r.get(0)?,
+                    name: r.get(1)?,
+                    size: r.get::<_, i64>(2)? as u64,
+                    created_at: r.get(3)?,
+                    path: r.get(4)?,
+                })
+            })?;
+            for row in rows {
+                items.push(row?);
+            }
+            if cached_total.is_none() {
+                total += conn
+                    .prepare_cached(
+                        "SELECT COUNT(*) FROM files WHERE deleted_at IS NULL AND (?1 IS NULL OR file_name LIKE ?1 ESCAPE '\\')",
+                    )?
+                    .query_row(params![pattern], |r| r.get::<_, i64>(0))? as u64;
+            }
         }
-        Ok((items, total))
+        if include_remote {
+            let cond = after_cond.replace("{n}", "l.name").replace("{o}", "l.origin").replace("{h}", "l.hash");
+            let sql = format!(
+                "SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at
+                 FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
+                 WHERE +l.deleted = 0 AND l.origin != ?6 AND (?7 IS NULL OR l.origin = ?7)
+                   AND (?1 IS NULL OR l.name LIKE ?1 ESCAPE '\\') {cond}
+                 ORDER BY l.name COLLATE NOCASE, l.origin, l.hash LIMIT ?5"
+            );
+            let mut stmt = conn.prepare_cached(&sql)?;
+            let rows = stmt.query_map(params![pattern, c_name, c_origin, c_hash, want, self_origin, origin], |r| {
+                Ok(CatalogItem {
+                    origin: r.get(0)?,
+                    origin_name: r.get(1)?,
+                    hash: r.get(2)?,
+                    name: r.get(3)?,
+                    size: r.get::<_, i64>(4)? as u64,
+                    created_at: r.get(5)?,
+                    path: None,
+                })
+            })?;
+            for row in rows {
+                items.push(row?);
+            }
+            if cached_total.is_none() {
+                total += conn
+                    .prepare_cached(
+                        "SELECT COUNT(*) FROM ledger_entries
+                         WHERE deleted = 0 AND origin != ?2 AND (?3 IS NULL OR origin = ?3)
+                           AND (?1 IS NULL OR name LIKE ?1 ESCAPE '\\')",
+                    )?
+                    .query_row(params![pattern, self_origin, origin], |r| r.get::<_, i64>(0))? as u64;
+            }
+        }
+        drop(conn);
+        let total = match cached_total {
+            Some(t) => t,
+            None => {
+                self.store_count(count_key, total);
+                total
+            }
+        };
+
+        // Zusammenführen in derselben Ordnung wie SQLite (NOCASE = ASCII-Kleinschreibung).
+        items.sort_by(|a, b| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+                .then_with(|| a.origin.as_deref().unwrap_or("").cmp(b.origin.as_deref().unwrap_or("")))
+                .then_with(|| a.hash.cmp(&b.hash))
+        });
+        let mut page: Vec<CatalogItem> = items.into_iter().skip(offset as usize).collect();
+        let has_more = page.len() > limit as usize;
+        page.truncate(limit as usize);
+        let next = if has_more {
+            page.last().map(|i| BrowseCursor {
+                name: i.name.clone(),
+                origin: i.origin.clone().unwrap_or_default(),
+                hash: i.hash.clone(),
+            })
+        } else {
+            None
+        };
+        Ok((page, total, next))
     }
 
     // ------------------------------------------------------------------
@@ -1093,7 +1192,7 @@ impl DatabaseManager {
             > 0;
         if inserted {
             drop(conn);
-            self.events.emit(Event::DevicePaired { node_id: node_id.to_string(), name: name.to_string() });
+            self.emit(Event::DevicePaired { node_id: node_id.to_string(), name: name.to_string() });
         } else {
             conn.prepare_cached("UPDATE devices SET name = ?2 WHERE node_id = ?1 AND name != ?2")?
                 .execute(params![node_id, name])?;
@@ -1141,8 +1240,8 @@ impl DatabaseManager {
         tx.execute("DELETE FROM peer_addrs WHERE node_id = ?1", params![node_id])?;
         tx.commit()?;
         if removed {
-            self.events.emit(Event::DeviceRemoved { node_id: node_id.to_string() });
-            self.events.emit(Event::RemoteCatalogChanged { new_entries: 0 });
+            self.emit(Event::DeviceRemoved { node_id: node_id.to_string() });
+            self.emit(Event::RemoteCatalogChanged { new_entries: 0 });
         }
         Ok(removed)
     }
@@ -1388,26 +1487,42 @@ mod tests {
         db.upsert_file("/home/notiz%.txt", H1, "notiz%.txt", 1, "t").unwrap();
         db.add_device(&origin, "Handy").unwrap();
 
-        let (page, total) = db.browse("self", None, None, 0, 10).unwrap();
+        let (page, total, _) = db.browse("self", None, None, 0, 10, None).unwrap();
         assert_eq!((page.len(), total), (10, 26));
         assert_eq!(page[0].name, "bild_00.jpg");
         assert_eq!(page[0].origin_name.as_deref(), Some("Handy"));
-        let (page, total) = db.browse("self", None, None, 20, 10).unwrap();
+        let (page, total, _) = db.browse("self", None, None, 20, 10, None).unwrap();
         assert_eq!((page.len(), total), (6, 26));
         assert_eq!(page.last().unwrap().path.as_deref(), Some("/home/notiz%.txt"));
-        let (page, total) = db.browse("self", None, None, 100, 10).unwrap();
+        let (page, total, _) = db.browse("self", None, None, 100, 10, None).unwrap();
         assert_eq!((page.len(), total), (0, 26));
 
         // "%" wird wörtlich gesucht, "_" ebenso
-        let (page, _) = db.browse("self", None, Some("%"), 0, 50).unwrap();
+        let (page, _, _) = db.browse("self", None, Some("%"), 0, 50, None).unwrap();
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].name, "notiz%.txt");
-        assert_eq!(db.browse("self", None, Some("_1"), 0, 50).unwrap().1, 10);
-        assert_eq!(db.browse("self", None, Some("BILD_2"), 0, 50).unwrap().1, 5, "ohne Groß-/Kleinschreibung");
+        assert_eq!(db.browse("self", None, Some("_1"), 0, 50, None).unwrap().1, 10);
+        assert_eq!(db.browse("self", None, Some("BILD_2"), 0, 50, None).unwrap().1, 5, "ohne Groß-/Kleinschreibung");
 
         // Gerätefilter
-        assert_eq!(db.browse("self", Some(None), None, 0, 50).unwrap().1, 1);
-        assert_eq!(db.browse("self", Some(Some(&origin)), None, 0, 50).unwrap().1, 25);
+        assert_eq!(db.browse("self", Some(None), None, 0, 50, None).unwrap().1, 1);
+        assert_eq!(db.browse("self", Some(Some(&origin)), None, 0, 50, None).unwrap().1, 25);
+
+        // Keyset: alle Einträge seitenweise per Cursor, lückenlos und ohne Dopplungen
+        let mut seen = Vec::new();
+        let mut after = None;
+        loop {
+            let (page, total, next) = db.browse("self", None, None, 0, 7, after.as_ref()).unwrap();
+            assert_eq!(total, 26);
+            seen.extend(page.into_iter().map(|i| i.name));
+            match next {
+                Some(c) => after = Some(c),
+                None => break,
+            }
+        }
+        let (all, _, none) = db.browse("self", None, None, 0, 100, None).unwrap();
+        assert!(none.is_none());
+        assert_eq!(seen, all.into_iter().map(|i| i.name).collect::<Vec<_>>());
     }
 
     #[test]

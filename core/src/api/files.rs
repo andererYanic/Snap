@@ -153,6 +153,10 @@ pub(crate) fn browse(inner: &DaemonInner, q: crate::ipc::BrowseQuery) -> Result<
     if q.search.as_ref().is_some_and(|s| s.len() > 256) {
         api_bail!(InvalidInput, "Suchbegriff zu lang");
     }
-    let (items, total) = inner.db.browse(&inner.self_id(), device, q.search.as_deref(), q.offset, limit)?;
-    Ok(Response::BrowsePage { items, total })
+    if q.offset > 100_000 {
+        api_bail!(InvalidInput, "Offset zu groß – für große Kataloge `after` (Cursor) verwenden");
+    }
+    let (items, total, next) =
+        inner.db.browse(&inner.self_id(), device, q.search.as_deref(), q.offset, limit, q.after.as_ref())?;
+    Ok(Response::BrowsePage { items, total, next })
 }

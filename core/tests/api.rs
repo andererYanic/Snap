@@ -105,7 +105,7 @@ async fn subscribe_streams_live_events_across_devices() {
 
     // Seitenweise Abfrage mit Suche findet die Datei von A
     match call(&b, Request::Browse(BrowseQuery { search: Some("von_".into()), ..Default::default() })).await {
-        Response::BrowsePage { items, total } => {
+        Response::BrowsePage { items, total, .. } => {
             assert_eq!(total, 1);
             assert_eq!(items[0].origin.as_deref(), Some(a.node_id().as_str()));
             assert_eq!(items[0].origin_name.as_deref(), Some("A"));

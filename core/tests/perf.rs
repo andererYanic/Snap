@@ -118,3 +118,61 @@ fn db_hot_paths() {
         lat.last().unwrap().as_secs_f64() * 1e6
     );
 }
+
+#[test]
+#[ignore]
+fn api_browse_and_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = DatabaseManager::open(&dir.path().join("bench.db")).unwrap();
+    let key = SecretKey::generate();
+    // 100 000 Einträge eines anderen Geräts + 5 000 eigene Dateien
+    let entries = signed_entries(&key, 100_000);
+    for chunk in entries.chunks(1000) {
+        db.apply_remote_entries(chunk).unwrap();
+    }
+    for i in 0..5000 {
+        db.upsert_file(&format!("/data/f{i}"), &hash(200_000 + i), &format!("eigene-{i}.txt"), 1, "t").unwrap();
+    }
+
+    let run = |name: &str, n: usize, f: &dyn Fn()| {
+        let t = Instant::now();
+        for _ in 0..n {
+            f();
+        }
+        report(name, n, t.elapsed());
+    };
+    run("browse erste Seite (105k, 100 Einträge)", 20, &|| {
+        db.browse("self", None, None, 0, 100, None).unwrap();
+    });
+    run("browse tiefe Seite (Offset 90 000)", 20, &|| {
+        db.browse("self", None, None, 90_000, 100, None).unwrap();
+    });
+    run("browse Suche \"datei-9999\"", 20, &|| {
+        db.browse("self", None, Some("datei-9999"), 0, 100, None).unwrap();
+    });
+    let (_, _, cursor) = db.browse("self", None, None, 0, 100, None).unwrap();
+    let mut c = cursor.unwrap();
+    for _ in 0..900 {
+        c = db.browse("self", None, None, 0, 100, Some(&c)).unwrap().2.unwrap();
+    }
+    run("browse tiefe Seite per Cursor (~Eintrag 90 000)", 20, &|| {
+        db.browse("self", None, None, 0, 100, Some(&c)).unwrap();
+    });
+    run("browse nur eigene (5k)", 20, &|| {
+        db.browse("self", Some(None), None, 0, 100, None).unwrap();
+    });
+
+    // Ereignis-Overhead: Übernahme mit und ohne Abonnent
+    let more = signed_entries(&SecretKey::generate(), 10_000);
+    let t = Instant::now();
+    for c in more[..5000].chunks(1000) {
+        db.apply_remote_entries(c).unwrap();
+    }
+    report("apply ohne Abonnent", 5000, t.elapsed());
+    let _sub = db.events().subscribe();
+    let t = Instant::now();
+    for c in more[5000..].chunks(1000) {
+        db.apply_remote_entries(c).unwrap();
+    }
+    report("apply mit Abonnent", 5000, t.elapsed());
+}

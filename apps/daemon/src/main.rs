@@ -310,7 +310,7 @@ fn print_response(res: Response) -> ExitCode {
             println!("   Die Dateilisten werden jetzt im Hintergrund abgeglichen. Anzeigen: space-daemon list");
         }
         Response::Devices { devices } => print_devices(&devices),
-        Response::BrowsePage { items, total } => {
+        Response::BrowsePage { items, total, .. } => {
             for i in &items {
                 let wo = i.origin_name.clone().or_else(|| i.origin.as_deref().map(|o| short(o, 10).to_string()));
                 println!("{:<14} {:>10}  {}  ({})", short(&i.hash, 12), human_size(i.size), i.name, wo.unwrap_or_else(|| "dieses Gerät".into()));

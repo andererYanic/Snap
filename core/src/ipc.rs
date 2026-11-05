@@ -36,9 +36,22 @@ pub struct BrowseQuery {
     pub device: Option<String>,
     /// Teilstring im Dateinamen (ohne Groß-/Kleinschreibung).
     pub search: Option<String>,
+    /// Für einfache Fälle. Bei großen Katalogen besser `after` verwenden (konstant schnell).
     pub offset: u32,
     /// Maximal [`MAX_BROWSE_LIMIT`]; 0 = Standard (100).
     pub limit: u32,
+    /// Fortsetzung hinter diesem Eintrag (Keyset-Pagination, `next` der vorigen Seite).
+    #[serde(default)]
+    pub after: Option<BrowseCursor>,
+}
+
+/// Position im Katalog: Sortierschlüssel des letzten Eintrags einer Seite.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BrowseCursor {
+    pub name: String,
+    /// Leer = dieses Gerät.
+    pub origin: String,
+    pub hash: String,
 }
 
 pub const MAX_BROWSE_LIMIT: u32 = 500;
@@ -148,7 +161,12 @@ pub enum Response {
     PairInvite { code: String, expires_at: i64 },
     Paired { device: DeviceInfo },
     Devices { devices: Vec<DeviceInfo> },
-    BrowsePage { items: Vec<CatalogItem>, total: u64 },
+    BrowsePage {
+        items: Vec<CatalogItem>,
+        total: u64,
+        /// Cursor für die nächste Seite (`None` = Ende erreicht).
+        next: Option<BrowseCursor>,
+    },
     Event(crate::events::Event),
     Queue { jobs: Vec<PendingJob> },
     Peers { peers: Vec<PeerInfo> },
