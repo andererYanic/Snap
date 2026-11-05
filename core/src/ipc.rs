@@ -3,7 +3,7 @@
 //! Jede Nachricht ist ein JSON-Dokument mit vorangestellter Länge (u32, Big Endian).
 //! Nachrichten über [`MAX_FRAME_LEN`] werden abgelehnt.
 
-use crate::database::{FileRecord, PeerInfo, PendingJob};
+use crate::database::{DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile};
 use anyhow::{bail, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::PathBuf;
@@ -27,8 +27,21 @@ pub enum Request {
         hash: Option<String>,
         path: Option<PathBuf>,
     },
-    /// Freigegebene Dateien auflisten.
+    /// Katalog anzeigen: eigene Freigaben und Dateien gekoppelter Geräte.
+    /// Ist der Stand älter als 5 Minuten, wird im Hintergrund abgeglichen.
     List,
+    /// Sofort mit allen gekoppelten Geräten abgleichen.
+    Sync,
+    /// Einladungscode für ein neues Gerät erzeugen.
+    PairInvite,
+    /// Warten, bis die aktuelle Einladung angenommen wurde (oder abläuft).
+    PairInviteWait,
+    /// Mit einem Einladungscode koppeln.
+    PairJoin { code: String },
+    /// Gekoppelte Geräte auflisten.
+    PairList,
+    /// Gerät entkoppeln (Name oder Node-ID-Präfix).
+    PairRemove { device: String },
     /// Vollständiges Ticket einer freigegebenen Datei abfragen.
     Ticket { hash: String },
     /// Offline-Warteschlange anzeigen.
@@ -52,6 +65,17 @@ pub struct DaemonInfo {
     pub shared_files: u64,
     pub pending_jobs: u64,
     pub use_relay: bool,
+    pub device_name: String,
+    pub paired_devices: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SyncResult {
+    pub node_id: String,
+    pub name: String,
+    pub ok: bool,
+    pub new_entries: usize,
+    pub error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -62,7 +86,18 @@ pub enum Response {
     /// Peer nicht erreichbar – Auftrag liegt in der Warteschlange.
     Queued { job_id: i64, peer: String, reason: String, already_queued: bool },
     Ticket { ticket: String },
-    FileList { files: Vec<FileRecord> },
+    Catalog {
+        local: Vec<FileRecord>,
+        remote: Vec<RemoteFile>,
+        devices: Vec<DeviceInfo>,
+        peers: Vec<PeerInfo>,
+        /// Ein Abgleich läuft gerade im Hintergrund.
+        syncing: bool,
+    },
+    SyncReport { results: Vec<SyncResult> },
+    PairInvite { code: String, expires_at: i64 },
+    Paired { device: DeviceInfo },
+    Devices { devices: Vec<DeviceInfo> },
     Queue { jobs: Vec<PendingJob> },
     Peers { peers: Vec<PeerInfo> },
     Info(DaemonInfo),
@@ -75,14 +110,23 @@ impl Response {
     }
 }
 
-/// Schreibt eine Nachricht mit Längenpräfix.
+/// Schreibt eine Nachricht mit Längenpräfix (maximal [`MAX_FRAME_LEN`]).
 pub async fn write_frame<W, T>(writer: &mut W, value: &T) -> Result<()>
 where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
+    write_frame_max(writer, value, MAX_FRAME_LEN).await
+}
+
+/// Schreibt eine Nachricht mit Längenpräfix und eigenem Größenlimit.
+pub async fn write_frame_max<W, T>(writer: &mut W, value: &T, max: u32) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+    T: Serialize,
+{
     let bytes = serde_json::to_vec(value)?;
-    if bytes.len() > MAX_FRAME_LEN as usize {
+    if bytes.len() > max as usize {
         bail!("IPC-Nachricht zu groß ({} Byte)", bytes.len());
     }
     writer.write_u32(bytes.len() as u32).await?;
@@ -97,9 +141,18 @@ where
     R: AsyncRead + Unpin,
     T: DeserializeOwned,
 {
+    read_frame_max(reader, MAX_FRAME_LEN).await
+}
+
+/// Liest eine Nachricht mit Längenpräfix und eigenem Größenlimit.
+pub async fn read_frame_max<R, T>(reader: &mut R, max: u32) -> Result<T>
+where
+    R: AsyncRead + Unpin,
+    T: DeserializeOwned,
+{
     let len = reader.read_u32().await?;
-    if len > MAX_FRAME_LEN {
-        bail!("IPC-Nachricht zu groß ({len} Byte, maximal {MAX_FRAME_LEN})");
+    if len > max {
+        bail!("Nachricht zu groß ({len} Byte, maximal {max})");
     }
     let mut buf = vec![0u8; len as usize];
     reader.read_exact(&mut buf).await?;

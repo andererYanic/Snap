@@ -1,12 +1,14 @@
 //! SQLite-Persistenz: Dateikatalog, Offline-Warteschlange und Peer-Status.
 
+use crate::ledger::LedgerEntry;
 use anyhow::{bail, Result};
+use std::collections::HashMap;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -89,6 +91,27 @@ pub struct PeerInfo {
     pub last_seen: Option<i64>,
     pub failures: u32,
     pub next_retry_at: Option<i64>,
+}
+
+/// Ein gekoppeltes Gerät.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub node_id: String,
+    pub name: String,
+    pub paired_at: i64,
+    pub last_sync_at: Option<i64>,
+}
+
+/// Eine Datei auf einem anderen Gerät (aus dem Ledger).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteFile {
+    pub origin: String,
+    /// Name des Geräts, falls direkt gekoppelt (sonst über ein anderes Gerät erfahren).
+    pub origin_name: Option<String>,
+    pub hash: String,
+    pub name: String,
+    pub size: u64,
+    pub created_at: i64,
 }
 
 pub struct DatabaseManager {
@@ -183,6 +206,38 @@ impl DatabaseManager {
                 UNIQUE(target_hash, action, output_path)
             );
             CREATE INDEX IF NOT EXISTS idx_pending_peer ON pending_pins(peer_id);
+
+            -- Schema 2: Pairing & Ledger
+            CREATE TABLE IF NOT EXISTS devices (
+                node_id      TEXT PRIMARY KEY,
+                name         TEXT    NOT NULL,
+                paired_at    INTEGER NOT NULL,
+                last_sync_at INTEGER
+            );
+
+            -- Signierte Katalogeinträge aller Geräte (eigene und empfangene).
+            -- Pro (origin, entry_id) wird nur die neueste Version gespeichert.
+            CREATE TABLE IF NOT EXISTS ledger_entries (
+                origin     TEXT    NOT NULL,
+                entry_id   INTEGER NOT NULL,
+                seq        INTEGER NOT NULL,
+                hash       TEXT    NOT NULL,
+                name       TEXT    NOT NULL,
+                size       INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                deleted    INTEGER NOT NULL,
+                signature  TEXT    NOT NULL,
+                PRIMARY KEY (origin, entry_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ledger_origin_seq ON ledger_entries(origin, seq);
+            CREATE INDEX IF NOT EXISTS idx_ledger_hash ON ledger_entries(hash);
+
+            -- Direkte Adress-Hinweise, nur von authentifizierten Gegenstellen über sich selbst.
+            CREATE TABLE IF NOT EXISTS peer_addrs (
+                node_id    TEXT PRIMARY KEY,
+                addrs      TEXT    NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
             ",
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -208,7 +263,7 @@ impl DatabaseManager {
         file_name: &str,
         file_size: u64,
         ticket: &str,
-    ) -> Result<bool> {
+    ) -> Result<(bool, i64)> {
         let conn = self.conn();
         let already: bool = conn
             .query_row(
@@ -232,7 +287,20 @@ impl DatabaseManager {
                 deleted_at  = NULL",
             params![hash, path, file_name, file_size as i64, ticket, now_unix()],
         )?;
-        Ok(already)
+        let id: i64 = conn.query_row("SELECT id FROM files WHERE path = ?1", params![path], |r| r.get(0))?;
+        Ok((already, id))
+    }
+
+    /// Daten einer Datei per ID (auch gelöschte).
+    pub fn file_by_id(&self, id: i64) -> Result<Option<FileRecord>> {
+        let conn = self.conn();
+        Ok(conn
+            .query_row(
+                "SELECT blake3_hash, file_name, file_size, path, ticket, created_at FROM files WHERE id = ?1",
+                params![id],
+                Self::map_file,
+            )
+            .optional()?)
     }
 
     /// Darf dieser Hash an andere Peers ausgeliefert werden?
@@ -287,20 +355,31 @@ impl DatabaseManager {
         Ok(rows)
     }
 
-    pub fn soft_delete_by_hash(&self, full_hash: &str) -> Result<usize> {
-        let conn = self.conn();
-        Ok(conn.execute(
-            "UPDATE files SET deleted_at = ?2 WHERE blake3_hash = ?1 AND deleted_at IS NULL",
-            params![full_hash, now_unix()],
-        )?)
+    /// Verschiebt alle aktiven Einträge mit diesem Hash in den Papierkorb. Gibt die IDs zurück.
+    pub fn soft_delete_by_hash(&self, full_hash: &str) -> Result<Vec<i64>> {
+        self.soft_delete_where("blake3_hash = ?1", full_hash)
     }
 
-    pub fn soft_delete_by_path(&self, path: &str) -> Result<usize> {
-        let conn = self.conn();
-        Ok(conn.execute(
-            "UPDATE files SET deleted_at = ?2 WHERE path = ?1 AND deleted_at IS NULL",
-            params![path, now_unix()],
-        )?)
+    /// Verschiebt den aktiven Eintrag mit diesem Pfad in den Papierkorb. Gibt die IDs zurück.
+    pub fn soft_delete_by_path(&self, path: &str) -> Result<Vec<i64>> {
+        self.soft_delete_where("path = ?1", path)
+    }
+
+    fn soft_delete_where(&self, cond: &str, value: &str) -> Result<Vec<i64>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let ids: Vec<i64> = {
+            let mut stmt =
+                tx.prepare(&format!("SELECT id FROM files WHERE {cond} AND deleted_at IS NULL"))?;
+            let rows = stmt.query_map(params![value], |r| r.get(0))?.collect::<rusqlite::Result<Vec<i64>>>()?;
+            rows
+        };
+        tx.execute(
+            &format!("UPDATE files SET deleted_at = ?2 WHERE {cond} AND deleted_at IS NULL"),
+            params![value, now_unix()],
+        )?;
+        tx.commit()?;
+        Ok(ids)
     }
 
     /// Entfernt Papierkorb-Einträge, deren Frist abgelaufen ist. Gibt die Hashes
@@ -619,6 +698,290 @@ impl DatabaseManager {
     }
 }
 
+impl DatabaseManager {
+    // ------------------------------------------------------------------
+    // Ledger
+    // ------------------------------------------------------------------
+
+    /// Schreibt (bzw. aktualisiert) einen eigenen Katalogeintrag mit neuer
+    /// Sequenznummer. `sign` erzeugt die Signatur über den fertigen Eintrag.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_own_entry(
+        &self,
+        origin: &str,
+        entry_id: i64,
+        hash: &str,
+        name: &str,
+        size: u64,
+        created_at: i64,
+        deleted: bool,
+        sign: &dyn Fn(&LedgerEntry) -> String,
+    ) -> Result<LedgerEntry> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM ledger_entries WHERE origin = ?1",
+            params![origin],
+            |r| r.get(0),
+        )?;
+        let mut entry = LedgerEntry {
+            origin: origin.to_string(),
+            entry_id,
+            seq,
+            hash: hash.to_string(),
+            name: name.to_string(),
+            size,
+            created_at,
+            deleted,
+            signature: String::new(),
+        };
+        entry.signature = sign(&entry);
+        Self::upsert_entry(&tx, &entry)?;
+        tx.commit()?;
+        Ok(entry)
+    }
+
+    fn upsert_entry(conn: &Connection, e: &LedgerEntry) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO ledger_entries (origin, entry_id, seq, hash, name, size, created_at, deleted, signature)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(origin, entry_id) DO UPDATE SET
+                seq = excluded.seq, hash = excluded.hash, name = excluded.name, size = excluded.size,
+                created_at = excluded.created_at, deleted = excluded.deleted, signature = excluded.signature
+             WHERE excluded.seq > ledger_entries.seq",
+            params![e.origin, e.entry_id, e.seq, e.hash, e.name, e.size as i64, e.created_at, e.deleted, e.signature],
+        )
+    }
+
+    /// Übernimmt einen (bereits verifizierten) fremden Eintrag, falls er neuer ist.
+    pub fn apply_remote_entry(&self, e: &LedgerEntry) -> Result<bool> {
+        Ok(Self::upsert_entry(&self.conn(), e)? > 0)
+    }
+
+    /// Aktive eigene Dateien ohne Ledger-Eintrag (z. B. aus Schema 1).
+    pub fn files_missing_entries(&self, origin: &str) -> Result<Vec<(i64, FileRecord)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at
+             FROM files f
+             WHERE f.deleted_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM ledger_entries l WHERE l.origin = ?1 AND l.entry_id = f.id)",
+        )?;
+        let rows = stmt
+            .query_map(params![origin], |r| {
+                Ok((
+                    r.get(0)?,
+                    FileRecord {
+                        blake3_hash: r.get(1)?,
+                        file_name: r.get(2)?,
+                        file_size: r.get::<_, i64>(3)? as u64,
+                        path: r.get(4)?,
+                        ticket: r.get(5)?,
+                        created_at: r.get(6)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Höchste bekannte Sequenznummer je Ursprungsgerät.
+    pub fn version_vector(&self) -> Result<HashMap<String, i64>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT origin, MAX(seq) FROM ledger_entries GROUP BY origin")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+        Ok(rows)
+    }
+
+    /// Alle Einträge, die neuer sind als der übergebene Versionsvektor –
+    /// je Ursprung aufsteigend nach `seq`, maximal `limit` Stück.
+    pub fn entries_since(&self, have: &HashMap<String, i64>, limit: usize) -> Result<Vec<LedgerEntry>> {
+        let conn = self.conn();
+        let origins: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT DISTINCT origin FROM ledger_entries ORDER BY origin")?;
+            let rows = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+            rows
+        };
+        let mut stmt = conn.prepare(
+            "SELECT origin, entry_id, seq, hash, name, size, created_at, deleted, signature
+             FROM ledger_entries WHERE origin = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
+        )?;
+        let mut out = Vec::new();
+        for origin in origins {
+            if out.len() >= limit {
+                break;
+            }
+            let since = have.get(&origin).copied().unwrap_or(0);
+            let remaining = (limit - out.len()) as i64;
+            let rows = stmt
+                .query_map(params![origin, since, remaining], Self::map_entry)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            out.extend(rows);
+        }
+        Ok(out)
+    }
+
+    fn map_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<LedgerEntry> {
+        Ok(LedgerEntry {
+            origin: r.get(0)?,
+            entry_id: r.get(1)?,
+            seq: r.get(2)?,
+            hash: r.get(3)?,
+            name: r.get(4)?,
+            size: r.get::<_, i64>(5)? as u64,
+            created_at: r.get(6)?,
+            deleted: r.get(7)?,
+            signature: r.get(8)?,
+        })
+    }
+
+    const REMOTE_SELECT: &'static str = "
+        SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at
+        FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
+        WHERE l.deleted = 0 AND l.origin != ?1";
+
+    fn map_remote(r: &rusqlite::Row<'_>) -> rusqlite::Result<RemoteFile> {
+        Ok(RemoteFile {
+            origin: r.get(0)?,
+            origin_name: r.get(1)?,
+            hash: r.get(2)?,
+            name: r.get(3)?,
+            size: r.get::<_, i64>(4)? as u64,
+            created_at: r.get(5)?,
+        })
+    }
+
+    /// Dateien anderer Geräte (ohne gelöschte).
+    pub fn remote_files(&self, self_origin: &str) -> Result<Vec<RemoteFile>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "{} ORDER BY COALESCE(d.name, l.origin), l.name COLLATE NOCASE",
+            Self::REMOTE_SELECT
+        ))?;
+        let rows = stmt.query_map(params![self_origin], Self::map_remote)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn find_remote_by_hash_prefix(&self, prefix: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
+        let prefix = normalize_hash_prefix(prefix)?;
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "{} AND substr(l.hash, 1, ?3) = ?2 ORDER BY l.created_at",
+            Self::REMOTE_SELECT
+        ))?;
+        let rows = stmt
+            .query_map(params![self_origin, prefix, prefix.len() as i64], Self::map_remote)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn find_remote_by_name(&self, name: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!("{} AND l.name = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
+        let rows = stmt.query_map(params![self_origin, name], Self::map_remote)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    // ------------------------------------------------------------------
+    // Gekoppelte Geräte & Adress-Hinweise
+    // ------------------------------------------------------------------
+
+    /// Fügt ein Gerät hinzu oder aktualisiert seinen Namen.
+    pub fn add_device(&self, node_id: &str, name: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO devices (node_id, name, paired_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(node_id) DO UPDATE SET name = excluded.name",
+            params![node_id, name, now_unix()],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_paired(&self, node_id: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_row("SELECT 1 FROM devices WHERE node_id = ?1", params![node_id], |_| Ok(true))
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    pub fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(DeviceInfo { node_id: r.get(0)?, name: r.get(1)?, paired_at: r.get(2)?, last_sync_at: r.get(3)? })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Sucht ein Gerät per exaktem Namen oder Node-ID-Präfix (mind. 6 Zeichen).
+    pub fn find_devices(&self, query: &str) -> Result<Vec<DeviceInfo>> {
+        let q = query.trim();
+        let by_id = normalize_hash_prefix(q).ok();
+        Ok(self
+            .list_devices()?
+            .into_iter()
+            .filter(|d| d.name == q || by_id.as_deref().is_some_and(|p| d.node_id.starts_with(p)))
+            .collect())
+    }
+
+    /// Entkoppelt ein Gerät und entfernt seine Ledger-Einträge und Adress-Hinweise.
+    pub fn remove_device(&self, node_id: &str) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let removed = tx.execute("DELETE FROM devices WHERE node_id = ?1", params![node_id])? > 0;
+        tx.execute("DELETE FROM ledger_entries WHERE origin = ?1", params![node_id])?;
+        tx.execute("DELETE FROM peer_addrs WHERE node_id = ?1", params![node_id])?;
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    pub fn set_last_sync(&self, node_id: &str) -> Result<()> {
+        self.conn()
+            .execute("UPDATE devices SET last_sync_at = ?2 WHERE node_id = ?1", params![node_id, now_unix()])?;
+        Ok(())
+    }
+
+    /// Speichert direkte Adress-Hinweise (max. 16, nur gültige Socket-Adressen).
+    pub fn set_addr_hints(&self, node_id: &str, addrs: &[String]) -> Result<()> {
+        let valid: Vec<&String> =
+            addrs.iter().filter(|a| a.parse::<std::net::SocketAddr>().is_ok()).take(16).collect();
+        if valid.is_empty() {
+            return Ok(());
+        }
+        self.conn().execute(
+            "INSERT INTO peer_addrs (node_id, addrs, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(node_id) DO UPDATE SET addrs = excluded.addrs, updated_at = excluded.updated_at",
+            params![node_id, serde_json::to_string(&valid)?, now_unix()],
+        )?;
+        Ok(())
+    }
+
+    pub fn addr_hints(&self, node_id: &str) -> Result<Vec<String>> {
+        let json: Option<String> = self
+            .conn()
+            .query_row("SELECT addrs FROM peer_addrs WHERE node_id = ?1", params![node_id], |r| r.get(0))
+            .optional()?;
+        Ok(json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
+    }
+
+    pub fn has_waiting_jobs(&self, peer_id: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM pending_pins WHERE peer_id = ?1 AND state = 'waiting' LIMIT 1",
+                params![peer_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,11 +1014,11 @@ mod tests {
     #[test]
     fn upsert_does_not_duplicate() {
         let db = DatabaseManager::open_in_memory().unwrap();
-        assert!(!db.upsert_file("/a", H1, "a", 1, "t").unwrap());
-        assert!(db.upsert_file("/a", H1, "a", 1, "t").unwrap());
+        assert!(!db.upsert_file("/a", H1, "a", 1, "t").unwrap().0);
+        assert!(db.upsert_file("/a", H1, "a", 1, "t").unwrap().0);
         assert_eq!(db.list_files().unwrap().len(), 1);
         // Inhalt geändert -> gleicher Eintrag, neuer Hash
-        assert!(!db.upsert_file("/a", H2, "a", 2, "t2").unwrap());
+        assert!(!db.upsert_file("/a", H2, "a", 2, "t2").unwrap().0);
         let files = db.list_files().unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].blake3_hash, H2);
@@ -667,10 +1030,10 @@ mod tests {
         db.upsert_file("/a", H1, "a", 1, "t").unwrap();
         db.upsert_file("/b", H1, "b", 1, "t").unwrap();
         assert!(db.is_shared(H1).unwrap());
-        assert_eq!(db.soft_delete_by_path("/a").unwrap(), 1);
+        assert_eq!(db.soft_delete_by_path("/a").unwrap().len(), 1);
         assert!(db.is_shared(H1).unwrap(), "zweite Kopie ist noch freigegeben");
         assert_eq!(db.purge_expired(0).unwrap(), Vec::<String>::new());
-        assert_eq!(db.soft_delete_by_hash(H1).unwrap(), 1);
+        assert_eq!(db.soft_delete_by_hash(H1).unwrap().len(), 1);
         assert!(!db.is_shared(H1).unwrap());
         assert_eq!(db.purge_expired(30).unwrap(), Vec::<String>::new(), "Frist läuft noch");
         assert_eq!(db.purge_expired(0).unwrap(), vec![H1.to_string()]);
@@ -682,7 +1045,7 @@ mod tests {
         db.upsert_file("/a", H1, "a", 1, "t").unwrap();
         db.soft_delete_by_path("/a").unwrap();
         assert!(!db.is_shared(H1).unwrap());
-        assert!(!db.upsert_file("/a", H1, "a", 1, "t").unwrap());
+        assert!(!db.upsert_file("/a", H1, "a", 1, "t").unwrap().0);
         assert!(db.is_shared(H1).unwrap());
     }
 

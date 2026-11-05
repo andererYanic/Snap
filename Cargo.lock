@@ -3462,8 +3462,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "data-encoding",
  "directories",
  "fastrand",
+ "getrandom 0.2.17",
  "iroh",
  "iroh-blobs",
  "libc",

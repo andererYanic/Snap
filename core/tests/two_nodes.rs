@@ -136,7 +136,7 @@ async fn rejects_dangerous_inputs() {
         assert!(matches!(res, Response::Error { .. }), "'{bad}' darf nichts löschen");
     }
     match a.request(Request::List).await {
-        Response::FileList { files } => assert_eq!(files.len(), 1),
+        Response::Catalog { local, .. } => assert_eq!(local.len(), 1),
         other => panic!("{other:?}"),
     }
     // Relative Pfade werden vom Daemon nicht akzeptiert

@@ -1,9 +1,11 @@
 //! Der Daemon: IPC-Server, Request-Verarbeitung, Offline-Warteschlange und Aufräumen.
 
 use crate::config::Config;
-use crate::database::{now_unix, DatabaseManager, NewJob, PendingJob};
-use crate::ipc::{read_frame, write_frame, DaemonInfo, Request, Response};
-use crate::network::{AccessCheck, ConnectHook, FetchError, NetworkOptions, P2pNetwork};
+use crate::database::{now_unix, DatabaseManager, NewJob, PendingJob, RemoteFile};
+use crate::ipc::{read_frame, write_frame, DaemonInfo, Request, Response, SyncResult};
+use crate::ledger::{LedgerCtx, LedgerEntry, LedgerProtocol, SyncError, LEDGER_ALPN};
+use crate::network::{endpoint_addr, AccessCheck, ConnectHook, FetchError, NetworkOptions, P2pNetwork};
+use crate::pairing::{PairingCtx, PairingProtocol, PairingState, PAIR_ALPN};
 use crate::secure_fs::{current_uid, ensure_private_dir, load_or_create_secret_key};
 use anyhow::{bail, Context, Result};
 use iroh_blobs::{ticket::BlobTicket, BlobFormat, Hash};
@@ -12,6 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use iroh::{EndpointId, SecretKey};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -20,6 +23,8 @@ use tokio::task::JoinHandle;
 const IPC_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Intervall für das Aufräumen abgelaufener Papierkorb-Einträge.
 const PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
+/// Ab diesem Alter löst `list` einen Hintergrund-Abgleich aus.
+const CATALOG_MAX_AGE_SECS: i64 = 300;
 
 pub struct DaemonInner {
     pub config: Config,
@@ -27,6 +32,32 @@ pub struct DaemonInner {
     pub db: Arc<DatabaseManager>,
     /// Weckt den Warteschlangen-Worker (neuer Auftrag, Retry, Peer meldet sich).
     pub sync_notifier: Arc<Notify>,
+    secret_key: SecretKey,
+    ledger: Arc<LedgerCtx>,
+    pairing: Arc<PairingCtx>,
+    /// Verhindert parallele Ledger-Abgleiche.
+    sync_lock: tokio::sync::Mutex<()>,
+}
+
+impl DaemonInner {
+    fn self_id(&self) -> String {
+        self.network.node_id().to_string()
+    }
+
+    /// Schreibt einen eigenen, signierten Ledger-Eintrag für eine Datei.
+    fn record_entry(&self, file_id: i64, record: &crate::database::FileRecord, deleted: bool) -> Result<LedgerEntry> {
+        let key = self.secret_key.clone();
+        self.db.record_own_entry(
+            &self.self_id(),
+            file_id,
+            &record.blake3_hash,
+            &record.file_name,
+            record.file_size,
+            record.created_at,
+            deleted,
+            &move |e: &LedgerEntry| e.sign(&key),
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -78,10 +109,13 @@ impl Daemon {
             })
         };
 
+        let pairing_state = Arc::new(PairingState::default());
+        let mut ledger_slot: Option<Arc<LedgerCtx>> = None;
+        let mut pairing_slot: Option<Arc<PairingCtx>> = None;
         let network = P2pNetwork::start(
             NetworkOptions {
                 blob_store_path: config.blob_store_path(),
-                secret_key,
+                secret_key: secret_key.clone(),
                 connect_timeout: Duration::from_secs(config.connect_timeout_secs),
                 bind_port: config.bind_port,
                 use_relay: config.use_relay,
@@ -89,20 +123,52 @@ impl Daemon {
             },
             access,
             on_connect,
+            |builder, endpoint| {
+                let ledger = Arc::new(LedgerCtx {
+                    db: db.clone(),
+                    endpoint: endpoint.clone(),
+                    device_name: config.device_name.clone(),
+                    notifier: sync_notifier.clone(),
+                });
+                let pairing = Arc::new(PairingCtx {
+                    db: db.clone(),
+                    endpoint: endpoint.clone(),
+                    device_name: config.device_name.clone(),
+                    state: pairing_state.clone(),
+                });
+                ledger_slot = Some(ledger.clone());
+                pairing_slot = Some(pairing.clone());
+                builder
+                    .accept(LEDGER_ALPN, LedgerProtocol { ctx: ledger })
+                    .accept(PAIR_ALPN, PairingProtocol { ctx: pairing })
+            },
         )
         .await?;
+        let ledger = ledger_slot.context("Ledger-Protokoll nicht initialisiert")?;
+        let pairing = pairing_slot.context("Pairing-Protokoll nicht initialisiert")?;
 
         let listener = UnixListener::bind(&config.socket_path)
             .with_context(|| format!("IPC-Socket {} nicht anlegbar", config.socket_path.display()))?;
         std::fs::set_permissions(&config.socket_path, std::fs::Permissions::from_mode(0o600))?;
 
-        let inner = Arc::new(DaemonInner { config, network, db, sync_notifier });
+        let inner = Arc::new(DaemonInner {
+            config,
+            network,
+            db,
+            sync_notifier,
+            secret_key,
+            ledger,
+            pairing,
+            sync_lock: tokio::sync::Mutex::new(()),
+        });
+        backfill_ledger(&inner)?;
         let daemon = Self { inner: inner.clone(), tasks: Arc::new(Mutex::new(Vec::new())) };
 
         let ipc = tokio::spawn(run_ipc_server(inner.clone(), listener));
         let worker = tokio::spawn(run_pending_pin_worker(inner.clone()));
         let pruner = tokio::spawn(run_pruner(inner.clone()));
-        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner]);
+        let periodic = tokio::spawn(run_periodic_sync(inner.clone()));
+        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic]);
 
         Ok(daemon)
     }
@@ -192,7 +258,30 @@ async fn handle_request(inner: &DaemonInner, req: Request) -> Response {
         Request::Publish { path } => publish(inner, &path).await,
         Request::Download { target, output, force } => download(inner, &target, output, force).await,
         Request::Delete { hash, path } => delete(inner, hash, path).await,
-        Request::List => inner.db.list_files().map(|files| Response::FileList { files }),
+        Request::List => catalog(inner),
+        Request::Sync => Ok(Response::SyncReport { results: sync_all(inner).await }),
+        Request::PairInvite => pair_invite(inner).await,
+        Request::PairInviteWait => inner
+            .pairing
+            .state
+            .wait_for_join()
+            .await
+            .map(|device| {
+                spawn_sync_with(inner, &device.node_id);
+                Response::Paired { device }
+            }),
+        Request::PairJoin { code } => {
+            let timeout = Duration::from_secs(inner.config.connect_timeout_secs);
+            match crate::pairing::join(&inner.pairing, &code, timeout).await {
+                Ok(device) => {
+                    spawn_sync_with(inner, &device.node_id);
+                    Ok(Response::Paired { device })
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Request::PairList => inner.db.list_devices().map(|devices| Response::Devices { devices }),
+        Request::PairRemove { device } => pair_remove(inner, &device),
         Request::Ticket { hash } => ticket(inner, &hash),
         Request::Queue => inner.db.list_jobs().map(|jobs| Response::Queue { jobs }),
         Request::QueueCancel { id } => match inner.db.cancel_job(id) {
@@ -224,6 +313,8 @@ fn info(inner: &DaemonInner) -> Result<Response> {
         shared_files: inner.db.count_shared()?,
         pending_jobs: inner.db.count_waiting_jobs()?,
         use_relay: c.use_relay,
+        device_name: c.device_name.clone(),
+        paired_devices: inner.db.list_devices()?.len() as u64,
     }))
 }
 
@@ -258,7 +349,12 @@ async fn publish(inner: &DaemonInner, path: &Path) -> Result<Response> {
         .await
         .with_context(|| format!("Datei {} konnte nicht importiert werden", canon.display()))?;
     let hash_hex = hash.to_string();
-    let already_shared = inner.db.upsert_file(&path_str, &hash_hex, &file_name, meta.len(), &ticket)?;
+    let (already_shared, file_id) = inner.db.upsert_file(&path_str, &hash_hex, &file_name, meta.len(), &ticket)?;
+    if !already_shared {
+        if let Some(record) = inner.db.file_by_id(file_id)? {
+            inner.record_entry(file_id, &record, false)?;
+        }
+    }
 
     Ok(Response::Published { ticket, hash: hash_hex, file_name, already_shared })
 }
@@ -287,7 +383,7 @@ fn ticket(inner: &DaemonInner, hash: &str) -> Result<Response> {
 }
 
 async fn delete(inner: &DaemonInner, hash: Option<String>, path: Option<PathBuf>) -> Result<Response> {
-    let count = match (hash, path) {
+    let ids = match (hash, path) {
         (Some(h), None) => {
             let record = resolve_unique_hash(&inner.db, &h)?;
             inner.db.soft_delete_by_hash(&record.blake3_hash)?
@@ -302,6 +398,13 @@ async fn delete(inner: &DaemonInner, hash: Option<String>, path: Option<PathBuf>
         }
         _ => bail!("Genau eines von --hash oder --path angeben."),
     };
+    // Löschmarkierung (Tombstone) ins Ledger, damit gekoppelte Geräte sie übernehmen.
+    for id in &ids {
+        if let Some(record) = inner.db.file_by_id(*id)? {
+            inner.record_entry(*id, &record, true)?;
+        }
+    }
+    let count = ids.len();
     if count == 0 {
         bail!("Keine passende freigegebene Datei gefunden.");
     }
@@ -325,29 +428,92 @@ struct DownloadTarget {
     default_name: String,
 }
 
-fn resolve_download_target(db: &DatabaseManager, target: &str) -> Result<DownloadTarget> {
+/// Löst ein Download-Ziel auf: Ticket, Hash(-Präfix) oder Dateiname.
+/// Gesucht wird erst im eigenen Katalog, dann in den Dateilisten gekoppelter Geräte.
+fn resolve_download_target(inner: &DaemonInner, target: &str) -> Result<DownloadTarget> {
     let target = target.trim();
-    let looks_like_hash = target.len() <= 64 && target.bytes().all(|b| b.is_ascii_hexdigit());
+    let db = &inner.db;
+    let self_id = inner.self_id();
+
+    // 1. Ticket
+    if let Ok(ticket) = target.parse::<BlobTicket>() {
+        if ticket.format() != BlobFormat::Raw {
+            bail!("Sammlungen (HashSeq) werden noch nicht unterstützt.");
+        }
+        let hash_hex = ticket.hash().to_string();
+        let known_name = db
+            .find_by_hash_prefix(&hash_hex)
+            .ok()
+            .and_then(|m| m.into_iter().next())
+            .map(|f| f.file_name)
+            .or_else(|| {
+                db.find_remote_by_hash_prefix(&hash_hex, &self_id).ok().and_then(|m| m.into_iter().next()).map(|f| f.name)
+            });
+        let default_name = known_name
+            .map(|n| sanitize_file_name(&n))
+            .unwrap_or_else(|| format!("snap-{}", &hash_hex[..12]));
+        return Ok(DownloadTarget { ticket, default_name });
+    }
+
+    // 2. Hash(-Präfix)
+    let looks_like_hash = target.len() >= 6 && target.len() <= 64 && target.bytes().all(|b| b.is_ascii_hexdigit());
     if looks_like_hash {
-        let record = resolve_unique_hash(db, target)?;
-        let ticket: BlobTicket = record.ticket.parse().context("Gespeichertes Ticket ist ungültig")?;
-        return Ok(DownloadTarget { ticket, default_name: sanitize_file_name(&record.file_name) });
+        let local = db.find_by_hash_prefix(target)?;
+        if !local.is_empty() {
+            let record = resolve_unique_hash(db, target)?;
+            let ticket: BlobTicket = record.ticket.parse().context("Gespeichertes Ticket ist ungültig")?;
+            return Ok(DownloadTarget { ticket, default_name: sanitize_file_name(&record.file_name) });
+        }
+        let remote = db.find_remote_by_hash_prefix(target, &self_id)?;
+        if !remote.is_empty() {
+            return remote_target(inner, remote, target);
+        }
     }
-    let ticket: BlobTicket = target
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Weder ein gültiges Ticket noch ein Hash: '{target}'"))?;
-    if ticket.format() != BlobFormat::Raw {
-        bail!("Sammlungen (HashSeq) werden noch nicht unterstützt.");
+
+    // 3. Dateiname aus den Listen gekoppelter Geräte
+    let remote = db.find_remote_by_name(target, &self_id)?;
+    if !remote.is_empty() {
+        return remote_target(inner, remote, target);
     }
-    let hash_hex = ticket.hash().to_string();
-    // Kennen wir den Namen aus dem eigenen Katalog?
-    let known_name = db
-        .find_by_hash_prefix(&hash_hex)
-        .ok()
-        .and_then(|m| m.into_iter().next())
-        .map(|f| sanitize_file_name(&f.file_name));
-    let default_name = known_name.unwrap_or_else(|| format!("snap-{}", &hash_hex[..12]));
-    Ok(DownloadTarget { ticket, default_name })
+    if looks_like_hash {
+        bail!("Keine Datei mit Hash '{target}' bekannt (weder eigene noch von gekoppelten Geräten).");
+    }
+    bail!(
+        "'{target}' ist weder ein Ticket noch ein bekannter Hash oder Dateiname.\n   \
+         Tipp: `space-daemon list` zeigt alle Dateien, `space-daemon sync` aktualisiert die Listen."
+    )
+}
+
+/// Wählt aus passenden Ledger-Einträgen eine Quelle. Mehrdeutige Inhalte führen zu
+/// einer Fehlermeldung; derselbe Inhalt auf mehreren Geräten wird bevorzugt von
+/// einem zuletzt erreichbaren Gerät geladen.
+fn remote_target(inner: &DaemonInner, matches: Vec<RemoteFile>, query: &str) -> Result<DownloadTarget> {
+    let distinct: HashSet<&str> = matches.iter().map(|f| f.hash.as_str()).collect();
+    if distinct.len() > 1 {
+        let list: Vec<String> = matches
+            .iter()
+            .map(|f| format!("  {}  {}  ({})", &f.hash[..16], f.name, device_label(f)))
+            .collect();
+        bail!("'{query}' ist mehrdeutig – bitte den Hash angeben:\n{}", list.join("\n"));
+    }
+    let peers = inner.db.list_peers().unwrap_or_default();
+    let score = |f: &RemoteFile| {
+        peers
+            .iter()
+            .find(|p| p.node_id == f.origin)
+            .map(|p| (p.status == "online", p.last_seen.unwrap_or(0)))
+            .unwrap_or((false, 0))
+    };
+    let best = matches.iter().max_by_key(|f| score(f)).expect("nicht leer");
+    let origin: EndpointId = best.origin.parse().context("Ungültige Geräte-ID im Ledger")?;
+    let hash: Hash = best.hash.parse().context("Ungültiger Hash im Ledger")?;
+    let hints = inner.db.addr_hints(&best.origin).unwrap_or_default();
+    let ticket = BlobTicket::new(endpoint_addr(origin, &hints), hash, BlobFormat::Raw);
+    Ok(DownloadTarget { ticket, default_name: sanitize_file_name(&best.name) })
+}
+
+fn device_label(f: &RemoteFile) -> String {
+    f.origin_name.clone().unwrap_or_else(|| format!("Gerät {}", &f.origin[..10.min(f.origin.len())]))
 }
 
 /// Entfernt Pfadbestandteile aus einem Dateinamen (Schutz vor `../`-Tricks).
@@ -370,7 +536,7 @@ async fn download(
     output: Option<PathBuf>,
     force: bool,
 ) -> Result<Response> {
-    let DownloadTarget { ticket, default_name } = resolve_download_target(&inner.db, target)?;
+    let DownloadTarget { ticket, default_name } = resolve_download_target(inner, target)?;
 
     // Ziel vor jedem Netzwerkzugriff prüfen, damit Fehler sofort sichtbar sind.
     let (output_path, explicit) = match output {
@@ -624,6 +790,168 @@ async fn process_job(inner: &DaemonInner, job: &PendingJob, unreachable: &mut Ha
 
 fn short(s: &str) -> &str {
     &s[..s.len().min(10)]
+}
+
+// ----------------------------------------------------------------------
+// Katalog, Ledger-Abgleich & Pairing
+// ----------------------------------------------------------------------
+
+/// Trägt eigene Freigaben ohne Ledger-Eintrag nach (z. B. nach dem Update von Schema 1).
+fn backfill_ledger(inner: &DaemonInner) -> Result<()> {
+    let missing = inner.db.files_missing_entries(&inner.self_id())?;
+    for (id, record) in &missing {
+        inner.record_entry(*id, record, false)?;
+    }
+    if !missing.is_empty() {
+        tracing::info!("Ledger: {} bestehende Freigabe(n) übernommen", missing.len());
+    }
+    Ok(())
+}
+
+fn catalog(inner: &DaemonInner) -> Result<Response> {
+    let devices = inner.db.list_devices()?;
+    let now = now_unix();
+    let stale = devices.iter().any(|d| d.last_sync_at.is_none_or(|t| now - t > CATALOG_MAX_AGE_SECS));
+    let mut syncing = inner.sync_lock.try_lock().is_err();
+    if stale && !syncing && !devices.is_empty() {
+        spawn_sync_all(inner);
+        syncing = true;
+    }
+    Ok(Response::Catalog {
+        local: inner.db.list_files()?,
+        remote: inner.db.remote_files(&inner.self_id())?,
+        devices,
+        peers: inner.db.list_peers()?,
+        syncing,
+    })
+}
+
+/// Gleicht mit allen gekoppelten Geräten parallel ab.
+async fn sync_all(inner: &DaemonInner) -> Vec<SyncResult> {
+    let _guard = inner.sync_lock.lock().await;
+    let devices = match inner.db.list_devices() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Geräteliste nicht lesbar: {e:#}");
+            return Vec::new();
+        }
+    };
+    let timeout = Duration::from_secs(inner.config.connect_timeout_secs);
+    let mut set = tokio::task::JoinSet::new();
+    for d in devices {
+        let ctx = inner.ledger.clone();
+        let db = inner.db.clone();
+        set.spawn(async move { sync_one(&ctx, &db, d.node_id, d.name, timeout).await });
+    }
+    let mut results = Vec::new();
+    while let Some(r) = set.join_next().await {
+        if let Ok(r) = r {
+            results.push(r);
+        }
+    }
+    results.sort_by(|a, b| a.name.cmp(&b.name));
+    results
+}
+
+async fn sync_one(ctx: &LedgerCtx, db: &DatabaseManager, node_id: String, name: String, timeout: Duration) -> SyncResult {
+    let mut result = SyncResult { node_id: node_id.clone(), name, ok: false, new_entries: 0, error: None };
+    let peer: EndpointId = match node_id.parse() {
+        Ok(p) => p,
+        Err(e) => {
+            result.error = Some(format!("Ungültige Geräte-ID: {e}"));
+            return result;
+        }
+    };
+    match crate::ledger::sync_with(ctx, peer, timeout).await {
+        Ok(stats) => {
+            result.ok = true;
+            result.new_entries = stats.new_entries;
+            if let Some(n) = stats.device_name {
+                result.name = n;
+            }
+        }
+        Err(e) => {
+            if matches!(e, SyncError::Unreachable(_)) {
+                let _ = db.mark_peer_unreachable(&node_id, false);
+            }
+            result.error = Some(e.to_string());
+        }
+    }
+    result
+}
+
+fn spawn_sync_all(inner: &DaemonInner) {
+    // `inner` lebt in einem Arc; für den Hintergrund-Task brauchen wir die Einzelteile.
+    let ctx = inner.ledger.clone();
+    let db = inner.db.clone();
+    let timeout = Duration::from_secs(inner.config.connect_timeout_secs);
+    tokio::spawn(async move {
+        let devices = db.list_devices().unwrap_or_default();
+        for d in devices {
+            let r = sync_one(&ctx, &db, d.node_id, d.name, timeout).await;
+            if r.new_entries > 0 {
+                tracing::info!("Ledger: {} neue Einträge von '{}'", r.new_entries, r.name);
+            }
+        }
+    });
+}
+
+fn spawn_sync_with(inner: &DaemonInner, node_id: &str) {
+    let ctx = inner.ledger.clone();
+    let db = inner.db.clone();
+    let node_id = node_id.to_string();
+    let timeout = Duration::from_secs(inner.config.connect_timeout_secs);
+    tokio::spawn(async move {
+        let r = sync_one(&ctx, &db, node_id, String::new(), timeout).await;
+        if let Some(e) = r.error {
+            tracing::warn!("Erster Abgleich nach dem Koppeln fehlgeschlagen: {e}");
+        }
+    });
+}
+
+/// Periodischer Abgleich mit Zufallsstreuung (±30 %). Der erste Lauf erfolgt
+/// nicht beim Start, sondern nach einer zufälligen Wartezeit – so entsteht kein
+/// erkennbares Startmuster.
+async fn run_periodic_sync(inner: Arc<DaemonInner>) {
+    let hours = inner.config.sync_interval_hours;
+    if hours <= 0.0 {
+        return;
+    }
+    loop {
+        let factor = 0.7 + fastrand::f64() * 0.6;
+        tokio::time::sleep(Duration::from_secs_f64(hours * 3600.0 * factor)).await;
+        if inner.db.list_devices().map(|d| d.is_empty()).unwrap_or(true) {
+            continue;
+        }
+        let results = sync_all(&inner).await;
+        let ok = results.iter().filter(|r| r.ok).count();
+        tracing::info!("Periodischer Abgleich: {ok}/{} Gerät(e) erreicht", results.len());
+    }
+}
+
+async fn pair_invite(inner: &DaemonInner) -> Result<Response> {
+    // Direkte Adressen nur ohne Relais in den Code aufnehmen (sonst kein IP-Leak nötig).
+    let addrs = if inner.config.use_relay { Vec::new() } else { inner.network.direct_addrs() };
+    let invite = inner.pairing.state.create_invite(inner.network.node_id(), addrs).await?;
+    Ok(Response::PairInvite { code: invite.encode(), expires_at: invite.expires_at })
+}
+
+fn pair_remove(inner: &DaemonInner, query: &str) -> Result<Response> {
+    let found = inner.db.find_devices(query)?;
+    match found.as_slice() {
+        [] => bail!("Kein gekoppeltes Gerät '{query}' gefunden. Siehe `space-daemon pair list`."),
+        [d] => {
+            inner.db.remove_device(&d.node_id)?;
+            Ok(Response::Success {
+                message: format!(
+                    "'{}' entkoppelt. Das Gerät kann deine Dateiliste nicht mehr abrufen; \
+                     seine Einträge wurden hier entfernt.",
+                    d.name
+                ),
+            })
+        }
+        _ => bail!("'{query}' ist mehrdeutig – bitte mehr Zeichen der Node-ID angeben."),
+    }
 }
 
 // ----------------------------------------------------------------------
