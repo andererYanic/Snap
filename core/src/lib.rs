@@ -1,12 +1,12 @@
-pub mod database;
-pub mod vdfs;
-pub mod network;
-pub mod daemon;
+pub mod backoff;
 pub mod config;
+pub mod daemon;
+pub mod database;
 pub mod ipc;
+pub mod network;
+pub mod secure_fs;
 
-pub use database::{DatabaseManager, Device, FileRecord};
-pub use vdfs::VdfsIndexer;
-pub use network::P2pNetwork;
-pub use daemon::Daemon;
 pub use config::Config;
+pub use daemon::Daemon;
+pub use database::{DatabaseManager, FileRecord, PeerInfo, PendingJob};
+pub use network::P2pNetwork;
