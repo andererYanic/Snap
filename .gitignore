@@ -13,3 +13,9 @@ secret.key
 /test.txt
 /downloaded.txt
 /test_shared_folder/
+
+# Fuzzing
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/

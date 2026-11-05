@@ -184,11 +184,23 @@ Alle Oberflächen sprechen denselben Vertrag (`core/src/ipc.rs`): über den Unix
 - `Browse` liefert den Katalog seitenweise mit Cursor (`after`/`next`) – konstant < 1 ms pro Seite.
 - `Subscribe` streamt Ereignisse (Katalog, Peer-Status, Aufträge, Geräte, Rechte).
 
-## Tests
+## Tests & Sicherheitsprüfungen
 
 ```bash
 cargo test
 ```
+
+```bash
+cargo deny check && cargo audit
+```
+
+```bash
+cd fuzz && cargo +nightly fuzz run ledger_entry -- -max_total_time=60
+```
+
+Die CI prüft jeden Push/PR (Format, Clippy, Tests, Abhängigkeiten, Fuzzing-Kurzlauf) und fuzzt
+nächtlich 20 Minuten pro Ziel. Sicherheitslücken bitte vertraulich melden – siehe
+[`SECURITY.md`](SECURITY.md) und das [Bedrohungsmodell](docs/SECURITY_MODEL.md).
 
 Die Integrationstests (`core/tests/`) starten mehrere echte Daemons auf 127.0.0.1, ohne Internet.
 Sie prüfen:

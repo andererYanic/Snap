@@ -119,7 +119,7 @@ pub(crate) fn device_label(f: &RemoteFile) -> String {
 }
 
 /// Entfernt Pfadbestandteile aus einem Dateinamen (Schutz vor `../`-Tricks).
-pub(crate) fn sanitize_file_name(name: &str) -> String {
+pub fn sanitize_file_name(name: &str) -> String {
     let base = Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("").trim_start_matches('.');
     if base.is_empty() {
         "unbenannt".to_string()
