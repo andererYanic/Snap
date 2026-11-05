@@ -1,106 +1,297 @@
-use anyhow::Result;
-use iroh::{Endpoint, PublicKey as NodeId};
+//! Iroh-Netzwerkschicht: Endpoint, Blob-Store, Zugriffskontrolle und Transfers.
+
+use anyhow::{Context, Result};
+use iroh::{endpoint::{presets, BindOpts}, Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey};
 use iroh_blobs::{
-    BlobsProtocol,
-    store::fs::FsStore,
+    provider::events::{
+        AbortReason, ConnectMode, EventMask, EventSender, ObserveMode, ProviderMessage, RequestMode,
+    },
+    store::{
+        fs::{options::Options, FsStore},
+        GcConfig,
+    },
     ticket::BlobTicket,
-    Hash,
+    BlobFormat, BlobsProtocol, Hash, HashAndFormat,
 };
-use std::path::Path;
-use tokio::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Entscheidet, ob ein Hash an andere Peers ausgeliefert werden darf.
+pub type AccessCheck = Arc<dyn Fn(&Hash) -> bool + Send + Sync>;
+/// Wird aufgerufen, wenn sich ein Peer bei uns verbindet (für den reaktiven Peer-Status).
+pub type ConnectHook = Arc<dyn Fn(EndpointId) + Send + Sync>;
+
+pub struct NetworkOptions {
+    pub blob_store_path: PathBuf,
+    pub secret_key: SecretKey,
+    pub connect_timeout: Duration,
+    pub bind_port: Option<u16>,
+    pub use_relay: bool,
+    /// Nur für Tests: an 127.0.0.1 binden.
+    pub loopback_only: bool,
+}
+
+/// Fehlerarten beim Herunterladen – bestimmen, ob ein Auftrag in die
+/// Warteschlange kommt oder sofort als Fehler gemeldet wird.
+#[derive(Debug)]
+pub enum FetchError {
+    /// Verbindung zum Peer konnte nicht aufgebaut werden → Peer offline, später erneut versuchen.
+    Unreachable(String),
+    /// Verbindung brach während der Übertragung ab → später fortsetzen.
+    Interrupted(String),
+    /// Peer ist erreichbar, liefert die Datei aber nicht aus (nicht/nicht mehr freigegeben).
+    Rejected(String),
+    /// Lokaler Fehler (Store, Dateisystem).
+    Local(anyhow::Error),
+}
+
+impl FetchError {
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, FetchError::Unreachable(_) | FetchError::Interrupted(_))
+    }
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::Unreachable(e) => write!(f, "Peer nicht erreichbar: {e}"),
+            FetchError::Interrupted(e) => write!(f, "Übertragung unterbrochen: {e}"),
+            FetchError::Rejected(e) => {
+                write!(f, "Peer liefert die Datei nicht aus (nicht oder nicht mehr freigegeben): {e}")
+            }
+            FetchError::Local(e) => write!(f, "Lokaler Fehler: {e:#}"),
+        }
+    }
+}
 
 pub struct P2pNetwork {
     endpoint: Endpoint,
     store: iroh_blobs::api::Store,
-    _router: iroh::protocol::Router,
-    node_id: NodeId,
+    router: iroh::protocol::Router,
+    connect_timeout: Duration,
+    use_relay: bool,
 }
 
-impl P2pNetwork {
-    pub async fn start(blob_store_path: &str) -> Result<Self> {
-        let blobs_dir = std::path::PathBuf::from(blob_store_path);
-        fs::create_dir_all(&blobs_dir).await?;
+/// Tag-Präfix für freigegebene Dateien. Getaggte Blobs überleben die Garbage Collection.
+const PUBLISH_TAG_PREFIX: &str = "snap/pub/";
 
-        
-        let fs_store = FsStore::load(&blobs_dir).await?;
+impl P2pNetwork {
+    pub async fn start(opts: NetworkOptions, access: AccessCheck, on_connect: ConnectHook) -> Result<Self> {
+        tokio::fs::create_dir_all(&opts.blob_store_path).await?;
+
+        // Garbage Collection: entfernt Blobs ohne Tag (gelöschte Freigaben,
+        // abgeschlossene/abgebrochene Downloads). Laufende Vorgänge sind durch Temp-Tags geschützt.
+        let mut store_opts = Options::new(&opts.blob_store_path);
+        store_opts.gc = Some(GcConfig { interval: Duration::from_secs(600), add_protected: None });
+        let fs_store = FsStore::load_with_opts(opts.blob_store_path.join("blobs.db"), store_opts)
+            .await
+            .context("Blob-Store konnte nicht geöffnet werden")?;
         let store: iroh_blobs::api::Store = fs_store.into();
 
-        println!("💾 Persistenter DiskStore aktiv unter: \"{}\"", blob_store_path);
+        let mut builder = if opts.use_relay {
+            Endpoint::builder(presets::N0)
+        } else {
+            Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
+        };
+        builder = builder.secret_key(opts.secret_key);
+        if opts.loopback_only {
+            builder = builder.bind_addr(format!("127.0.0.1:{}", opts.bind_port.unwrap_or(0)).as_str())?;
+        } else if let Some(port) = opts.bind_port {
+            // IPv6 ist optional: viele Container/Hosts haben kein IPv6.
+            builder = builder
+                .bind_addr_with_opts(
+                    format!("0.0.0.0:{port}").as_str(),
+                    BindOpts::default().set_is_default_route(true),
+                )?
+                .bind_addr_with_opts(
+                    format!("[::]:{port}").as_str(),
+                    BindOpts::default().set_is_required(false).set_is_default_route(true),
+                )?;
+        }
+        let endpoint = builder.bind().await.context("Iroh-Endpoint konnte nicht gestartet werden")?;
 
-        let endpoint = Endpoint::builder(iroh::endpoint::presets::N0).bind().await?;
-        let node_id = endpoint.id();
-
-        let blobs_protocol = BlobsProtocol::new(&store, None);
-
+        let events = access_control(access, on_connect);
+        let blobs_protocol = BlobsProtocol::new(&store, Some(events));
         let router = iroh::protocol::Router::builder(endpoint.clone())
             .accept(iroh_blobs::ALPN, blobs_protocol)
             .spawn();
 
-        println!("💾 Persistenter DiskStore aktiv unter: {:?}", blobs_dir);
-
-        Ok(Self {
-            endpoint,
-            store,
-            _router: router,
-            node_id,
-        })
+        Ok(Self { endpoint, store, router, connect_timeout: opts.connect_timeout, use_relay: opts.use_relay })
     }
 
-    /// Gibt die gecachte Node-ID ohne Endpoint-Overhead zurück
-    pub fn get_node_id(&self) -> NodeId {
-        self.node_id
+    pub fn node_id(&self) -> EndpointId {
+        self.endpoint.id()
     }
 
-    pub async fn publish_file(&self, path: &str) -> Result<String> {
-        let file_path = Path::new(path);
-        if !file_path.exists() {
-            anyhow::bail!("Datei nicht gefunden: {}", path);
-        }
-
-        // Wichtig: iroh-blobs benötigt zwingend einen absoluten Pfad
-        let abs_path = tokio::fs::canonicalize(file_path).await?;
-
-        let added = self.store.add_path(&abs_path).await?;
-        let hash = added.hash;
-
-        let node_addr = self.node_id.into();
-        let ticket = BlobTicket::new(node_addr, hash, iroh_blobs::BlobFormat::Raw);
-
-        Ok(ticket.to_string())
-    }
-
-    pub async fn download_file(&self, ticket_str: &str, output_path: &str) -> Result<()> {
-        let ticket = ticket_str.parse::<BlobTicket>()?;
-        let hash = ticket.hash();
-        
-        let providers = vec![ticket.addr().id];
-
-        println!("📥 Starte P2P-Download über Ticket...");
-        
-        let downloader = iroh_blobs::api::downloader::Downloader::new(&self.store, &self.endpoint);
-        let _stats = downloader.download(hash, providers).await?;
-
-        // Wichtig: iroh-blobs export benötigt zwingend einen absoluten Pfad
-        let out_path = Path::new(output_path);
-        let abs_output_path = if out_path.is_absolute() {
-            out_path.to_path_buf()
+    /// Eigene Adresse für Tickets. Mit Relais genügt die Node-ID (Adressauflösung
+    /// über n0-DNS, keine IP-Adressen im Ticket). Ohne Relais müssen die direkten
+    /// Adressen im Ticket stehen.
+    fn ticket_addr(&self) -> EndpointAddr {
+        if self.use_relay {
+            EndpointAddr::from(self.endpoint.id())
         } else {
-            std::env::current_dir()?.join(out_path)
-        };
+            self.endpoint.addr()
+        }
+    }
 
-        self.store.export(hash, abs_output_path).await?;
+    pub fn ticket_for(&self, hash: Hash) -> String {
+        BlobTicket::new(self.ticket_addr(), hash, BlobFormat::Raw).to_string()
+    }
 
-        println!("✅ Datei erfolgreich heruntergeladen nach: {}", output_path);
+    /// Importiert eine Datei in den Blob-Store und markiert sie als freigegeben.
+    /// Gibt (Hash, Ticket) zurück. Die Datei wird gestreamt, nicht komplett in den RAM geladen.
+    pub async fn publish_file(&self, abs_path: &Path) -> Result<(Hash, String)> {
+        let temp = self.store.add_path(abs_path).temp_tag().await?;
+        let hash = temp.hash();
+        self.store
+            .tags()
+            .set(format!("{PUBLISH_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash))
+            .await?;
+        drop(temp);
+        Ok((hash, self.ticket_for(hash)))
+    }
+
+    /// Hebt den Schutz eines freigegebenen Blobs auf; die GC entfernt ihn danach.
+    pub async fn unpin_published(&self, hash: &Hash) -> Result<()> {
+        self.store.tags().delete(format!("{PUBLISH_TAG_PREFIX}{hash}")).await?;
         Ok(())
     }
 
-    pub async fn delete_blob(&self, _hash: &Hash) -> Result<()> {
-        // Inhaltsbasierter Store: Das Bereinigen des Ledger-Eintrags 
-        // in SQLite steuert den Lebenszyklus der Daten vollständig.
+    /// Lädt einen Blob in den lokalen Store. Ist er schon (vollständig) vorhanden,
+    /// wird nichts übertragen. Gibt ein Temp-Tag zurück, das den Blob bis zum Export schützt.
+    pub async fn fetch(&self, ticket: &BlobTicket) -> Result<iroh_blobs::api::TempTag, FetchError> {
+        let hash = ticket.hash();
+        let content = HashAndFormat::raw(hash);
+        // Schutz vor der GC schon während des Downloads (auch für Teilstücke).
+        let temp = self
+            .store
+            .tags()
+            .temp_tag(content)
+            .await
+            .map_err(|e| FetchError::Local(e.into()))?;
+
+        if ticket.addr().id == self.endpoint.id() {
+            // Eigene Datei: liegt bereits lokal vor.
+            return if self.has_complete(hash).await {
+                Ok(temp)
+            } else {
+                Err(FetchError::Rejected("Ticket zeigt auf diesen Node, Datei liegt aber nicht vor".into()))
+            };
+        }
+        if self.has_complete(hash).await {
+            return Ok(temp);
+        }
+
+        let conn = match tokio::time::timeout(
+            self.connect_timeout,
+            self.endpoint.connect(ticket.addr().clone(), iroh_blobs::ALPN),
+        )
+        .await
+        {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => return Err(FetchError::Unreachable(e.to_string())),
+            Err(_) => {
+                return Err(FetchError::Unreachable(format!(
+                    "Zeitüberschreitung nach {} s",
+                    self.connect_timeout.as_secs()
+                )))
+            }
+        };
+
+        let result = self.store.remote().fetch(conn.clone(), content).await;
+        match result {
+            Ok(_) => {
+                conn.close(0u32.into(), b"done");
+                if self.has_complete(hash).await {
+                    Ok(temp)
+                } else {
+                    Err(FetchError::Rejected("Peer hat die Datei nicht vollständig geliefert".into()))
+                }
+            }
+            Err(e) => {
+                // Ist die Verbindung noch offen, hat der Peer die Anfrage abgelehnt.
+                // Ist sie geschlossen, ist der Peer während der Übertragung verschwunden.
+                let closed = conn.close_reason().is_some();
+                conn.close(0u32.into(), b"error");
+                if closed {
+                    Err(FetchError::Interrupted(e.to_string()))
+                } else {
+                    Err(FetchError::Rejected(e.to_string()))
+                }
+            }
+        }
+    }
+
+    async fn has_complete(&self, hash: Hash) -> bool {
+        self.store.has(hash).await.unwrap_or(false)
+    }
+
+    /// Exportiert einen vollständig vorliegenden Blob in eine Datei.
+    pub async fn export(&self, hash: Hash, target: &Path) -> Result<()> {
+        self.store.export(hash, target).await?;
         Ok(())
     }
 
     pub async fn shutdown(&self) {
+        if let Err(e) = self.router.shutdown().await {
+            tracing::warn!("Fehler beim Beenden des Routers: {e}");
+        }
         self.endpoint.close().await;
+        // Der Router schließt den Store i. d. R. bereits mit; ein Fehler hier ist harmlos.
+        if let Err(e) = self.store.shutdown().await {
+            tracing::debug!("Blob-Store bereits geschlossen: {e}");
+        }
     }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+}
+
+/// Zugriffskontrolle für eingehende Blob-Anfragen:
+/// - `get`: nur freigegebene, nicht gelöschte Hashes, nur einzelne Blobs (keine HashSeqs)
+/// - `observe`: ebenso (verhindert das Ausspähen, welche Dateien wir besitzen)
+/// - `get_many` und `push`: komplett deaktiviert
+/// - eingehende Verbindungen: nur zur Status-Aktualisierung bekannter Peers
+fn access_control(access: AccessCheck, on_connect: ConnectHook) -> EventSender {
+    let mask = EventMask {
+        connected: ConnectMode::Notify,
+        get: RequestMode::Intercept,
+        get_many: RequestMode::Disabled,
+        push: RequestMode::Disabled,
+        observe: ObserveMode::Intercept,
+        ..EventMask::DEFAULT
+    };
+    let (tx, mut rx) = EventSender::channel(64, mask);
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                ProviderMessage::GetRequestReceived(msg) => {
+                    let allowed = msg.request.ranges.is_blob() && access(&msg.request.hash);
+                    if !allowed {
+                        tracing::debug!("Get-Anfrage abgelehnt: {}", msg.request.hash.fmt_short());
+                    }
+                    let res = if allowed { Ok(()) } else { Err(AbortReason::Permission) };
+                    msg.tx.send(res).await.ok();
+                }
+                ProviderMessage::ObserveRequestReceived(msg) => {
+                    let res = if access(&msg.request.hash) { Ok(()) } else { Err(AbortReason::Permission) };
+                    msg.tx.send(res).await.ok();
+                }
+                ProviderMessage::ClientConnectedNotify(msg) => {
+                    if let Some(id) = msg.endpoint_id {
+                        on_connect(id);
+                    }
+                }
+                ProviderMessage::ClientConnected(msg) => {
+                    // Wird bei ConnectMode::Notify nicht gesendet; zur Sicherheit erlauben.
+                    msg.tx.send(Ok(())).await.ok();
+                }
+                _ => {}
+            }
+        }
+    });
+    tx
 }

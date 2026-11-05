@@ -1,0 +1,15 @@
+# Build-Artefakte
+/target/
+
+# Lokale Laufzeitdaten (enthalten Tickets / Schlüssel)
+*.db
+*.db-shm
+*.db-wal
+*.sock
+.space_blobs/
+secret.key
+
+# Lokale Testdateien
+/test.txt
+/downloaded.txt
+/test_shared_folder/

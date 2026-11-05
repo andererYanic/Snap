@@ -2,20 +2,28 @@
 name = "space-core"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.91"
+
+[features]
+# Stellt Test-Hilfsfunktionen (z. B. Zugriff auf den Endpoint) bereit.
+test-utils = []
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
-rusqlite = { version = "0.32", features = ["bundled"]}
-blake3 = "1.5"
+rusqlite = { version = "0.32", features = ["bundled"] }
 iroh = "1.4.1"
-iroh-blobs = { version= "0.103.1", features = ["fs-store"] }
-walkdir = "2.5"
-uuid = { version = "1.0", features = ["v4"] }
+iroh-blobs = { version = "0.103.1", features = ["fs-store"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 tracing = "0.1"
-tracing-subscriber = "0.3"
 directories = "5.0"
+libc = "0.2"
+fastrand = "2"
+
+[dev-dependencies]
+tempfile = "3"
+n0-future = "0.3"
+space-core = { path = ".", features = ["test-utils"] }

@@ -1,4 +1,0 @@
-db_path = "space.db"
-blob_store_path = ".space_blobs"
-default_retention_days = 0
-socket_path = "space.sock"
