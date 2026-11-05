@@ -203,24 +203,28 @@ async fn pull_on(ctx: &LedgerCtx, conn: &Connection, peer: &str) -> Result<PullS
         if resp.entries.len() > PAGE_SIZE {
             bail!("Gegenseite hat zu viele Einträge auf einmal gesendet");
         }
+        let SyncResponse { entries, more, addrs, device_name } = resp;
+        let page_empty = entries.is_empty();
+        let resp_entries = entries;
         // Erst alles prüfen, dann übernehmen: ein manipulierter Eintrag verwirft die ganze Seite.
-        for e in &resp.entries {
-            e.verify().with_context(|| format!("Ungültiger Ledger-Eintrag von {}", &peer[..10.min(peer.len())]))?;
-        }
-        for e in &resp.entries {
-            if e.origin == self_id {
-                continue; // Für eigene Einträge sind wir allein zuständig.
-            }
-            if ctx.db.apply_remote_entry(e)? {
-                stats.new_entries += 1;
-            }
-        }
-        let _ = ctx.db.set_addr_hints(peer, &resp.addrs);
-        stats.device_name = Some(sanitize_device_name(&resp.device_name, peer));
-        if !resp.more {
+        // Prüfung (CPU-lastig) und Übernahme (blockierendes SQLite) laufen außerhalb der
+        // async-Runtime, damit andere Aufgaben (IPC, Transfers) nicht ausgebremst werden.
+        let db = ctx.db.clone();
+        let self_id_c = self_id.clone();
+        let peer_short = peer[..10.min(peer.len())].to_string();
+        let applied = tokio::task::spawn_blocking(move || -> Result<usize> {
+            verify_all(&resp_entries).with_context(|| format!("Ungültiger Ledger-Eintrag von {peer_short}"))?;
+            // Für eigene Einträge sind wir allein zuständig.
+            let foreign: Vec<LedgerEntry> = resp_entries.into_iter().filter(|e| e.origin != self_id_c).collect();
+            db.apply_remote_entries(&foreign)
+        });
+        stats.new_entries += applied.await.context("Abgleich-Task abgebrochen")??;
+        let _ = ctx.db.set_addr_hints(peer, &addrs);
+        stats.device_name = Some(sanitize_device_name(&device_name, peer));
+        if !more {
             break;
         }
-        if resp.entries.is_empty() {
+        if page_empty {
             bail!("Gegenseite meldet weitere Einträge, sendet aber keine");
         }
     }
@@ -232,6 +236,25 @@ async fn pull_on(ctx: &LedgerCtx, conn: &Connection, peer: &str) -> Result<PullS
     }
     ctx.peer_reached(peer);
     Ok(stats)
+}
+
+/// Prüft alle Einträge, bei großen Seiten parallel auf allen Kernen.
+pub fn verify_all(entries: &[LedgerEntry]) -> Result<()> {
+    const MIN_PER_THREAD: usize = 64;
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    if entries.len() < MIN_PER_THREAD * 2 || threads < 2 {
+        return entries.iter().try_for_each(LedgerEntry::verify);
+    }
+    let chunk = entries.len().div_ceil(threads).max(MIN_PER_THREAD);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = entries
+            .chunks(chunk)
+            .map(|c| scope.spawn(move || c.iter().try_for_each(LedgerEntry::verify)))
+            .collect();
+        handles
+            .into_iter()
+            .try_for_each(|h| h.join().unwrap_or_else(|_| bail!("Prüfung abgebrochen")))
+    })
 }
 
 /// Beantwortet Abgleich-Anfragen auf einem Stream (Responder-Rolle).
@@ -253,7 +276,11 @@ async fn serve(
             bail!("Versionsvektor zu groß");
         }
         let _ = ctx.db.set_addr_hints(peer, &req.addrs);
-        let mut entries = ctx.db.entries_since(&req.have, PAGE_SIZE + 1)?;
+        let db = ctx.db.clone();
+        let have = req.have;
+        let mut entries = tokio::task::spawn_blocking(move || db.entries_since(&have, PAGE_SIZE + 1))
+            .await
+            .context("Abgleich-Task abgebrochen")??;
         let more = entries.len() > PAGE_SIZE;
         entries.truncate(PAGE_SIZE);
         let resp = SyncResponse {
@@ -295,8 +322,10 @@ impl ProtocolHandler for LedgerProtocol {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         let ctx = &self.ctx;
         let peer = conn.remote_id().to_string();
-        if !ctx.db.is_paired(&peer).unwrap_or(false) {
-            tracing::debug!("Ledger-Anfrage von nicht gekoppeltem Node abgelehnt");
+        let caller = crate::api::auth::Caller::Device(peer.clone());
+        let allowed = crate::api::auth::authorize(&ctx.db, &[], &caller, crate::api::auth::Capability::CatalogRead, None, "ledger.sync");
+        if allowed.is_err() {
+            tracing::debug!("Ledger-Anfrage ohne Recht catalog.read abgelehnt");
             conn.close(1u32.into(), b"not paired");
             return Ok(());
         }
@@ -394,6 +423,22 @@ mod tests {
         e.hash = "Z".repeat(64);
         e.signature = e.sign(&key);
         assert!(e.verify().is_err(), "Hash kein Hex");
+    }
+
+    #[test]
+    fn parallel_verification_finds_single_bad_entry() {
+        let key = SecretKey::generate();
+        let mut entries: Vec<LedgerEntry> = (0..200)
+            .map(|i| {
+                let mut e = entry(&key);
+                e.entry_id = i;
+                e.signature = e.sign(&key);
+                e
+            })
+            .collect();
+        verify_all(&entries).unwrap();
+        entries[177].size += 1;
+        assert!(verify_all(&entries).is_err());
     }
 
     #[test]

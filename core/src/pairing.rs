@@ -10,9 +10,11 @@
 
 use crate::database::{DatabaseManager, DeviceInfo};
 use crate::ipc::{read_frame_max, write_frame_max};
+use crate::api::error::{ApiError, ErrorCode};
+use crate::api_bail;
 use crate::ledger::sanitize_device_name;
 use crate::network::{direct_addrs, endpoint_addr};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{Endpoint, EndpointId, PublicKey};
@@ -57,21 +59,21 @@ impl InviteCode {
     }
 
     pub fn decode(code: &str) -> Result<Self> {
-        let body = code.trim().strip_prefix(CODE_PREFIX).context("Kein gültiger Snap-Einladungscode")?;
+        let body = code.trim().strip_prefix(CODE_PREFIX).ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Kein gültiger Snap-Einladungscode"))?;
         let buf = data_encoding::BASE32_NOPAD
             .decode(body.to_ascii_uppercase().as_bytes())
             .ok()
-            .context("Einladungscode ist beschädigt")?;
+            .ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Einladungscode ist beschädigt"))?;
         let mut r = Reader(&buf);
         if r.u8()? != CODE_VERSION {
-            bail!("Einladungscode stammt von einer anderen Version");
+            api_bail!(InvalidInput, "Einladungscode stammt von einer anderen Version");
         }
-        let node_id = PublicKey::from_bytes(&r.array::<32>()?).ok().context("Einladungscode ist beschädigt")?;
+        let node_id = PublicKey::from_bytes(&r.array::<32>()?).ok().ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Einladungscode ist beschädigt"))?;
         let token = r.array::<32>()?;
         let expires_at = i64::from_be_bytes(r.array::<8>()?);
         let n = r.u8()? as usize;
         if n > MAX_ADDRS {
-            bail!("Einladungscode ist beschädigt");
+            api_bail!(InvalidInput, "Einladungscode ist beschädigt");
         }
         let mut addrs = Vec::with_capacity(n);
         for _ in 0..n {
@@ -80,7 +82,7 @@ impl InviteCode {
             addrs.push(s.to_string());
         }
         if !r.0.is_empty() {
-            bail!("Einladungscode ist beschädigt");
+            api_bail!(InvalidInput, "Einladungscode ist beschädigt");
         }
         Ok(Self { node_id, token, expires_at, addrs })
     }
@@ -90,7 +92,7 @@ struct Reader<'a>(&'a [u8]);
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.0.len() < n {
-            bail!("Einladungscode ist unvollständig");
+            api_bail!(InvalidInput, "Einladungscode ist unvollständig");
         }
         let (head, tail) = self.0.split_at(n);
         self.0 = tail;
@@ -142,15 +144,15 @@ impl PairingState {
     /// Wartet, bis die aktuelle Einladung angenommen wurde oder abläuft.
     pub async fn wait_for_join(&self) -> Result<DeviceInfo> {
         let Some((expires_at, rx)) = self.waiter.lock().await.take() else {
-            bail!("Keine aktive Einladung");
+            api_bail!(NotFound, "Keine aktive Einladung");
         };
         let remaining = (expires_at - crate::database::now_unix()).max(0) as u64;
         match tokio::time::timeout(Duration::from_secs(remaining), rx).await {
             Ok(Ok(device)) => Ok(device),
-            Ok(Err(_)) => bail!("Einladung wurde durch eine neue ersetzt"),
+            Ok(Err(_)) => api_bail!(Rejected, "Einladung wurde durch eine neue ersetzt"),
             Err(_) => {
                 self.cancel();
-                bail!("Einladung abgelaufen – kein Gerät hat sich gekoppelt")
+                api_bail!(Timeout, "Einladung abgelaufen – kein Gerät hat sich gekoppelt")
             }
         }
     }
@@ -206,16 +208,16 @@ pub struct PairingCtx {
 pub async fn join(ctx: &PairingCtx, code: &str, connect_timeout: Duration) -> Result<DeviceInfo> {
     let invite = InviteCode::decode(code)?;
     if crate::database::now_unix() > invite.expires_at {
-        bail!("Der Einladungscode ist abgelaufen – bitte auf dem anderen Gerät einen neuen erzeugen.");
+        api_bail!(InvalidInput, "Der Einladungscode ist abgelaufen – bitte auf dem anderen Gerät einen neuen erzeugen.");
     }
     if invite.node_id == ctx.endpoint.id() {
-        bail!("Das ist der Einladungscode dieses Geräts.");
+        api_bail!(InvalidInput, "Das ist der Einladungscode dieses Geräts.");
     }
     let addr = endpoint_addr(invite.node_id, &invite.addrs);
     let conn = tokio::time::timeout(connect_timeout, ctx.endpoint.connect(addr, PAIR_ALPN))
         .await
-        .context("Gerät nicht erreichbar (Zeitüberschreitung)")?
-        .context("Gerät nicht erreichbar")?;
+        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "Gerät nicht erreichbar (Zeitüberschreitung)"))?
+        .map_err(|e| ApiError::new(ErrorCode::Unavailable, format!("Gerät nicht erreichbar: {e}")))?;
 
     let result = async {
         let (mut send, mut recv) = conn.open_bi().await?;
@@ -236,7 +238,7 @@ pub async fn join(ctx: &PairingCtx, code: &str, connect_timeout: Duration) -> Re
     conn.close(0u32.into(), b"done");
     let resp = result?;
     if !resp.accepted {
-        bail!("Kopplung abgelehnt: {}", resp.reason.unwrap_or_default());
+        api_bail!(Rejected, "Kopplung abgelehnt: {}", resp.reason.unwrap_or_default());
     }
 
     let node_id = invite.node_id.to_string();

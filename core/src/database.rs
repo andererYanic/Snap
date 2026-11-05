@@ -1,14 +1,16 @@
 //! SQLite-Persistenz: Dateikatalog, Offline-Warteschlange und Peer-Status.
 
+use crate::events::{Event, EventBus};
 use crate::ledger::LedgerEntry;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -100,6 +102,28 @@ pub struct DeviceInfo {
     pub name: String,
     pub paired_at: i64,
     pub last_sync_at: Option<i64>,
+    /// Gewährte Rechte (nur bei `pair list` befüllt).
+    #[serde(default)]
+    pub grants: Vec<Grant>,
+}
+
+/// Ein gewährtes Recht, optional auf einen Ordner begrenzt.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Grant {
+    pub capability: String,
+    pub folder: Option<String>,
+    pub granted_at: i64,
+}
+
+/// Ein Eintrag im Audit-Log (Operationen fremder Geräte).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditEntry {
+    pub ts: i64,
+    pub node_id: String,
+    pub operation: String,
+    pub target: Option<String>,
+    pub allowed: bool,
+    pub detail: Option<String>,
 }
 
 /// Eine Datei auf einem anderen Gerät (aus dem Ledger).
@@ -114,22 +138,42 @@ pub struct RemoteFile {
     pub created_at: i64,
 }
 
+/// SQLite mit einem Schreiber und einem Pool aus Leseverbindungen.
+///
+/// Im WAL-Modus blockieren Leser weder sich gegenseitig noch den Schreiber. So
+/// bleiben Abfragen der Oberfläche auch während großer Abgleiche flüssig.
 pub struct DatabaseManager {
     conn: Mutex<Connection>,
+    readers: Vec<Mutex<Connection>>,
+    next_reader: AtomicUsize,
+    events: EventBus,
+    /// Zwischengespeicherte Gesamtzahlen für `browse`; wird bei jeder Katalogänderung geleert.
+    count_cache: Mutex<HashMap<String, u64>>,
+    /// Zuletzt geschriebene Audit-Einträge (Schlüssel → Zeitpunkt) zum Entdoppeln.
+    audit_recent: Mutex<HashMap<String, i64>>,
 }
+
+/// Gleiche Audit-Einträge werden innerhalb dieses Fensters nur einmal geschrieben
+/// (Streaming erzeugt viele gleiche Zugriffe; Angreifer könnten sonst das Log fluten).
+const AUDIT_DEDUP_SECS: i64 = 60;
+
+/// Anzahl der Leseverbindungen.
+const READER_POOL_SIZE: usize = 4;
+/// Gecachte vorbereitete Statements pro Verbindung.
+const STATEMENT_CACHE: usize = 64;
 
 /// Prüft und normalisiert einen Hash bzw. Hash-Präfix: nur Hexzeichen,
 /// 6 bis 64 Zeichen. Verhindert u. a. SQL-Wildcards (`%`, `_`) in Suchen.
 pub fn normalize_hash_prefix(input: &str) -> Result<String> {
     let s = input.trim().to_ascii_lowercase();
     if s.len() < 6 {
-        bail!("Hash zu kurz – bitte mindestens 6 Zeichen angeben.");
+        crate::api_bail!(InvalidInput, "Hash zu kurz – bitte mindestens 6 Zeichen angeben.");
     }
     if s.len() > 64 {
-        bail!("Hash zu lang – ein BLAKE3-Hash hat 64 Hexzeichen.");
+        crate::api_bail!(InvalidInput, "Hash zu lang – ein BLAKE3-Hash hat 64 Hexzeichen.");
     }
     if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("Ungültiger Hash – nur Hexzeichen (0-9, a-f) erlaubt.");
+        crate::api_bail!(InvalidInput, "Ungültiger Hash – nur Hexzeichen (0-9, a-f) erlaubt.");
     }
     Ok(s)
 }
@@ -137,9 +181,20 @@ pub fn normalize_hash_prefix(input: &str) -> Result<String> {
 impl DatabaseManager {
     pub fn open(db_path: &Path) -> Result<Self> {
         let conn = Connection::open(db_path)?;
-        Self::init(conn)
+        let mut db = Self::init(conn)?;
+        for _ in 0..READER_POOL_SIZE {
+            let r = Connection::open_with_flags(
+                db_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+            )?;
+            r.busy_timeout(std::time::Duration::from_secs(5))?;
+            r.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
+            db.readers.push(Mutex::new(r));
+        }
+        Ok(db)
     }
 
+    /// In-Memory-Datenbank (Tests). Ohne Leser-Pool: alle Zugriffe über eine Verbindung.
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
@@ -231,6 +286,9 @@ impl DatabaseManager {
             );
             CREATE INDEX IF NOT EXISTS idx_ledger_origin_seq ON ledger_entries(origin, seq);
             CREATE INDEX IF NOT EXISTS idx_ledger_hash ON ledger_entries(hash);
+            CREATE INDEX IF NOT EXISTS idx_ledger_name ON ledger_entries(name COLLATE NOCASE, origin, hash);
+            CREATE INDEX IF NOT EXISTS idx_ledger_live ON ledger_entries(deleted, origin);
+            CREATE INDEX IF NOT EXISTS idx_files_name ON files(file_name COLLATE NOCASE, blake3_hash);
 
             -- Direkte Adress-Hinweise, nur von authentifizierten Gegenstellen über sich selbst.
             CREATE TABLE IF NOT EXISTS peer_addrs (
@@ -238,16 +296,93 @@ impl DatabaseManager {
                 addrs      TEXT    NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+
+            -- Schema 3: Rechte pro Gerät und Audit-Log
+            -- folder = '' bedeutet: ohne Ordnerbeschränkung (nur für Rechte ohne Pfadbezug).
+            CREATE TABLE IF NOT EXISTS device_grants (
+                node_id    TEXT    NOT NULL,
+                capability TEXT    NOT NULL,
+                folder     TEXT    NOT NULL DEFAULT '',
+                granted_at INTEGER NOT NULL,
+                PRIMARY KEY (node_id, capability, folder)
+            );
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id        INTEGER PRIMARY KEY,
+                ts        INTEGER NOT NULL,
+                node_id   TEXT    NOT NULL,
+                operation TEXT    NOT NULL,
+                target    TEXT,
+                allowed   INTEGER NOT NULL,
+                detail    TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
             ",
         )?;
+        if version > 0 && version < 3 {
+            // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
+            conn.execute(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at)
+                 SELECT node_id, 'catalog.read', '', paired_at FROM devices",
+                [],
+            )?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
 
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+            readers: Vec::new(),
+            next_reader: AtomicUsize::new(0),
+            events: EventBus::default(),
+            count_cache: Mutex::new(HashMap::new()),
+            audit_recent: Mutex::new(HashMap::new()),
+        })
     }
 
+    /// Ereignis-Bus: meldet jede Änderung nach dem Commit.
+    pub fn events(&self) -> &EventBus {
+        &self.events
+    }
+
+    /// Sendet ein Ereignis; Katalogänderungen leeren den Zähler-Cache.
+    fn emit(&self, event: Event) {
+        if matches!(event, Event::LocalCatalogChanged | Event::RemoteCatalogChanged { .. }) {
+            self.count_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+        self.events.emit(event);
+    }
+
+    fn cached_count(&self, key: &str) -> Option<u64> {
+        self.count_cache.lock().unwrap_or_else(|e| e.into_inner()).get(key).copied()
+    }
+
+    fn store_count(&self, key: String, total: u64) {
+        let mut cache = self.count_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= 64 {
+            cache.clear(); // einfache Begrenzung; Suchbegriffe wechseln häufig
+        }
+        cache.insert(key, total);
+    }
+
+    /// Schreibverbindung (auch für Lese-nach-Schreib innerhalb einer Methode).
     fn conn(&self) -> MutexGuard<'_, Connection> {
         // Ein Panic in einem anderen Thread soll die DB nicht dauerhaft blockieren.
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Eine freie Leseverbindung aus dem Pool (fällt ohne Pool auf den Schreiber zurück).
+    fn read(&self) -> MutexGuard<'_, Connection> {
+        let n = self.readers.len();
+        if n == 0 {
+            return self.conn();
+        }
+        let start = self.next_reader.fetch_add(1, Ordering::Relaxed);
+        for i in 0..n {
+            if let Ok(guard) = self.readers[(start + i) % n].try_lock() {
+                return guard;
+            }
+        }
+        self.readers[start % n].lock().unwrap_or_else(|e| e.into_inner())
     }
 
     // ------------------------------------------------------------------
@@ -264,7 +399,8 @@ impl DatabaseManager {
         file_size: u64,
         ticket: &str,
     ) -> Result<(bool, i64)> {
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let conn = conn.transaction()?;
         let already: bool = conn
             .query_row(
                 "SELECT 1 FROM files WHERE path = ?1 AND blake3_hash = ?2 AND deleted_at IS NULL",
@@ -288,12 +424,16 @@ impl DatabaseManager {
             params![hash, path, file_name, file_size as i64, ticket, now_unix()],
         )?;
         let id: i64 = conn.query_row("SELECT id FROM files WHERE path = ?1", params![path], |r| r.get(0))?;
+        conn.commit()?;
+        if !already {
+            self.emit(Event::LocalCatalogChanged);
+        }
         Ok((already, id))
     }
 
     /// Daten einer Datei per ID (auch gelöschte).
     pub fn file_by_id(&self, id: i64) -> Result<Option<FileRecord>> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn
             .query_row(
                 "SELECT blake3_hash, file_name, file_size, path, ticket, created_at FROM files WHERE id = ?1",
@@ -305,7 +445,7 @@ impl DatabaseManager {
 
     /// Darf dieser Hash an andere Peers ausgeliefert werden?
     pub fn is_shared(&self, hash: &str) -> Result<bool> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn
             .query_row(
                 "SELECT 1 FROM files WHERE blake3_hash = ?1 AND deleted_at IS NULL LIMIT 1",
@@ -317,8 +457,8 @@ impl DatabaseManager {
     }
 
     pub fn list_files(&self) -> Result<Vec<FileRecord>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT blake3_hash, file_name, file_size, path, ticket, created_at
              FROM files WHERE deleted_at IS NULL ORDER BY file_name COLLATE NOCASE",
         )?;
@@ -343,8 +483,8 @@ impl DatabaseManager {
     /// Gibt alle passenden Dateien zurück; der Aufrufer prüft auf Eindeutigkeit.
     pub fn find_by_hash_prefix(&self, prefix: &str) -> Result<Vec<FileRecord>> {
         let prefix = normalize_hash_prefix(prefix)?;
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT blake3_hash, file_name, file_size, path, ticket, created_at
              FROM files WHERE deleted_at IS NULL AND substr(blake3_hash, 1, ?2) = ?1
              ORDER BY created_at",
@@ -370,7 +510,7 @@ impl DatabaseManager {
         let tx = conn.transaction()?;
         let ids: Vec<i64> = {
             let mut stmt =
-                tx.prepare(&format!("SELECT id FROM files WHERE {cond} AND deleted_at IS NULL"))?;
+                tx.prepare_cached(&format!("SELECT id FROM files WHERE {cond} AND deleted_at IS NULL"))?;
             let rows = stmt.query_map(params![value], |r| r.get(0))?.collect::<rusqlite::Result<Vec<i64>>>()?;
             rows
         };
@@ -379,6 +519,9 @@ impl DatabaseManager {
             params![value, now_unix()],
         )?;
         tx.commit()?;
+        if !ids.is_empty() {
+            self.emit(Event::LocalCatalogChanged);
+        }
         Ok(ids)
     }
 
@@ -389,7 +532,7 @@ impl DatabaseManager {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let candidates: Vec<String> = {
-            let mut stmt = tx.prepare(
+            let mut stmt = tx.prepare_cached(
                 "SELECT DISTINCT blake3_hash FROM files WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
             )?;
             let rows = stmt
@@ -418,7 +561,7 @@ impl DatabaseManager {
     }
 
     pub fn count_shared(&self) -> Result<u64> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn.query_row("SELECT COUNT(*) FROM files WHERE deleted_at IS NULL", [], |r| {
             r.get::<_, i64>(0)
         })? as u64)
@@ -447,6 +590,8 @@ impl DatabaseManager {
                  WHERE id = ?1",
                 params![id, job.last_error, job.ticket, job.peer_id, job.force],
             )?;
+            drop(conn);
+            self.emit(Event::JobQueued { job_id: id });
             return Ok((id, true));
         }
         conn.execute(
@@ -465,7 +610,10 @@ impl DatabaseManager {
                 now_unix()
             ],
         )?;
-        Ok((conn.last_insert_rowid(), false))
+        let id = conn.last_insert_rowid();
+        drop(conn);
+        self.emit(Event::JobQueued { job_id: id });
+        Ok((id, false))
     }
 
     const JOB_SELECT: &'static str = "
@@ -493,8 +641,8 @@ impl DatabaseManager {
     }
 
     pub fn list_jobs(&self) -> Result<Vec<PendingJob>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!("{} ORDER BY j.id", Self::JOB_SELECT))?;
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!("{} ORDER BY j.id", Self::JOB_SELECT))?;
         let rows = stmt
             .query_map([], Self::map_job)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -503,8 +651,8 @@ impl DatabaseManager {
 
     /// Wartende Aufträge, deren Peer nicht (mehr) im Backoff ist.
     pub fn due_jobs(&self, now: i64) -> Result<Vec<PendingJob>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
             "{} WHERE j.state = 'waiting' AND (p.next_retry_at IS NULL OR p.next_retry_at <= ?1)
              ORDER BY j.id",
             Self::JOB_SELECT
@@ -518,7 +666,7 @@ impl DatabaseManager {
     /// Zeitpunkt, zu dem der nächste wartende Auftrag fällig wird.
     /// `None` = keine wartenden Aufträge (Worker darf unbegrenzt schlafen).
     pub fn next_wakeup(&self) -> Result<Option<i64>> {
-        let conn = self.conn();
+        let conn = self.read();
         let (count, min_retry, any_due): (i64, Option<i64>, i64) = conn.query_row(
             "SELECT COUNT(*),
                     MIN(p.next_retry_at),
@@ -538,7 +686,7 @@ impl DatabaseManager {
     }
 
     pub fn count_waiting_jobs(&self) -> Result<u64> {
-        let conn = self.conn();
+        let conn = self.read();
         Ok(conn.query_row("SELECT COUNT(*) FROM pending_pins WHERE state = 'waiting'", [], |r| {
             r.get::<_, i64>(0)
         })? as u64)
@@ -546,6 +694,7 @@ impl DatabaseManager {
 
     pub fn complete_job(&self, id: i64) -> Result<()> {
         self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])?;
+        self.emit(Event::JobCompleted { job_id: id });
         Ok(())
     }
 
@@ -564,11 +713,16 @@ impl DatabaseManager {
             "UPDATE pending_pins SET attempts = attempts + 1, state = ?3, last_error = ?2 WHERE id = ?1",
             params![id, error, JobState::Failed.as_str()],
         )?;
+        self.emit(Event::JobFailed { job_id: id, error: error.to_string() });
         Ok(())
     }
 
     pub fn cancel_job(&self, id: i64) -> Result<bool> {
-        Ok(self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])? > 0)
+        let removed = self.conn().execute("DELETE FROM pending_pins WHERE id = ?1", params![id])? > 0;
+        if removed {
+            self.emit(Event::JobRemoved { job_id: id });
+        }
+        Ok(removed)
     }
 
     /// Setzt einen Auftrag auf "wartend" und das Backoff seines Peers zurück.
@@ -597,14 +751,31 @@ impl DatabaseManager {
 
     /// Erfolgreiche Verbindung: online, Backoff zurücksetzen.
     pub fn mark_peer_online(&self, node_id: &str) -> Result<()> {
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let prev = Self::peer_status_of(&tx, node_id)?;
+        tx.execute(
             "INSERT INTO peer_status (node_id, status, last_seen, failures, next_retry_at)
              VALUES (?1, 'online', ?2, 0, NULL)
              ON CONFLICT(node_id) DO UPDATE SET
                 status = 'online', last_seen = ?2, failures = 0, next_retry_at = NULL",
             params![node_id, now_unix()],
         )?;
+        tx.commit()?;
+        self.emit_status_change(node_id, prev.as_deref(), "online");
         Ok(())
+    }
+
+    fn peer_status_of(conn: &Connection, node_id: &str) -> rusqlite::Result<Option<String>> {
+        conn.prepare_cached("SELECT status FROM peer_status WHERE node_id = ?1")?
+            .query_row(params![node_id], |r| r.get(0))
+            .optional()
+    }
+
+    fn emit_status_change(&self, node_id: &str, prev: Option<&str>, now: &str) {
+        if prev != Some(now) {
+            self.emit(Event::PeerStatusChanged { node_id: node_id.to_string(), status: now.to_string() });
+        }
     }
 
     /// Verbindung fehlgeschlagen: offline und Backoff planen. Gibt den Zeitpunkt
@@ -617,26 +788,28 @@ impl DatabaseManager {
         let now = now_unix();
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let existing: Option<(u32, Option<i64>)> = tx
+        let existing: Option<(u32, Option<i64>, String)> = tx
             .query_row(
-                "SELECT failures, next_retry_at FROM peer_status WHERE node_id = ?1",
+                "SELECT failures, next_retry_at, status FROM peer_status WHERE node_id = ?1",
                 params![node_id],
-                |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?)),
+                |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
+        let prev = existing.as_ref().map(|e| e.2.clone());
         if !escalate {
-            if let Some((_, Some(next))) = existing {
+            if let Some((_, Some(next), _)) = existing {
                 if next > now {
                     tx.execute(
                         "UPDATE peer_status SET status = 'offline' WHERE node_id = ?1",
                         params![node_id],
                     )?;
                     tx.commit()?;
+                    self.emit_status_change(node_id, prev.as_deref(), "offline");
                     return Ok(next);
                 }
             }
         }
-        let failures = existing.map(|(f, _)| f).unwrap_or(0).saturating_add(1);
+        let failures = existing.map(|(f, _, _)| f).unwrap_or(0).saturating_add(1);
         let next = now + crate::backoff::delay_random(failures).as_secs() as i64;
         tx.execute(
             "INSERT INTO peer_status (node_id, status, last_seen, failures, next_retry_at)
@@ -646,6 +819,7 @@ impl DatabaseManager {
             params![node_id, failures, next],
         )?;
         tx.commit()?;
+        self.emit_status_change(node_id, prev.as_deref(), "offline");
         Ok(next)
     }
 
@@ -655,6 +829,7 @@ impl DatabaseManager {
     /// wartende Aufträge existieren.
     pub fn mark_known_peer_seen(&self, node_id: &str) -> Result<bool> {
         let conn = self.conn();
+        let prev = Self::peer_status_of(&conn, node_id)?;
         let updated = conn.execute(
             "UPDATE peer_status SET status = 'online', last_seen = ?2, failures = 0, next_retry_at = NULL
              WHERE node_id = ?1",
@@ -663,6 +838,7 @@ impl DatabaseManager {
         if updated == 0 {
             return Ok(false);
         }
+        self.emit_status_change(node_id, prev.as_deref(), "online");
         Ok(conn
             .query_row(
                 "SELECT 1 FROM pending_pins WHERE peer_id = ?1 AND state = 'waiting' LIMIT 1",
@@ -674,8 +850,8 @@ impl DatabaseManager {
     }
 
     pub fn list_peers(&self) -> Result<Vec<PeerInfo>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT node_id, status, last_seen, failures, next_retry_at FROM peer_status
              ORDER BY last_seen DESC NULLS LAST, node_id",
         )?;
@@ -694,7 +870,21 @@ impl DatabaseManager {
     }
 
     pub fn get_peer(&self, node_id: &str) -> Result<Option<PeerInfo>> {
-        Ok(self.list_peers()?.into_iter().find(|p| p.node_id == node_id))
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT node_id, status, last_seen, failures, next_retry_at FROM peer_status WHERE node_id = ?1",
+        )?;
+        Ok(stmt
+            .query_row(params![node_id], |r| {
+                Ok(PeerInfo {
+                    node_id: r.get(0)?,
+                    status: r.get(1)?,
+                    last_seen: r.get(2)?,
+                    failures: r.get::<_, i64>(3)? as u32,
+                    next_retry_at: r.get(4)?,
+                })
+            })
+            .optional()?)
     }
 }
 
@@ -742,15 +932,15 @@ impl DatabaseManager {
     }
 
     fn upsert_entry(conn: &Connection, e: &LedgerEntry) -> rusqlite::Result<usize> {
-        conn.execute(
+        conn.prepare_cached(
             "INSERT INTO ledger_entries (origin, entry_id, seq, hash, name, size, created_at, deleted, signature)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(origin, entry_id) DO UPDATE SET
                 seq = excluded.seq, hash = excluded.hash, name = excluded.name, size = excluded.size,
                 created_at = excluded.created_at, deleted = excluded.deleted, signature = excluded.signature
              WHERE excluded.seq > ledger_entries.seq",
-            params![e.origin, e.entry_id, e.seq, e.hash, e.name, e.size as i64, e.created_at, e.deleted, e.signature],
-        )
+        )?
+        .execute(params![e.origin, e.entry_id, e.seq, e.hash, e.name, e.size as i64, e.created_at, e.deleted, e.signature])
     }
 
     /// Übernimmt einen (bereits verifizierten) fremden Eintrag, falls er neuer ist.
@@ -758,10 +948,25 @@ impl DatabaseManager {
         Ok(Self::upsert_entry(&self.conn(), e)? > 0)
     }
 
+    /// Übernimmt mehrere (bereits verifizierte) Einträge. Gibt die Anzahl übernommener zurück.
+    pub fn apply_remote_entries(&self, entries: &[LedgerEntry]) -> Result<usize> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut n = 0;
+        for e in entries {
+            n += Self::upsert_entry(&tx, e)?;
+        }
+        tx.commit()?;
+        if n > 0 {
+            self.emit(Event::RemoteCatalogChanged { new_entries: n });
+        }
+        Ok(n)
+    }
+
     /// Aktive eigene Dateien ohne Ledger-Eintrag (z. B. aus Schema 1).
     pub fn files_missing_entries(&self, origin: &str) -> Result<Vec<(i64, FileRecord)>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
             "SELECT f.id, f.blake3_hash, f.file_name, f.file_size, f.path, f.ticket, f.created_at
              FROM files f
              WHERE f.deleted_at IS NULL
@@ -787,8 +992,8 @@ impl DatabaseManager {
 
     /// Höchste bekannte Sequenznummer je Ursprungsgerät.
     pub fn version_vector(&self) -> Result<HashMap<String, i64>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT origin, MAX(seq) FROM ledger_entries GROUP BY origin")?;
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached("SELECT origin, MAX(seq) FROM ledger_entries GROUP BY origin")?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
             .collect::<rusqlite::Result<HashMap<_, _>>>()?;
@@ -798,13 +1003,13 @@ impl DatabaseManager {
     /// Alle Einträge, die neuer sind als der übergebene Versionsvektor –
     /// je Ursprung aufsteigend nach `seq`, maximal `limit` Stück.
     pub fn entries_since(&self, have: &HashMap<String, i64>, limit: usize) -> Result<Vec<LedgerEntry>> {
-        let conn = self.conn();
+        let conn = self.read();
         let origins: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT DISTINCT origin FROM ledger_entries ORDER BY origin")?;
+            let mut stmt = conn.prepare_cached("SELECT DISTINCT origin FROM ledger_entries ORDER BY origin")?;
             let rows = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
             rows
         };
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT origin, entry_id, seq, hash, name, size, created_at, deleted, signature
              FROM ledger_entries WHERE origin = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
         )?;
@@ -855,8 +1060,8 @@ impl DatabaseManager {
 
     /// Dateien anderer Geräte (ohne gelöschte).
     pub fn remote_files(&self, self_origin: &str) -> Result<Vec<RemoteFile>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
             "{} ORDER BY COALESCE(d.name, l.origin), l.name COLLATE NOCASE",
             Self::REMOTE_SELECT
         ))?;
@@ -866,8 +1071,8 @@ impl DatabaseManager {
 
     pub fn find_remote_by_hash_prefix(&self, prefix: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
         let prefix = normalize_hash_prefix(prefix)?;
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
             "{} AND substr(l.hash, 1, ?3) = ?2 ORDER BY l.created_at",
             Self::REMOTE_SELECT
         ))?;
@@ -878,10 +1083,155 @@ impl DatabaseManager {
     }
 
     pub fn find_remote_by_name(&self, name: &str, self_origin: &str) -> Result<Vec<RemoteFile>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!("{} AND l.name = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!("{} AND l.name = ?2 ORDER BY l.created_at", Self::REMOTE_SELECT))?;
         let rows = stmt.query_map(params![self_origin, name], Self::map_remote)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Seitenweise Katalogabfrage über eigene und fremde Dateien, sortiert nach Name
+    /// (ohne Groß-/Kleinschreibung), dann Gerät, dann Hash.
+    ///
+    /// `device`: `None` = alle, `Some(None)` = nur eigene, `Some(Some(id))` = ein Gerät.
+    /// Beide Tabellen werden getrennt über ihren Namensindex gelesen und in Rust
+    /// zusammengeführt; mit `after` (Keyset) bleibt jede Seite unabhängig von ihrer
+    /// Position gleich schnell.
+    #[allow(clippy::too_many_arguments)]
+    pub fn browse(
+        &self,
+        self_origin: &str,
+        device: Option<Option<&str>>,
+        search: Option<&str>,
+        offset: u32,
+        limit: u32,
+        after: Option<&crate::ipc::BrowseCursor>,
+    ) -> Result<(Vec<crate::ipc::CatalogItem>, u64, Option<crate::ipc::BrowseCursor>)> {
+        use crate::ipc::{BrowseCursor, CatalogItem};
+        // LIKE-Muster mit maskierten Platzhaltern: "%" und "_" werden wörtlich gesucht.
+        let pattern = search.filter(|s| !s.is_empty()).map(|s| {
+            let escaped = s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            format!("%{escaped}%")
+        });
+        let (include_local, include_remote, origin) = match device {
+            None => (true, true, None),
+            Some(None) => (true, false, None),
+            Some(Some(id)) => (false, true, Some(id)),
+        };
+        let want = offset as i64 + limit as i64 + 1; // +1: gibt es eine weitere Seite?
+        let (c_name, c_origin, c_hash) = match after {
+            Some(c) => (Some(c.name.as_str()), c.origin.as_str(), c.hash.as_str()),
+            None => (None, "", ""),
+        };
+        // Keyset-Bedingung in Sortierreihenfolge (Name NOCASE, Gerät, Hash). Der erste Teil
+        // (`>=`) erlaubt SQLite den direkten Sprung im Namensindex; ohne Cursor entfällt sie.
+        let after_cond = if after.is_some() {
+            "AND {n} COLLATE NOCASE >= ?2 AND ({n} COLLATE NOCASE > ?2 OR ({o}, {h}) > (?3, ?4))"
+        } else {
+            ""
+        };
+
+        // Hinweis: `+deleted…` in den Seitenabfragen verhindert, dass SQLite den
+        // Lösch-Index wählt und danach alles sortiert; so liefert der Namensindex die
+        // Reihenfolge direkt (100k Einträge: 0,2 ms statt 32 ms).
+        let count_key = format!("{include_local}|{include_remote}|{origin:?}|{pattern:?}");
+        let cached_total = self.cached_count(&count_key);
+        let conn = self.read();
+        let mut items: Vec<CatalogItem> = Vec::new();
+        let mut total = 0u64;
+        if include_local {
+            let cond = after_cond.replace("{n}", "file_name").replace("{o}", "''").replace("{h}", "blake3_hash");
+            let sql = format!(
+                "SELECT blake3_hash, file_name, file_size, created_at, path FROM files
+                 WHERE +deleted_at IS NULL AND (?1 IS NULL OR file_name LIKE ?1 ESCAPE '\\') {cond}
+                 ORDER BY file_name COLLATE NOCASE, blake3_hash LIMIT ?5"
+            );
+            let mut stmt = conn.prepare_cached(&sql)?;
+            let rows = stmt.query_map(params![pattern, c_name, c_origin, c_hash, want], |r| {
+                Ok(CatalogItem {
+                    origin: None,
+                    origin_name: None,
+                    hash: r.get(0)?,
+                    name: r.get(1)?,
+                    size: r.get::<_, i64>(2)? as u64,
+                    created_at: r.get(3)?,
+                    path: r.get(4)?,
+                })
+            })?;
+            for row in rows {
+                items.push(row?);
+            }
+            if cached_total.is_none() {
+                total += conn
+                    .prepare_cached(
+                        "SELECT COUNT(*) FROM files WHERE deleted_at IS NULL AND (?1 IS NULL OR file_name LIKE ?1 ESCAPE '\\')",
+                    )?
+                    .query_row(params![pattern], |r| r.get::<_, i64>(0))? as u64;
+            }
+        }
+        if include_remote {
+            let cond = after_cond.replace("{n}", "l.name").replace("{o}", "l.origin").replace("{h}", "l.hash");
+            let sql = format!(
+                "SELECT l.origin, d.name, l.hash, l.name, l.size, l.created_at
+                 FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
+                 WHERE +l.deleted = 0 AND l.origin != ?6 AND (?7 IS NULL OR l.origin = ?7)
+                   AND (?1 IS NULL OR l.name LIKE ?1 ESCAPE '\\') {cond}
+                 ORDER BY l.name COLLATE NOCASE, l.origin, l.hash LIMIT ?5"
+            );
+            let mut stmt = conn.prepare_cached(&sql)?;
+            let rows = stmt.query_map(params![pattern, c_name, c_origin, c_hash, want, self_origin, origin], |r| {
+                Ok(CatalogItem {
+                    origin: r.get(0)?,
+                    origin_name: r.get(1)?,
+                    hash: r.get(2)?,
+                    name: r.get(3)?,
+                    size: r.get::<_, i64>(4)? as u64,
+                    created_at: r.get(5)?,
+                    path: None,
+                })
+            })?;
+            for row in rows {
+                items.push(row?);
+            }
+            if cached_total.is_none() {
+                total += conn
+                    .prepare_cached(
+                        "SELECT COUNT(*) FROM ledger_entries
+                         WHERE deleted = 0 AND origin != ?2 AND (?3 IS NULL OR origin = ?3)
+                           AND (?1 IS NULL OR name LIKE ?1 ESCAPE '\\')",
+                    )?
+                    .query_row(params![pattern, self_origin, origin], |r| r.get::<_, i64>(0))? as u64;
+            }
+        }
+        drop(conn);
+        let total = match cached_total {
+            Some(t) => t,
+            None => {
+                self.store_count(count_key, total);
+                total
+            }
+        };
+
+        // Zusammenführen in derselben Ordnung wie SQLite (NOCASE = ASCII-Kleinschreibung).
+        items.sort_by(|a, b| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+                .then_with(|| a.origin.as_deref().unwrap_or("").cmp(b.origin.as_deref().unwrap_or("")))
+                .then_with(|| a.hash.cmp(&b.hash))
+        });
+        let mut page: Vec<CatalogItem> = items.into_iter().skip(offset as usize).collect();
+        let has_more = page.len() > limit as usize;
+        page.truncate(limit as usize);
+        let next = if has_more {
+            page.last().map(|i| BrowseCursor {
+                name: i.name.clone(),
+                origin: i.origin.clone().unwrap_or_default(),
+                hash: i.hash.clone(),
+            })
+        } else {
+            None
+        };
+        Ok((page, total, next))
     }
 
     // ------------------------------------------------------------------
@@ -889,30 +1239,50 @@ impl DatabaseManager {
     // ------------------------------------------------------------------
 
     /// Fügt ein Gerät hinzu oder aktualisiert seinen Namen.
+    /// Wird auch bei jedem Abgleich zur Namensaktualisierung aufgerufen; das Ereignis
+    /// `DevicePaired` entsteht nur beim ersten Eintragen.
     pub fn add_device(&self, node_id: &str, name: &str) -> Result<()> {
-        self.conn().execute(
-            "INSERT INTO devices (node_id, name, paired_at) VALUES (?1, ?2, ?3)
-             ON CONFLICT(node_id) DO UPDATE SET name = excluded.name",
-            params![node_id, name, now_unix()],
-        )?;
+        let conn = self.conn();
+        let inserted = conn
+            .prepare_cached("INSERT INTO devices (node_id, name, paired_at) VALUES (?1, ?2, ?3) ON CONFLICT(node_id) DO NOTHING")?
+            .execute(params![node_id, name, now_unix()])?
+            > 0;
+        if inserted {
+            // Standardrecht jeder Kopplung: nur die Dateiliste lesen.
+            conn.prepare_cached(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at) VALUES (?1, 'catalog.read', '', ?2)",
+            )?
+            .execute(params![node_id, now_unix()])?;
+            drop(conn);
+            self.emit(Event::DevicePaired { node_id: node_id.to_string(), name: name.to_string() });
+        } else {
+            conn.prepare_cached("UPDATE devices SET name = ?2 WHERE node_id = ?1 AND name != ?2")?
+                .execute(params![node_id, name])?;
+        }
         Ok(())
     }
 
     pub fn is_paired(&self, node_id: &str) -> Result<bool> {
         Ok(self
-            .conn()
+            .read()
             .query_row("SELECT 1 FROM devices WHERE node_id = ?1", params![node_id], |_| Ok(true))
             .optional()?
             .unwrap_or(false))
     }
 
     pub fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
-        let conn = self.conn();
+        let conn = self.read();
         let mut stmt =
-            conn.prepare("SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE")?;
+            conn.prepare_cached("SELECT node_id, name, paired_at, last_sync_at FROM devices ORDER BY name COLLATE NOCASE")?;
         let rows = stmt
             .query_map([], |r| {
-                Ok(DeviceInfo { node_id: r.get(0)?, name: r.get(1)?, paired_at: r.get(2)?, last_sync_at: r.get(3)? })
+                Ok(DeviceInfo {
+                    node_id: r.get(0)?,
+                    name: r.get(1)?,
+                    paired_at: r.get(2)?,
+                    last_sync_at: r.get(3)?,
+                    grants: Vec::new(),
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
@@ -936,7 +1306,12 @@ impl DatabaseManager {
         let removed = tx.execute("DELETE FROM devices WHERE node_id = ?1", params![node_id])? > 0;
         tx.execute("DELETE FROM ledger_entries WHERE origin = ?1", params![node_id])?;
         tx.execute("DELETE FROM peer_addrs WHERE node_id = ?1", params![node_id])?;
+        tx.execute("DELETE FROM device_grants WHERE node_id = ?1", params![node_id])?;
         tx.commit()?;
+        if removed {
+            self.emit(Event::DeviceRemoved { node_id: node_id.to_string() });
+            self.emit(Event::RemoteCatalogChanged { new_entries: 0 });
+        }
         Ok(removed)
     }
 
@@ -963,7 +1338,7 @@ impl DatabaseManager {
 
     pub fn addr_hints(&self, node_id: &str) -> Result<Vec<String>> {
         let json: Option<String> = self
-            .conn()
+            .read()
             .query_row("SELECT addrs FROM peer_addrs WHERE node_id = ?1", params![node_id], |r| r.get(0))
             .optional()?;
         Ok(json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
@@ -971,7 +1346,7 @@ impl DatabaseManager {
 
     pub fn has_waiting_jobs(&self, peer_id: &str) -> Result<bool> {
         Ok(self
-            .conn()
+            .read()
             .query_row(
                 "SELECT 1 FROM pending_pins WHERE peer_id = ?1 AND state = 'waiting' LIMIT 1",
                 params![peer_id],
@@ -979,6 +1354,117 @@ impl DatabaseManager {
             )
             .optional()?
             .unwrap_or(false))
+    }
+}
+
+impl DatabaseManager {
+    // ------------------------------------------------------------------
+    // Rechte & Audit
+    // ------------------------------------------------------------------
+
+    /// Ordner, in denen ein Gerät ein Recht hat (`""` = ohne Ordnerbeschränkung).
+    /// Leere Liste = Recht nicht gewährt. Gilt nur für gekoppelte Geräte.
+    pub fn grant_folders(&self, node_id: &str, capability: &str) -> Result<Vec<String>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT g.folder FROM device_grants g JOIN devices d ON d.node_id = g.node_id
+             WHERE g.node_id = ?1 AND g.capability = ?2",
+        )?;
+        let rows = stmt.query_map(params![node_id, capability], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
+    pub fn grants_of(&self, node_id: &str) -> Result<Vec<Grant>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT capability, folder, granted_at FROM device_grants WHERE node_id = ?1 ORDER BY capability, folder",
+        )?;
+        let rows = stmt
+            .query_map(params![node_id], |r| {
+                let folder: String = r.get(1)?;
+                Ok(Grant { capability: r.get(0)?, folder: (!folder.is_empty()).then_some(folder), granted_at: r.get(2)? })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Gewährt ein Recht. Gibt `false` zurück, wenn es schon bestand.
+    pub fn add_grant(&self, node_id: &str, capability: &str, folder: Option<&str>) -> Result<bool> {
+        let added = self
+            .conn()
+            .prepare_cached(
+                "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at)
+                 SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM devices WHERE node_id = ?1)",
+            )?
+            .execute(params![node_id, capability, folder.unwrap_or(""), now_unix()])?
+            > 0;
+        if added {
+            self.emit(Event::GrantsChanged { node_id: node_id.to_string() });
+        }
+        Ok(added)
+    }
+
+    /// Entzieht ein Recht (`folder = None`: in allen Ordnern). Gibt die Anzahl entfernter zurück.
+    pub fn remove_grant(&self, node_id: &str, capability: &str, folder: Option<&str>) -> Result<usize> {
+        let n = self
+            .conn()
+            .prepare_cached(
+                "DELETE FROM device_grants WHERE node_id = ?1 AND capability = ?2 AND (?3 IS NULL OR folder = ?3)",
+            )?
+            .execute(params![node_id, capability, folder])?;
+        if n > 0 {
+            self.emit(Event::GrantsChanged { node_id: node_id.to_string() });
+        }
+        Ok(n)
+    }
+
+    /// Schreibt einen Audit-Eintrag; hält das Log bei höchstens 10 000 Einträgen.
+    pub fn audit(&self, node_id: &str, operation: &str, target: Option<&str>, allowed: bool, detail: Option<&str>) -> Result<()> {
+        let now = now_unix();
+        {
+            let key = format!("{node_id}|{operation}|{}|{allowed}", target.unwrap_or(""));
+            let mut recent = self.audit_recent.lock().unwrap_or_else(|e| e.into_inner());
+            if recent.get(&key).is_some_and(|t| now - t < AUDIT_DEDUP_SECS) {
+                return Ok(());
+            }
+            if recent.len() >= 4096 {
+                recent.retain(|_, t| now - *t < AUDIT_DEDUP_SECS);
+                if recent.len() >= 4096 {
+                    recent.clear();
+                }
+            }
+            recent.insert(key, now);
+        }
+        let conn = self.conn();
+        conn.prepare_cached(
+            "INSERT INTO audit_log (ts, node_id, operation, target, allowed, detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?
+        .execute(params![now_unix(), node_id, operation, target, allowed, detail])?;
+        let id = conn.last_insert_rowid();
+        if id % 500 == 0 {
+            conn.prepare_cached("DELETE FROM audit_log WHERE id <= ?1")?.execute(params![id - 10_000])?;
+        }
+        Ok(())
+    }
+
+    pub fn audit_log(&self, limit: u32) -> Result<Vec<AuditEntry>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT ts, node_id, operation, target, allowed, detail FROM audit_log ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |r| {
+                Ok(AuditEntry {
+                    ts: r.get(0)?,
+                    node_id: r.get(1)?,
+                    operation: r.get(2)?,
+                    target: r.get(3)?,
+                    allowed: r.get(4)?,
+                    detail: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 }
 
@@ -1123,6 +1609,100 @@ mod tests {
         db.mark_peer_unreachable("p", true).unwrap();
         db.mark_peer_online("p").unwrap();
         assert_eq!(db.get_peer("p").unwrap().unwrap().next_retry_at, None);
+    }
+
+    #[tokio::test]
+    async fn mutations_emit_events() {
+        use crate::events::Event;
+        let db = DatabaseManager::open_in_memory().unwrap();
+        let mut sub = db.events().subscribe();
+        db.upsert_file("/a", H1, "a", 1, "t").unwrap();
+        db.upsert_file("/a", H1, "a", 1, "t").unwrap(); // unverändert -> kein Ereignis
+        db.mark_peer_online("p").unwrap();
+        db.mark_peer_online("p").unwrap(); // kein Statuswechsel -> kein Ereignis
+        db.mark_peer_unreachable("p", true).unwrap();
+        let (job, _) = db.enqueue_download(&job(H1, "/x", "p")).unwrap();
+        db.complete_job(job).unwrap();
+        db.add_device("d", "Handy").unwrap();
+        db.add_device("d", "Handy").unwrap(); // Namensabgleich -> kein Ereignis
+        db.remove_device("d").unwrap();
+        let expected = vec![
+            Event::LocalCatalogChanged,
+            Event::PeerStatusChanged { node_id: "p".into(), status: "online".into() },
+            Event::PeerStatusChanged { node_id: "p".into(), status: "offline".into() },
+            Event::JobQueued { job_id: job },
+            Event::JobCompleted { job_id: job },
+            Event::DevicePaired { node_id: "d".into(), name: "Handy".into() },
+            Event::DeviceRemoved { node_id: "d".into() },
+            Event::RemoteCatalogChanged { new_entries: 0 },
+        ];
+        for e in expected {
+            assert_eq!(sub.next().await.unwrap(), e);
+        }
+    }
+
+    #[test]
+    fn browse_pages_filters_and_escapes() {
+        let db = DatabaseManager::open_in_memory().unwrap();
+        let key = iroh::SecretKey::generate();
+        let origin = key.public().to_string();
+        let entries: Vec<LedgerEntry> = (0..25)
+            .map(|i| {
+                let mut e = LedgerEntry {
+                    origin: origin.clone(),
+                    entry_id: i + 1,
+                    seq: i + 1,
+                    hash: format!("{:064x}", i),
+                    name: format!("bild_{i:02}.jpg"),
+                    size: 1,
+                    created_at: 0,
+                    deleted: false,
+                    signature: String::new(),
+                };
+                e.signature = e.sign(&key);
+                e
+            })
+            .collect();
+        db.apply_remote_entries(&entries).unwrap();
+        db.upsert_file("/home/notiz%.txt", H1, "notiz%.txt", 1, "t").unwrap();
+        db.add_device(&origin, "Handy").unwrap();
+
+        let (page, total, _) = db.browse("self", None, None, 0, 10, None).unwrap();
+        assert_eq!((page.len(), total), (10, 26));
+        assert_eq!(page[0].name, "bild_00.jpg");
+        assert_eq!(page[0].origin_name.as_deref(), Some("Handy"));
+        let (page, total, _) = db.browse("self", None, None, 20, 10, None).unwrap();
+        assert_eq!((page.len(), total), (6, 26));
+        assert_eq!(page.last().unwrap().path.as_deref(), Some("/home/notiz%.txt"));
+        let (page, total, _) = db.browse("self", None, None, 100, 10, None).unwrap();
+        assert_eq!((page.len(), total), (0, 26));
+
+        // "%" wird wörtlich gesucht, "_" ebenso
+        let (page, _, _) = db.browse("self", None, Some("%"), 0, 50, None).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].name, "notiz%.txt");
+        assert_eq!(db.browse("self", None, Some("_1"), 0, 50, None).unwrap().1, 10);
+        assert_eq!(db.browse("self", None, Some("BILD_2"), 0, 50, None).unwrap().1, 5, "ohne Groß-/Kleinschreibung");
+
+        // Gerätefilter
+        assert_eq!(db.browse("self", Some(None), None, 0, 50, None).unwrap().1, 1);
+        assert_eq!(db.browse("self", Some(Some(&origin)), None, 0, 50, None).unwrap().1, 25);
+
+        // Keyset: alle Einträge seitenweise per Cursor, lückenlos und ohne Dopplungen
+        let mut seen = Vec::new();
+        let mut after = None;
+        loop {
+            let (page, total, next) = db.browse("self", None, None, 0, 7, after.as_ref()).unwrap();
+            assert_eq!(total, 26);
+            seen.extend(page.into_iter().map(|i| i.name));
+            match next {
+                Some(c) => after = Some(c),
+                None => break,
+            }
+        }
+        let (all, _, none) = db.browse("self", None, None, 0, 100, None).unwrap();
+        assert!(none.is_none());
+        assert_eq!(seen, all.into_iter().map(|i| i.name).collect::<Vec<_>>());
     }
 
     #[test]

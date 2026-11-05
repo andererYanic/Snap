@@ -47,7 +47,10 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `list` | Eigene Freigaben und Dateien gekoppelter Geräte (gleicht im Hintergrund ab, wenn der Stand > 5 min alt ist) |
 | `sync` | Sofort mit allen gekoppelten Geräten abgleichen |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
-| `pair list` / `pair remove <gerät>` | Gekoppelte Geräte anzeigen / entkoppeln |
+| `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
+| `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
+| `audit` | Zugriffe gekoppelter Geräte (erlaubt/abgelehnt) |
+| `watch` | Ereignisse des Daemons live anzeigen |
 | `ticket <hash>` | Vollständiges Ticket einer Freigabe |
 | `delete --hash <h>` / `delete --path <p>` | Freigabe entfernen (sofort nicht mehr abrufbar) |
 | `queue` / `queue retry <id>` / `queue cancel <id>` | Offline-Warteschlange |
@@ -79,8 +82,12 @@ core/src
   config.rs      Konfiguration, XDG-Pfade, Umgebungsvariablen
   secure_fs.rs   private Ordner (0700), persistenter Node-Schlüssel (0600)
   ipc.rs         Protokoll CLI ↔ Daemon (JSON mit Längenpräfix, max. 1 MiB)
-  daemon.rs      IPC-Server, Request-Handling, Warteschlangen-Worker, Aufräumen
+  daemon.rs      Start/Stopp, IPC-Server (API-Version, Abos), Aufräumen
   network.rs     Iroh-Endpoint, Blob-Store, Zugriffskontrolle, Transfers
+  api/           Operationen (files, transfer, devices), Fehlercodes, Rechte (auth.rs)
+  events.rs      Ereignis-Stream für Live-Updates
+  worker.rs      Offline-Warteschlange
+  sync.rs        Ledger-Abgleich (auf Anfrage, Hintergrund, periodisch)
   pairing.rs     Einmal-Codes, Pairing-Protokoll (snap/pair/1)
   ledger.rs      signierte Dateilisten, Abgleich per Versionsvektor (snap/ledger/1)
   database.rs    SQLite: files, pending_pins, peer_status, devices, ledger_entries, peer_addrs
@@ -129,9 +136,12 @@ Unbekannte Node-IDs werden nicht gespeichert.
   abrufbar. Die Frage „besitzt du Hash X?“ (Observe) wird für alles andere abgelehnt.
   `get_many` und `push` sind deaktiviert.
 - **Tickets sind Zugangsschlüssel:** Wer ein Ticket einer freigegebenen Datei hat, kann sie laden.
-- **Pairing ist eng begrenzt:** Ein gekoppeltes Gerät darf nur das Ledger lesen – keine
-  Fernsteuerung, kein Schreibzugriff. Das Ledger bekommen ausschließlich gekoppelte Geräte;
-  `pair remove` sperrt sofort. Ein manipulierter Eintrag verwirft die gesamte Seite.
+- **Rechte pro Gerät:** Jede Operation läuft durch eine einzige Prüfstelle. Lokale Aufrufer
+  (gleiche Benutzer-ID) dürfen alles; ein gekoppeltes Gerät nur, was ihm gewährt wurde –
+  beim Koppeln ausschließlich `catalog.read`. Ordnerrechte gelten nur innerhalb des Ordners
+  (Pfade kanonisiert, `..` verboten, Symlinks aufgelöst); Snap-Daten und Systempfade sind immer
+  gesperrt. `admin` ist für Geräte gesperrt. Zugriffe fremder Geräte landen im Audit-Log
+  (`audit`). Ein manipulierter Ledger-Eintrag verwirft die gesamte Seite.
 - **IPC:**
   - Der Socket liegt in einem Ordner mit den Rechten 0700, der Socket selbst hat 0600.
   - Zusätzlich muss jede Verbindung von derselben Benutzer-ID kommen (`SO_PEERCRED`).
@@ -147,6 +157,16 @@ Unbekannte Node-IDs werden nicht gespeichert.
 - **Bekannte Metadaten-Lücke:** Mit `use_relay = true` veröffentlicht der Node seine Node-ID und sein
   Heim-Relais bei n0-DNS (keine IP-Adressen). Verbindungen können über n0-Relais laufen; die
   Inhalte bleiben dabei durch QUIC/TLS Ende-zu-Ende verschlüsselt. Geplant ist ein eigenes Relais.
+
+## API für Oberflächen
+
+Alle Oberflächen sprechen denselben Vertrag (`core/src/ipc.rs`): über den Unix-Socket
+(Desktop, CLI) oder eingebettet (`Daemon::request`, `Daemon::subscribe` – Mobile per FFI).
+
+- Jede Anfrage trägt die API-Version (`Envelope { v, req }`); Abweichung → `VersionMismatch`.
+- Fehler haben maschinenlesbare Codes (`NotFound`, `Ambiguous`, `Unavailable`, `PermissionDenied` …).
+- `Browse` liefert den Katalog seitenweise mit Cursor (`after`/`next`) – konstant < 1 ms pro Seite.
+- `Subscribe` streamt Ereignisse (Katalog, Peer-Status, Aufträge, Geräte, Rechte).
 
 ## Tests
 
