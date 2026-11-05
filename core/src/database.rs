@@ -908,6 +908,19 @@ impl DatabaseManager {
         Ok(next)
     }
 
+    /// Live-Verbindung beendet: offline, ohne das Download-Backoff zu verändern.
+    pub fn mark_peer_disconnected(&self, node_id: &str) -> Result<()> {
+        let conn = self.conn();
+        let prev = Self::peer_status_of(&conn, node_id)?;
+        conn.prepare_cached("UPDATE peer_status SET status = 'offline' WHERE node_id = ?1")?
+            .execute(params![node_id])?;
+        drop(conn);
+        if prev.is_some() {
+            self.emit_status_change(node_id, prev.as_deref(), "offline");
+        }
+        Ok(())
+    }
+
     /// Ein bereits bekannter Peer hat sich bei uns gemeldet (eingehende Verbindung).
     /// Unbekannte Node-IDs werden bewusst nicht gespeichert, damit Fremde die
     /// Tabelle nicht füllen können. Gibt `true` zurück, wenn für diesen Peer
@@ -1092,6 +1105,16 @@ impl DatabaseManager {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Summe der höchsten Sequenznummern aller Ursprünge – ändert sich bei jeder
+    /// Ledger-Änderung (Hinweis für Live-Verbindungen).
+    pub fn ledger_total(&self) -> Result<i64> {
+        Ok(self.read().query_row(
+            "SELECT COALESCE(SUM(m), 0) FROM (SELECT MAX(seq) AS m FROM ledger_entries GROUP BY origin)",
+            [],
+            |r| r.get(0),
+        )?)
     }
 
     /// Höchste bekannte Sequenznummer je Ursprungsgerät.

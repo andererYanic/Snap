@@ -6,6 +6,7 @@ pub mod database;
 pub mod events;
 pub mod ipc;
 pub mod ledger;
+pub mod live;
 pub mod network;
 pub mod pairing;
 pub mod secure_fs;

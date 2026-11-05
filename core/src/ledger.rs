@@ -184,7 +184,7 @@ impl LedgerCtx {
     }
 
     /// Ein Peer hat nachweislich geantwortet: Status, Abgleichzeit, Warteschlange.
-    fn peer_reached(&self, peer: &str) {
+    pub(crate) fn peer_reached(&self, peer: &str) {
         if let Err(e) = self.db.mark_peer_online(peer) {
             tracing::warn!("Peer-Status nicht aktualisierbar: {e}");
         }
