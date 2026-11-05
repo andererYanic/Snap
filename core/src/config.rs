@@ -38,6 +38,10 @@ pub struct ConfigFile {
     /// `false` = keine öffentlichen n0-Relais und kein n0-DNS (reiner LAN-/Direktmodus).
     /// Tickets enthalten dann direkte IP-Adressen.
     pub use_relay: Option<bool>,
+    /// Anzeigename dieses Geräts für gekoppelte Geräte. Standard: Hostname.
+    pub device_name: Option<String>,
+    /// Intervall für den automatischen Ledger-Abgleich in Stunden (±30 % Zufall). 0 = aus.
+    pub sync_interval_hours: Option<f64>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -50,6 +54,9 @@ pub struct Config {
     pub connect_timeout_secs: u64,
     pub bind_port: Option<u16>,
     pub use_relay: bool,
+    pub device_name: String,
+    /// 0.0 = periodischer Abgleich deaktiviert.
+    pub sync_interval_hours: f64,
 }
 
 impl Config {
@@ -133,6 +140,12 @@ impl Config {
             connect_timeout_secs: file.connect_timeout_secs.unwrap_or(10).max(1),
             bind_port: file.bind_port,
             use_relay: file.use_relay.unwrap_or(true),
+            device_name: file
+                .device_name
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(hostname),
+            sync_interval_hours: file.sync_interval_hours.unwrap_or(6.0).max(0.0),
         })
     }
 
@@ -146,8 +159,20 @@ impl Config {
             connect_timeout_secs: 5,
             bind_port: None,
             use_relay: true,
+            device_name: "Testgerät".to_string(),
+            sync_interval_hours: 0.0,
         }
     }
+}
+
+/// Hostname des Systems als Standard-Gerätename.
+fn hostname() -> String {
+    ["/proc/sys/kernel/hostname", "/etc/hostname"]
+        .iter()
+        .find_map(|p| fs::read_to_string(p).ok())
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "snap-gerät".to_string())
 }
 
 fn project_dirs() -> Result<directories::ProjectDirs> {
@@ -195,6 +220,14 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # false = keine öffentlichen n0-Relais / kein n0-DNS (nur direkte Verbindungen, z. B. im LAN).
 # Tickets enthalten dann direkte IP-Adressen.
 # use_relay = true
+
+# Name dieses Geräts, wie er auf gekoppelten Geräten angezeigt wird (Standard: Hostname)
+# device_name = "Arch-Desktop"
+
+# Automatischer Abgleich der Dateilisten mit gekoppelten Geräten, in Stunden (±30 % Zufall).
+# Zusätzlich wird bei Nutzung (list, sync) und bei Kontakt mit einem Gerät abgeglichen.
+# 0 = nur bei Nutzung/Kontakt.
+# sync_interval_hours = 6
 "#;
 
 #[cfg(test)]

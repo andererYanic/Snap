@@ -13,6 +13,7 @@ use iroh_blobs::{
     ticket::BlobTicket,
     BlobFormat, BlobsProtocol, Hash, HashAndFormat,
 };
+use iroh::protocol::RouterBuilder;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,7 +78,13 @@ pub struct P2pNetwork {
 const PUBLISH_TAG_PREFIX: &str = "snap/pub/";
 
 impl P2pNetwork {
-    pub async fn start(opts: NetworkOptions, access: AccessCheck, on_connect: ConnectHook) -> Result<Self> {
+    /// `extra_protocols` registriert zusätzliche Protokolle (Ledger, Pairing) am Router.
+    pub async fn start(
+        opts: NetworkOptions,
+        access: AccessCheck,
+        on_connect: ConnectHook,
+        extra_protocols: impl FnOnce(RouterBuilder, &Endpoint) -> RouterBuilder,
+    ) -> Result<Self> {
         tokio::fs::create_dir_all(&opts.blob_store_path).await?;
 
         // Garbage Collection: entfernt Blobs ohne Tag (gelöschte Freigaben,
@@ -113,9 +120,8 @@ impl P2pNetwork {
 
         let events = access_control(access, on_connect);
         let blobs_protocol = BlobsProtocol::new(&store, Some(events));
-        let router = iroh::protocol::Router::builder(endpoint.clone())
-            .accept(iroh_blobs::ALPN, blobs_protocol)
-            .spawn();
+        let builder = iroh::protocol::Router::builder(endpoint.clone()).accept(iroh_blobs::ALPN, blobs_protocol);
+        let router = extra_protocols(builder, &endpoint).spawn();
 
         Ok(Self { endpoint, store, router, connect_timeout: opts.connect_timeout, use_relay: opts.use_relay })
     }
@@ -133,6 +139,11 @@ impl P2pNetwork {
         } else {
             self.endpoint.addr()
         }
+    }
+
+    /// Direkte Adressen dieses Nodes (als Hinweis für gekoppelte Geräte).
+    pub fn direct_addrs(&self) -> Vec<String> {
+        direct_addrs(&self.endpoint)
     }
 
     pub fn ticket_for(&self, hash: Hash) -> String {
@@ -248,6 +259,30 @@ impl P2pNetwork {
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }
+}
+
+/// Direkte IP-Adressen eines Endpoints als Strings.
+pub fn direct_addrs(endpoint: &Endpoint) -> Vec<String> {
+    endpoint
+        .addr()
+        .addrs
+        .iter()
+        .filter_map(|a| match a {
+            iroh::TransportAddr::Ip(sa) => Some(sa.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Baut eine Endpoint-Adresse aus Node-ID und (optionalen) direkten Adress-Hinweisen.
+pub fn endpoint_addr(id: EndpointId, hints: &[String]) -> EndpointAddr {
+    let mut addr = EndpointAddr::from(id);
+    for h in hints {
+        if let Ok(sa) = h.parse::<std::net::SocketAddr>() {
+            addr.addrs.insert(iroh::TransportAddr::Ip(sa));
+        }
+    }
+    addr
 }
 
 /// Zugriffskontrolle für eingehende Blob-Anfragen:

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use space_core::database::{JobState, PeerInfo, PendingJob};
-use space_core::ipc::{read_frame, write_frame, Request, Response};
+use space_core::database::{DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile};
+use space_core::ipc::{read_frame, write_frame, Request, Response, SyncResult};
 use space_core::{Config, Daemon, FileRecord};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -31,10 +31,10 @@ enum Commands {
         /// Pfad zur Datei
         path: PathBuf,
     },
-    /// Lädt eine Datei per Ticket oder Hash herunter. Ist der Peer offline,
+    /// Lädt eine Datei per Ticket, Hash oder Dateiname herunter. Ist das Gerät offline,
     /// landet der Auftrag in der Warteschlange und wird automatisch nachgeholt.
     Download {
-        /// Iroh-Ticket oder Hash(-Präfix, mind. 6 Zeichen) aus `list`
+        /// Ticket, Hash(-Präfix, mind. 6 Zeichen) oder Dateiname aus `list`
         target: String,
         /// Zielpfad (Datei oder Ordner). Standard: Download-Ordner aus der Konfiguration
         #[arg(short, long, value_name = "PFAD")]
@@ -52,8 +52,15 @@ enum Commands {
         #[arg(long)]
         path: Option<PathBuf>,
     },
-    /// Listet alle freigegebenen Dateien
+    /// Zeigt eigene Freigaben und die Dateien gekoppelter Geräte
     List,
+    /// Gleicht die Dateilisten sofort mit allen gekoppelten Geräten ab
+    Sync,
+    /// Geräte koppeln und verwalten
+    Pair {
+        #[command(subcommand)]
+        action: PairAction,
+    },
     /// Zeigt das vollständige Ticket einer freigegebenen Datei
     Ticket {
         /// Hash(-Präfix) der Datei
@@ -68,6 +75,18 @@ enum Commands {
     Peers,
     /// Zeigt Node-ID, Pfade und Statistiken des laufenden Daemons
     Info,
+}
+
+#[derive(Subcommand)]
+enum PairAction {
+    /// Erzeugt einen Einmal-Code (10 min gültig) und wartet auf das neue Gerät
+    Invite,
+    /// Koppelt dieses Gerät mit einem Einladungscode
+    Join { code: String },
+    /// Zeigt gekoppelte Geräte
+    List,
+    /// Entkoppelt ein Gerät (Name oder Node-ID-Präfix)
+    Remove { device: String },
 }
 
 #[derive(Subcommand)]
@@ -109,6 +128,17 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             path: path.map(|p| absolute(&p)).transpose()?,
         },
         Commands::List => Request::List,
+        Commands::Sync => {
+            eprintln!("🔄 Gleiche mit gekoppelten Geräten ab …");
+            Request::Sync
+        }
+        Commands::Pair { action: PairAction::Invite } => return pair_invite(&config.socket_path).await,
+        Commands::Pair { action: PairAction::Join { code } } => {
+            eprintln!("🔗 Verbinde …");
+            Request::PairJoin { code }
+        }
+        Commands::Pair { action: PairAction::List } => Request::PairList,
+        Commands::Pair { action: PairAction::Remove { device } } => Request::PairRemove { device },
         Commands::Ticket { hash } => Request::Ticket { hash },
         Commands::Queue { action: None } => Request::Queue,
         Commands::Queue { action: Some(QueueAction::Cancel { id }) } => Request::QueueCancel { id },
@@ -161,6 +191,22 @@ async fn wait_for_shutdown_signal() -> Result<()> {
     Ok(())
 }
 
+/// Zeigt den Einladungscode und wartet, bis sich ein Gerät damit koppelt.
+async fn pair_invite(socket: &Path) -> Result<ExitCode> {
+    let (code, expires_at) = match send_request(socket, &Request::PairInvite).await? {
+        Response::PairInvite { code, expires_at } => (code, expires_at),
+        other => return Ok(print_response(other)),
+    };
+    println!("🔑 Einladungscode (einmalig, gültig bis {}):\n", fmt_time(expires_at));
+    println!("   {code}\n");
+    println!("Auf dem neuen Gerät ausführen:");
+    println!("   space-daemon pair join {code}\n");
+    println!("⚠️  Den Code nur über einen sicheren Weg übertragen – wer ihn hat, kann sich koppeln.");
+    println!("⏳ Warte auf das neue Gerät … (STRG+C bricht das Warten ab, der Code bleibt bis zum Ablauf gültig)");
+    let res = send_request(socket, &Request::PairInviteWait).await?;
+    Ok(print_response(res))
+}
+
 async fn send_request(socket: &Path, req: &Request) -> Result<Response> {
     let mut stream = UnixStream::connect(socket).await.map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => anyhow::anyhow!(
@@ -204,7 +250,16 @@ fn print_response(res: Response) -> ExitCode {
             println!("   Status: space-daemon queue");
         }
         Response::Ticket { ticket } => println!("{ticket}"),
-        Response::FileList { files } => print_files(&files),
+        Response::Catalog { local, remote, devices, peers, syncing } => {
+            print_catalog(&local, &remote, &devices, &peers, syncing)
+        }
+        Response::SyncReport { results } => print_sync(&results),
+        Response::PairInvite { code, .. } => println!("{code}"),
+        Response::Paired { device } => {
+            println!("✅ Gekoppelt mit '{}' ({})", device.name, short(&device.node_id, 10));
+            println!("   Die Dateilisten werden jetzt im Hintergrund abgeglichen. Anzeigen: space-daemon list");
+        }
+        Response::Devices { devices } => print_devices(&devices),
         Response::Queue { jobs } => print_jobs(&jobs),
         Response::Peers { peers } => print_peers(&peers),
         Response::Info(i) => {
@@ -212,7 +267,9 @@ fn print_response(res: Response) -> ExitCode {
             println!("Daten:          {}", i.data_dir.display());
             println!("IPC-Socket:     {}", i.socket_path.display());
             println!("Downloads:      {}", i.download_dir.display());
+            println!("Gerätename:     {}", i.device_name);
             println!("Relais:         {}", if i.use_relay { "n0 (öffentlich)" } else { "deaktiviert" });
+            println!("Gekoppelt:      {} Gerät(e)", i.paired_devices);
             println!("Freigaben:      {}", i.shared_files);
             println!("Warteschlange:  {} wartend", i.pending_jobs);
         }
@@ -224,22 +281,98 @@ fn print_response(res: Response) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn print_files(files: &[FileRecord]) {
-    if files.is_empty() {
-        println!("📭 Noch keine Dateien freigegeben. Freigeben mit: space-daemon publish <datei>");
+fn print_catalog(
+    local: &[FileRecord],
+    remote: &[RemoteFile],
+    devices: &[DeviceInfo],
+    peers: &[PeerInfo],
+    syncing: bool,
+) {
+    let now = chrono::Utc::now().timestamp();
+    println!("📁 Dieses Gerät");
+    if local.is_empty() {
+        println!("   (noch nichts freigegeben – space-daemon publish <datei>)");
+    } else {
+        for f in local {
+            println!(
+                "   {:<14} {:>10}  {}",
+                short(&f.blake3_hash, 12),
+                human_size(f.file_size),
+                f.path
+            );
+        }
+    }
+
+    // Einträge nach Ursprungsgerät gruppieren (Reihenfolge kommt sortiert vom Daemon).
+    let mut groups: Vec<(&str, Vec<&RemoteFile>)> = Vec::new();
+    for f in remote {
+        match groups.last_mut() {
+            Some((origin, list)) if *origin == f.origin => list.push(f),
+            _ => groups.push((&f.origin, vec![f])),
+        }
+    }
+    for (origin, files) in &groups {
+        let device = devices.iter().find(|d| d.node_id == *origin);
+        let name = device.map(|d| d.name.clone()).unwrap_or_else(|| format!("Gerät {}", short(origin, 10)));
+        let status = match peers.iter().find(|p| p.node_id == *origin).map(|p| p.status.as_str()) {
+            Some("online") => "🟢",
+            Some(_) => "🔴",
+            None => "⚪",
+        };
+        let via = if device.is_none() { " · über anderes Gerät" } else { "" };
+        println!("\n{status} {name}{via}");
+        for f in files {
+            println!("   {:<14} {:>10}  {}", short(&f.hash, 12), human_size(f.size), f.name);
+        }
+    }
+    // Gekoppelte Geräte ohne Dateien trotzdem anzeigen
+    for d in devices.iter().filter(|d| !groups.iter().any(|(o, _)| *o == d.node_id)) {
+        println!("\n⚪ {} – keine freigegebenen Dateien bekannt", d.name);
+    }
+
+    if !devices.is_empty() {
+        let oldest = devices.iter().map(|d| d.last_sync_at).min().flatten();
+        let stand = match oldest {
+            Some(t) => format!("Stand: vor {}", human_duration(now - t)),
+            None => "noch nicht abgeglichen".into(),
+        };
+        if syncing {
+            println!("\n🔄 {stand} – Abgleich läuft im Hintergrund, gleich erneut `list` aufrufen.");
+        } else {
+            println!("\n{stand}");
+        }
+    } else {
+        println!("\nNoch keine Geräte gekoppelt: space-daemon pair invite");
+    }
+    println!("Herunterladen: space-daemon download <name|hash> · 🟢 erreichbar 🔴 zuletzt nicht erreichbar ⚪ unbekannt");
+}
+
+fn print_sync(results: &[SyncResult]) {
+    if results.is_empty() {
+        println!("Noch keine Geräte gekoppelt: space-daemon pair invite");
         return;
     }
-    println!("{:<14} {:>10}  {:<16}  DATEI", "HASH", "GRÖSSE", "FREIGEGEBEN");
-    for f in files {
-        println!(
-            "{:<14} {:>10}  {:<16}  {}",
-            short(&f.blake3_hash, 12),
-            human_size(f.file_size),
-            fmt_time(f.created_at),
-            f.path
-        );
+    for r in results {
+        let name = if r.name.is_empty() { short(&r.node_id, 10).to_string() } else { r.name.clone() };
+        if r.ok {
+            println!("✅ {name}: {} neue Einträge", r.new_entries);
+        } else {
+            println!("🔴 {name}: {}", r.error.as_deref().unwrap_or("Fehler"));
+        }
     }
-    println!("\nTicket anzeigen: space-daemon ticket <hash>");
+}
+
+fn print_devices(devices: &[DeviceInfo]) {
+    if devices.is_empty() {
+        println!("Noch keine Geräte gekoppelt. Neues Gerät koppeln: space-daemon pair invite");
+        return;
+    }
+    let now = chrono::Utc::now().timestamp();
+    println!("{:<20} {:<12} {:<18} LETZTER ABGLEICH", "NAME", "NODE-ID", "GEKOPPELT");
+    for d in devices {
+        let sync = d.last_sync_at.map(|t| format!("vor {}", human_duration(now - t))).unwrap_or_else(|| "nie".into());
+        println!("{:<20} {:<12} {:<18} {}", d.name, short(&d.node_id, 10), fmt_time(d.paired_at), sync);
+    }
 }
 
 fn print_jobs(jobs: &[PendingJob]) {
