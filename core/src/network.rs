@@ -74,6 +74,9 @@ pub struct P2pNetwork {
     router: iroh::protocol::Router,
     connect_timeout: Duration,
     use_relay: bool,
+    /// Offene Blob-Verbindungen je Gerät – viele Dateien teilen sich eine Verbindung
+    /// (über das Internet spart das pro Datei einen Verbindungsaufbau).
+    conns: std::sync::Mutex<std::collections::HashMap<EndpointId, iroh::endpoint::Connection>>,
 }
 
 /// Tag-Präfix für freigegebene Dateien. Getaggte Blobs überleben die Garbage Collection.
@@ -125,7 +128,14 @@ impl P2pNetwork {
         let builder = iroh::protocol::Router::builder(endpoint.clone()).accept(iroh_blobs::ALPN, blobs_protocol);
         let router = extra_protocols(builder, &endpoint).spawn();
 
-        Ok(Self { endpoint, store, router, connect_timeout: opts.connect_timeout, use_relay: opts.use_relay })
+        Ok(Self {
+            endpoint,
+            store,
+            router,
+            connect_timeout: opts.connect_timeout,
+            use_relay: opts.use_relay,
+            conns: std::sync::Mutex::new(std::collections::HashMap::new()),
+        })
     }
 
     pub fn node_id(&self) -> EndpointId {
@@ -202,26 +212,11 @@ impl P2pNetwork {
             return Ok(temp);
         }
 
-        let conn = match tokio::time::timeout(
-            self.connect_timeout,
-            self.endpoint.connect(ticket.addr().clone(), iroh_blobs::ALPN),
-        )
-        .await
-        {
-            Ok(Ok(conn)) => conn,
-            Ok(Err(e)) => return Err(FetchError::Unreachable(e.to_string())),
-            Err(_) => {
-                return Err(FetchError::Unreachable(format!(
-                    "Zeitüberschreitung nach {} s",
-                    self.connect_timeout.as_secs()
-                )))
-            }
-        };
-
+        let peer = ticket.addr().id;
+        let conn = self.connection(ticket.addr()).await?;
         let result = self.store.remote().fetch(conn.clone(), content).await;
         match result {
             Ok(_) => {
-                conn.close(0u32.into(), b"done");
                 if self.has_complete(hash).await {
                     Ok(temp)
                 } else {
@@ -232,14 +227,40 @@ impl P2pNetwork {
                 // Ist die Verbindung noch offen, hat der Peer die Anfrage abgelehnt.
                 // Ist sie geschlossen, ist der Peer während der Übertragung verschwunden.
                 let closed = conn.close_reason().is_some();
-                conn.close(0u32.into(), b"error");
                 if closed {
+                    self.conns.lock().unwrap().remove(&peer);
                     Err(FetchError::Interrupted(e.to_string()))
                 } else {
                     Err(FetchError::Rejected(e.to_string()))
                 }
             }
         }
+    }
+
+    /// Wiederverwendbare Verbindung zu einem Gerät (neu aufgebaut, falls keine offen ist).
+    async fn connection(&self, addr: &EndpointAddr) -> Result<iroh::endpoint::Connection, FetchError> {
+        if let Some(c) = self.conns.lock().unwrap().get(&addr.id) {
+            if c.close_reason().is_none() {
+                return Ok(c.clone());
+            }
+        }
+        let conn =
+            match tokio::time::timeout(self.connect_timeout, self.endpoint.connect(addr.clone(), iroh_blobs::ALPN))
+                .await
+            {
+                Ok(Ok(conn)) => conn,
+                Ok(Err(e)) => return Err(FetchError::Unreachable(e.to_string())),
+                Err(_) => {
+                    return Err(FetchError::Unreachable(format!(
+                        "Zeitüberschreitung nach {} s",
+                        self.connect_timeout.as_secs()
+                    )))
+                }
+            };
+        let mut conns = self.conns.lock().unwrap();
+        conns.retain(|_, c| c.close_reason().is_none());
+        conns.insert(addr.id, conn.clone());
+        Ok(conn)
     }
 
     async fn has_complete(&self, hash: Hash) -> bool {

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile, ShareInfo};
 use space_core::events::Event;
-use space_core::ipc::{read_frame, write_frame, Envelope, Request, Response, ScanResult, SyncResult};
+use space_core::ipc::{read_frame, write_frame, Envelope, PinInfo, Request, Response, ScanResult, SyncResult};
 use space_core::{Config, Daemon, FileRecord};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -79,11 +79,26 @@ enum Commands {
         #[command(subcommand)]
         action: ShareAction,
     },
+    /// Freigaben anderer Geräte offline verfügbar halten (Smart-Pinning)
+    Pin {
+        #[command(subcommand)]
+        action: PinAction,
+    },
     /// Zeigt, was gekoppelte Geräte versucht haben (Audit-Log)
     Audit {
         #[arg(short, long, default_value_t = 50)]
         limit: u32,
     },
+}
+
+#[derive(Subcommand)]
+enum PinAction {
+    /// Spiegeln: "Fotos", "Fotos/2024" oder eindeutig "PC:Fotos/2024"
+    Add { target: String },
+    /// Pins mit Fortschritt, Konflikten und Platzbedarf
+    List,
+    /// Pin entfernen (gespiegelte Dateien bleiben liegen)
+    Remove { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -191,6 +206,9 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Request::ShareAdd { path: absolute(&path)?, name, devices }
         }
         Commands::Share { action: ShareAction::List } => Request::ShareList,
+        Commands::Pin { action: PinAction::Add { target } } => Request::PinAdd { target },
+        Commands::Pin { action: PinAction::List } => Request::PinList,
+        Commands::Pin { action: PinAction::Remove { id } } => Request::PinRemove { id },
         Commands::Share { action: ShareAction::Remove { name } } => Request::ShareRemove { name },
         Commands::Share { action: ShareAction::Rescan { name } } => {
             eprintln!("🔍 Scanne …");
@@ -292,6 +310,9 @@ fn describe_event(e: &Event) -> String {
         Event::ShareScanned { name, changed, deleted, total } => {
             format!("📂 Freigabe '{name}': {changed} neu/geändert, {deleted} gelöscht, {total} insgesamt")
         }
+        Event::PinsChanged { queued, removed, conflicts } => {
+            format!("📌 Pins: {queued} zu laden, {removed} entfernt, {conflicts} Konflikte")
+        }
         Event::GrantsChanged { node_id } => format!("🔐 Rechte von Gerät {} geändert", short(node_id, 10)),
         Event::Lagged { missed } => format!("⚠️  {missed} Ereignisse verpasst"),
     }
@@ -383,6 +404,17 @@ fn print_response(res: Response) -> ExitCode {
             println!("   Der erste Scan läuft im Hintergrund – Fortschritt: space-daemon watch");
         }
         Response::Scanned { results } => print_scanned(&results),
+        Response::Pins { pins, pin_dir, used_bytes, max_bytes } => print_pins(&pins, &pin_dir, used_bytes, max_bytes),
+        Response::PinAdded { pin, queued } => {
+            println!(
+                "📌 Pin {} angelegt: {}{} → {}",
+                pin.id,
+                pin.share,
+                if pin.prefix.is_empty() { String::new() } else { format!("/{}", pin.prefix) },
+                pin.path.display()
+            );
+            println!("   {queued} Datei(en) werden geladen; neue und geänderte Dateien folgen automatisch.");
+        }
         Response::BrowsePage { items, total, .. } => {
             for i in &items {
                 let wo = i.origin_name.clone().or_else(|| i.origin.as_deref().map(|o| short(o, 10).to_string()));
@@ -573,6 +605,31 @@ fn print_shares(shares: &[ShareInfo]) {
         let auto = if s.auto_grant { "" } else { "  (nur ausgewählte Geräte)" };
         println!("{:<20} {:>8} {:>10}  {}{auto}", s.name, s.file_count, human_size(s.total_size), s.root);
     }
+}
+
+fn print_pins(pins: &[PinInfo], pin_dir: &Path, used: u64, max: u64) {
+    if pins.is_empty() {
+        println!("Noch keine Pins. Beispiel: space-daemon pin add Fotos/2024");
+        return;
+    }
+    for p in pins {
+        let from = p.origin_name.clone().unwrap_or_else(|| short(&p.origin, 10).to_string());
+        let what = if p.prefix.is_empty() { p.share.clone() } else { format!("{}/{}", p.share, p.prefix) };
+        println!("[{}] {from}:{what} → {}", p.id, p.path.display());
+        let mut line = format!("     {} Dateien, {}", p.files_ok, human_size(p.bytes));
+        if p.files_pending > 0 {
+            line.push_str(&format!(", {} ausstehend", p.files_pending));
+        }
+        if p.conflicts > 0 {
+            line.push_str(&format!(
+                ", ⚠️  {} Konflikt(e) – lokal geänderte Kopien werden nicht überschrieben",
+                p.conflicts
+            ));
+        }
+        println!("{line}");
+    }
+    let quota = if max == 0 { "unbegrenzt".to_string() } else { human_size(max) };
+    println!("\nOrdner: {} · belegt {} von {quota}", pin_dir.display(), human_size(used));
 }
 
 fn print_scanned(results: &[ScanResult]) {

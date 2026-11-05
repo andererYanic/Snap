@@ -7,6 +7,7 @@ pub mod auth;
 pub mod devices;
 pub mod error;
 pub mod files;
+pub mod pins;
 pub mod shares;
 pub mod transfer;
 
@@ -64,6 +65,9 @@ pub(crate) async fn handle_request(
         Request::ShareList => inner.db.list_shares().map(|shares| Response::Shares { shares }),
         Request::ShareRemove { name } => shares::share_remove(inner, &name),
         Request::ShareRescan { name } => shares::share_rescan(inner, name).await,
+        Request::PinAdd { target } => pins::pin_add(inner, &target).await,
+        Request::PinList => pins::pin_list(inner),
+        Request::PinRemove { id } => pins::pin_remove(inner, id),
         Request::Audit { limit } => inner.db.audit_log(limit.clamp(1, 1000)).map(|entries| Response::Audit { entries }),
         Request::Ticket { hash } => ticket(inner, &hash),
         Request::Queue => inner.db.list_jobs().map(|jobs| Response::Queue { jobs }),
@@ -134,5 +138,8 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::ShareList => "share.list",
         Request::ShareRemove { .. } => "share.remove",
         Request::ShareRescan { .. } => "share.rescan",
+        Request::PinAdd { .. } => "pin.add",
+        Request::PinList => "pin.list",
+        Request::PinRemove { .. } => "pin.remove",
     })
 }

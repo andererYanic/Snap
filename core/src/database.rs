@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -135,6 +135,8 @@ pub struct PendingJob {
 
 /// Neuer Download-Auftrag für die Warteschlange.
 pub struct NewJob<'a> {
+    /// "DOWNLOAD" (vom Nutzer angefordert) oder "PIN" (Spiegelung eines Pins).
+    pub action: &'a str,
     pub target_hash: &'a str,
     pub ticket: &'a str,
     pub peer_id: &'a str,
@@ -402,6 +404,35 @@ impl DatabaseManager {
                 CREATE INDEX IF NOT EXISTS idx_files_share ON files(share_id, rel_path);
                 ALTER TABLE ledger_entries ADD COLUMN share TEXT NOT NULL DEFAULT '';
                 ALTER TABLE ledger_entries ADD COLUMN rel_path TEXT NOT NULL DEFAULT '';
+                ",
+            )?;
+        }
+        if version < 5 {
+            // Migration -> 5: Smart-Pinning.
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS pins (
+                    id         INTEGER PRIMARY KEY,
+                    origin     TEXT    NOT NULL,
+                    share      TEXT    NOT NULL,
+                    prefix     TEXT    NOT NULL,
+                    dir_name   TEXT    NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE (origin, share, prefix)
+                );
+                -- Gespiegelte Dateien: was wir wohin geschrieben haben (für Updates, Löschungen
+                -- und um lokal veränderte Kopien nie zu überschreiben).
+                CREATE TABLE IF NOT EXISTS pinned_files (
+                    path     TEXT    PRIMARY KEY,
+                    pin_id   INTEGER NOT NULL,
+                    origin   TEXT    NOT NULL,
+                    entry_id INTEGER NOT NULL,
+                    hash     TEXT    NOT NULL,
+                    size     INTEGER NOT NULL,
+                    mtime    INTEGER NOT NULL DEFAULT 0,
+                    state    TEXT    NOT NULL  -- 'pending' | 'ok' | 'conflict'
+                );
+                CREATE INDEX IF NOT EXISTS idx_pinned_pin ON pinned_files(pin_id);
                 ",
             )?;
         }
@@ -675,8 +706,8 @@ impl DatabaseManager {
         let conn = self.conn();
         if let Some(id) = conn
             .query_row(
-                "SELECT id FROM pending_pins WHERE target_hash = ?1 AND action = 'DOWNLOAD' AND output_path = ?2",
-                params![job.target_hash, job.output_path],
+                "SELECT id FROM pending_pins WHERE target_hash = ?1 AND action = ?3 AND output_path = ?2",
+                params![job.target_hash, job.output_path, job.action],
                 |r| r.get::<_, i64>(0),
             )
             .optional()?
@@ -695,7 +726,7 @@ impl DatabaseManager {
             "INSERT INTO pending_pins
                (target_hash, action, ticket, peer_id, output_path, explicit_output, force,
                 attempts, state, last_error, created_at)
-             VALUES (?1, 'DOWNLOAD', ?2, ?3, ?4, ?5, ?6, 1, 'waiting', ?7, ?8)",
+             VALUES (?1, ?9, ?2, ?3, ?4, ?5, ?6, ?10, 'waiting', ?7, ?8)",
             params![
                 job.target_hash,
                 job.ticket,
@@ -704,7 +735,9 @@ impl DatabaseManager {
                 job.explicit_output,
                 job.force,
                 job.last_error,
-                now_unix()
+                now_unix(),
+                job.action,
+                if job.action == "PIN" { 0 } else { 1 }
             ],
         )?;
         let id = conn.last_insert_rowid();
@@ -1841,6 +1874,215 @@ impl DatabaseManager {
     }
 }
 
+/// Ein Pin: Freigabe (oder Unterordner) eines anderen Geräts, die lokal gespiegelt wird.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PinRow {
+    pub id: i64,
+    pub origin: String,
+    pub share: String,
+    /// Unterordner relativ zur Freigabe ("" = ganze Freigabe).
+    pub prefix: String,
+    /// Ordnername unter dem Pin-Verzeichnis (stabil, auch wenn das Gerät umbenannt wird).
+    pub dir_name: String,
+    pub created_at: i64,
+}
+
+/// Ein Ledger-Eintrag, der zu einem Pin gehört.
+#[derive(Clone, Debug)]
+pub struct PinTarget {
+    pub entry_id: i64,
+    pub hash: String,
+    pub rel_path: String,
+    pub size: u64,
+    pub deleted: bool,
+}
+
+/// Eine gespiegelte Datei.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinnedFile {
+    pub path: String,
+    pub pin_id: i64,
+    pub origin: String,
+    pub entry_id: i64,
+    pub hash: String,
+    pub size: u64,
+    pub mtime: i64,
+    pub state: String,
+}
+
+impl DatabaseManager {
+    // ------------------------------------------------------------------
+    // Smart-Pinning
+    // ------------------------------------------------------------------
+
+    /// Geräte (außer uns), die eine Freigabe dieses Namens mit aktiven Dateien anbieten.
+    pub fn share_origins(&self, share: &str, self_origin: &str) -> Result<Vec<(String, Option<String>)>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT DISTINCT l.origin, d.name FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
+             WHERE l.share = ?1 AND l.deleted = 0 AND l.origin != ?2 ORDER BY d.name",
+        )?;
+        let rows = stmt
+            .query_map(params![share, self_origin], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn add_pin(&self, origin: &str, share: &str, prefix: &str, dir_name: &str) -> Result<i64> {
+        let conn = self.conn();
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO pins (origin, share, prefix, dir_name, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![origin, share, prefix, dir_name, now_unix()],
+        )?;
+        if n == 0 {
+            crate::api_bail!(AlreadyExists, "Dieser Pin besteht bereits");
+        }
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_pins(&self) -> Result<Vec<PinRow>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, origin, share, prefix, dir_name, created_at FROM pins ORDER BY share, prefix",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(PinRow {
+                    id: r.get(0)?,
+                    origin: r.get(1)?,
+                    share: r.get(2)?,
+                    prefix: r.get(3)?,
+                    dir_name: r.get(4)?,
+                    created_at: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Entfernt einen Pin und vergisst seine gespiegelten Dateien (die Dateien bleiben liegen).
+    pub fn remove_pin(&self, id: i64) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        // Reihenfolge: erst die wartenden Aufträge (brauchen pinned_files), dann den Rest.
+        tx.execute(
+            "DELETE FROM pending_pins WHERE action = 'PIN' AND output_path IN (SELECT path FROM pinned_files WHERE pin_id = ?1)",
+            params![id],
+        )?;
+        tx.execute("DELETE FROM pinned_files WHERE pin_id = ?1", params![id])?;
+        let n = tx.execute("DELETE FROM pins WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(n > 0)
+    }
+
+    /// Alle Ledger-Einträge (inkl. gelöschter) im Bereich eines Pins.
+    pub fn pin_targets(&self, pin: &PinRow) -> Result<Vec<PinTarget>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT entry_id, hash, rel_path, size, deleted FROM ledger_entries
+             WHERE origin = ?1 AND share = ?2 AND rel_path != ''
+               AND (?3 = '' OR rel_path = ?3 OR substr(rel_path, 1, length(?3) + 1) = ?3 || '/')",
+        )?;
+        let rows = stmt
+            .query_map(params![pin.origin, pin.share, pin.prefix], |r| {
+                Ok(PinTarget {
+                    entry_id: r.get(0)?,
+                    hash: r.get(1)?,
+                    rel_path: r.get(2)?,
+                    size: r.get::<_, i64>(3)? as u64,
+                    deleted: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn map_pinned(r: &rusqlite::Row<'_>) -> rusqlite::Result<PinnedFile> {
+        Ok(PinnedFile {
+            path: r.get(0)?,
+            pin_id: r.get(1)?,
+            origin: r.get(2)?,
+            entry_id: r.get(3)?,
+            hash: r.get(4)?,
+            size: r.get::<_, i64>(5)? as u64,
+            mtime: r.get(6)?,
+            state: r.get(7)?,
+        })
+    }
+
+    pub fn pinned_by_path(&self, path: &str) -> Result<Option<PinnedFile>> {
+        Ok(self
+            .read()
+            .prepare_cached(
+                "SELECT path, pin_id, origin, entry_id, hash, size, mtime, state FROM pinned_files WHERE path = ?1",
+            )?
+            .query_row(params![path], Self::map_pinned)
+            .optional()?)
+    }
+
+    pub fn pinned_of_pin(&self, pin_id: i64) -> Result<Vec<PinnedFile>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT path, pin_id, origin, entry_id, hash, size, mtime, state FROM pinned_files WHERE pin_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![pin_id], Self::map_pinned)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Merkt eine (noch zu ladende) Spiegelung vor. Neue Einträge haben `mtime = 0`
+    /// (noch nie geschrieben).
+    pub fn pinned_set_pending(&self, f: &PinnedFile) -> Result<()> {
+        self.conn()
+            .prepare_cached(
+                "INSERT INTO pinned_files (path, pin_id, origin, entry_id, hash, size, mtime, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending')
+             ON CONFLICT(path) DO UPDATE SET pin_id = excluded.pin_id, origin = excluded.origin,
+                entry_id = excluded.entry_id, hash = excluded.hash, state = 'pending'",
+                // size/mtime bleiben bei Aktualisierungen die der zuletzt geschriebenen Fassung –
+                // daran wird erkannt, ob die Kopie inzwischen lokal verändert wurde.
+            )?
+            .execute(params![f.path, f.pin_id, f.origin, f.entry_id, f.hash, f.size as i64, f.mtime])?;
+        Ok(())
+    }
+
+    /// Spiegelung erfolgreich geschrieben: Größe und Änderungszeit der geschriebenen Datei merken.
+    pub fn pinned_mark_ok(&self, path: &str, hash: &str, size: u64, mtime: i64) -> Result<()> {
+        self.conn()
+            .prepare_cached("UPDATE pinned_files SET state = 'ok', hash = ?2, size = ?3, mtime = ?4 WHERE path = ?1")?
+            .execute(params![path, hash, size as i64, mtime])?;
+        Ok(())
+    }
+
+    pub fn pinned_mark_conflict(&self, path: &str) -> Result<()> {
+        self.conn()
+            .prepare_cached("UPDATE pinned_files SET state = 'conflict' WHERE path = ?1")?
+            .execute(params![path])?;
+        Ok(())
+    }
+
+    pub fn pinned_remove(&self, path: &str) -> Result<()> {
+        self.conn().prepare_cached("DELETE FROM pinned_files WHERE path = ?1")?.execute(params![path])?;
+        Ok(())
+    }
+
+    /// Belegter bzw. vorgemerkter Platz aller Spiegelungen (für das Kontingent).
+    pub fn pinned_total_size(&self) -> Result<u64> {
+        Ok(self.read().query_row(
+            "SELECT COALESCE(SUM(size), 0) FROM pinned_files WHERE state IN ('ok', 'pending')",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as u64)
+    }
+
+    /// Entfernt wartende Pin-Aufträge für einen Pfad mit veraltetem Inhalt.
+    pub fn cancel_stale_pin_jobs(&self, path: &str, current_hash: &str) -> Result<()> {
+        self.conn()
+            .prepare_cached("DELETE FROM pending_pins WHERE action = 'PIN' AND output_path = ?1 AND target_hash != ?2")?
+            .execute(params![path, current_hash])?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1850,6 +2092,7 @@ mod tests {
 
     fn job<'a>(hash: &'a str, out: &'a str, peer: &'a str) -> NewJob<'a> {
         NewJob {
+            action: "DOWNLOAD",
             target_hash: hash,
             ticket: "ticket",
             peer_id: peer,

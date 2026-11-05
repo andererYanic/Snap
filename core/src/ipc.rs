@@ -38,6 +38,22 @@ pub struct ScanResult {
     pub skipped: usize,
 }
 
+/// Ein Pin mit Fortschritt.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PinInfo {
+    pub id: i64,
+    pub origin: String,
+    pub origin_name: Option<String>,
+    pub share: String,
+    pub prefix: String,
+    /// Lokaler Ordner der Spiegelung.
+    pub path: PathBuf,
+    pub files_ok: u64,
+    pub files_pending: u64,
+    pub conflicts: u64,
+    pub bytes: u64,
+}
+
 /// Seitenweise Abfrage des Katalogs (für Oberflächen).
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BrowseQuery {
@@ -151,6 +167,16 @@ pub enum Request {
     ShareRescan {
         name: Option<String>,
     },
+    /// Freigabe (oder Unterordner) eines anderen Geräts offline verfügbar machen:
+    /// "Fotos", "Fotos/2024" oder eindeutig "PC:Fotos/2024".
+    PinAdd {
+        target: String,
+    },
+    PinList,
+    /// Pin entfernen (die bereits gespiegelten Dateien bleiben liegen).
+    PinRemove {
+        id: i64,
+    },
     /// Vollständiges Ticket einer freigegebenen Datei abfragen.
     Ticket {
         hash: String,
@@ -255,6 +281,16 @@ pub enum Response {
     },
     Scanned {
         results: Vec<ScanResult>,
+    },
+    Pins {
+        pins: Vec<PinInfo>,
+        pin_dir: PathBuf,
+        used_bytes: u64,
+        max_bytes: u64,
+    },
+    PinAdded {
+        pin: PinInfo,
+        queued: usize,
     },
     BrowsePage {
         items: Vec<CatalogItem>,

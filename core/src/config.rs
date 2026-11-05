@@ -44,6 +44,10 @@ pub struct ConfigFile {
     pub sync_interval_hours: Option<f64>,
     /// Stehende Verbindungen zu gekoppelten Geräten („immer live“). Standard: true.
     pub live_connections: Option<bool>,
+    /// Zielordner für gepinnte (offline verfügbare) Dateien. Standard: ~/Snap
+    pub pin_dir: Option<PathBuf>,
+    /// Kontingent für gepinnte Dateien in GB (0 = unbegrenzt).
+    pub pin_max_gb: Option<f64>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -60,6 +64,9 @@ pub struct Config {
     /// 0.0 = periodischer Abgleich deaktiviert.
     pub sync_interval_hours: f64,
     pub live_connections: bool,
+    pub pin_dir: PathBuf,
+    /// 0 = unbegrenzt.
+    pub pin_max_bytes: u64,
 }
 
 impl Config {
@@ -133,6 +140,10 @@ impl Config {
                     .join(APP_NAME)
             });
 
+        let pin_dir = env_path("SPACE_PIN_DIR").or(file.pin_dir.map(expand_tilde)).unwrap_or_else(|| {
+            directories::BaseDirs::new().map(|b| b.home_dir().join("Snap")).unwrap_or_else(|| data_dir.join("pinned"))
+        });
+
         Ok(Self {
             data_dir,
             socket_path,
@@ -148,6 +159,8 @@ impl Config {
                 .unwrap_or_else(hostname),
             sync_interval_hours: file.sync_interval_hours.unwrap_or(6.0).max(0.0),
             live_connections: file.live_connections.unwrap_or(true),
+            pin_dir,
+            pin_max_bytes: (file.pin_max_gb.unwrap_or(0.0).max(0.0) * 1e9) as u64,
         })
     }
 
@@ -164,6 +177,8 @@ impl Config {
             device_name: "Testgerät".to_string(),
             sync_interval_hours: 0.0,
             live_connections: true,
+            pin_dir: root.join("Snap"),
+            pin_max_bytes: 0,
         }
     }
 }
@@ -233,6 +248,11 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # Stehende Verbindungen zu gekoppelten Geräten: Änderungen und Online-Status sofort.
 # Hinweis: Relais/Netzbeobachter sehen dadurch, wann deine Geräte online sind.
 # live_connections = true
+
+# Gepinnte (offline verfügbare) Dateien anderer Geräte: ~/Snap/<Gerät>/<Freigabe>/…
+# pin_dir = "~/Snap"
+# Kontingent in GB (0 = unbegrenzt)
+# pin_max_gb = 0
 "#;
 
 #[cfg(test)]

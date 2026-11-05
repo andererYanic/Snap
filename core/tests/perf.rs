@@ -296,3 +296,74 @@ fn share_scan() {
         d.shutdown().await;
     });
 }
+
+#[test]
+#[ignore]
+fn pin_mirror() {
+    use space_core::ipc::{Request, Response};
+    use space_core::{Config, Daemon};
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let port = || std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mk = |n: &str| {
+            let mut c = Config::portable(&dir.path().join(n));
+            c.use_relay = false;
+            c.bind_port = Some(port());
+            c.device_name = n.into();
+            c
+        };
+        let pc = Daemon::start_loopback(mk("PC")).await.unwrap();
+        let phone = Daemon::start_loopback(mk("Handy")).await.unwrap();
+        let code = match pc.request(Request::PairInvite).await {
+            Response::PairInvite { code, .. } => code,
+            other => panic!("{other:?}"),
+        };
+        assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
+        const N: usize = 2000;
+        let share = dir.path().join("Fotos");
+        for d in 0..20 {
+            std::fs::create_dir_all(share.join(format!("o{d:02}"))).unwrap();
+            for f in 0..N / 20 {
+                std::fs::write(share.join(format!("o{d:02}/f{f:03}.bin")), format!("{d}-{f}").repeat(100)).unwrap();
+            }
+        }
+        assert!(matches!(
+            pc.request(Request::ShareAdd { path: share.clone(), name: Some("Fotos".into()), devices: None }).await,
+            Response::ShareAdded { .. }
+        ));
+        // warten, bis der Katalog vollständig beim Handy ist
+        loop {
+            phone.request(Request::Sync).await;
+            if let Response::Catalog { remote, .. } = phone.request(Request::List).await {
+                if remote.len() >= N {
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        let mirror = phone.config().pin_dir.join("PC/Fotos");
+        let count = |p: &std::path::Path| walk_count(p);
+        let t = Instant::now();
+        assert!(matches!(phone.request(Request::PinAdd { target: "Fotos".into() }).await, Response::PinAdded { .. }));
+        while count(&mirror) < N {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        report("Erste Spiegelung (Dateien)", N, t.elapsed());
+
+        let target = mirror.join("o07/f042.bin");
+        let t = Instant::now();
+        std::fs::write(share.join("o07/f042.bin"), b"geaendert").unwrap();
+        while std::fs::read(&target).ok().as_deref() != Some(b"geaendert") {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        report("Einzeländerung -> Kopie aktualisiert", 1, t.elapsed());
+        pc.shutdown().await;
+        phone.shutdown().await;
+    });
+}
+
+fn walk_count(p: &std::path::Path) -> usize {
+    let Ok(rd) = std::fs::read_dir(p) else { return 0 };
+    rd.flatten().map(|e| if e.path().is_dir() { walk_count(&e.path()) } else { 1 }).sum()
+}

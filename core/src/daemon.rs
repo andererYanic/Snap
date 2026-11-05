@@ -47,6 +47,8 @@ pub struct DaemonInner {
     /// Pro Freigabe höchstens ein Scan gleichzeitig.
     pub(crate) scan_locks: Mutex<std::collections::HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
     pub(crate) live: Arc<crate::live::LiveManager>,
+    /// Löst einen Pin-Abgleich aus (z. B. nach `pin add`).
+    pub(crate) pin_notify: Arc<Notify>,
 }
 
 impl DaemonInner {
@@ -213,6 +215,7 @@ impl Daemon {
             watchers: Mutex::new(std::collections::HashMap::new()),
             scan_locks: Mutex::new(std::collections::HashMap::new()),
             live,
+            pin_notify: Arc::new(Notify::new()),
         });
         if inner.config.live_connections {
             inner.live.start();
@@ -225,7 +228,8 @@ impl Daemon {
         let pruner = tokio::spawn(run_pruner(inner.clone()));
         let periodic = tokio::spawn(run_periodic_sync(inner.clone()));
         let shares = tokio::spawn(start_shares(inner.clone()));
-        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic, shares]);
+        let pins = tokio::spawn(crate::pins::run_pin_loop(inner.clone()));
+        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic, shares, pins]);
 
         Ok(daemon)
     }
