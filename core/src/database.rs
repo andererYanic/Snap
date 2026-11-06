@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -31,6 +31,19 @@ pub struct FileRecord {
     /// Pfad relativ zur Freigabe.
     #[serde(default)]
     pub rel_path: Option<String>,
+}
+
+/// Eine eingerichtete Sicherung.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupJobRow {
+    pub id: String,
+    pub target: String,
+    pub sources: String,
+    pub created_at: i64,
+    pub last_run: Option<i64>,
+    pub last_ok: Option<i64>,
+    pub last_error: Option<String>,
+    pub last_snapshot: Option<String>,
 }
 
 /// Ein Freigabelink (lokal gespeichert; `secret` ist der Schlüssel aus dem Link).
@@ -580,6 +593,23 @@ impl DatabaseManager {
                     max_downloads INTEGER,
                     password      INTEGER NOT NULL,
                     state         TEXT    NOT NULL   -- 'active' | 'revoked' | 'expired'
+                );
+                ",
+            )?;
+        }
+        if version < 10 {
+            // Migration -> 10: Sicherungen.
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS backup_jobs (
+                    id            TEXT    PRIMARY KEY,
+                    target        TEXT    NOT NULL,   -- JSON (BackupTarget)
+                    sources       TEXT    NOT NULL,   -- JSON-Liste absoluter Pfade
+                    created_at    INTEGER NOT NULL,
+                    last_run      INTEGER,
+                    last_ok       INTEGER,
+                    last_error    TEXT,
+                    last_snapshot TEXT
                 );
                 ",
             )?;
@@ -1637,6 +1667,53 @@ impl DatabaseManager {
             .into_iter()
             .filter(|d| d.name == q || by_id.as_deref().is_some_and(|p| d.node_id.starts_with(p)))
             .collect())
+    }
+
+    pub fn add_backup_job(&self, id: &str, target: &str, sources: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT OR REPLACE INTO backup_jobs (id, target, sources, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![id, target, sources, now_unix()],
+        )?;
+        Ok(())
+    }
+
+    pub fn backup_jobs(&self) -> Result<Vec<BackupJobRow>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, target, sources, created_at, last_run, last_ok, last_error, last_snapshot FROM backup_jobs ORDER BY created_at",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(BackupJobRow {
+                    id: r.get(0)?,
+                    target: r.get(1)?,
+                    sources: r.get(2)?,
+                    created_at: r.get(3)?,
+                    last_run: r.get(4)?,
+                    last_ok: r.get(5)?,
+                    last_error: r.get(6)?,
+                    last_snapshot: r.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn set_backup_sources(&self, id: &str, sources: &str) -> Result<bool> {
+        Ok(self.conn().execute("UPDATE backup_jobs SET sources = ?2 WHERE id = ?1", params![id, sources])? > 0)
+    }
+
+    pub fn finish_backup_run(&self, id: &str, ok: bool, error: Option<&str>, snapshot: Option<&str>) -> Result<()> {
+        self.conn().execute(
+            "UPDATE backup_jobs SET last_run = ?2, last_ok = CASE WHEN ?3 THEN ?2 ELSE last_ok END,
+             last_error = ?4, last_snapshot = COALESCE(?5, last_snapshot) WHERE id = ?1",
+            params![id, now_unix(), ok, error, snapshot],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_backup_job(&self, id: &str) -> Result<bool> {
+        Ok(self.conn().execute("DELETE FROM backup_jobs WHERE id = ?1", params![id])? > 0)
     }
 
     pub fn add_link(&self, l: &LinkRow) -> Result<()> {

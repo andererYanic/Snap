@@ -153,7 +153,17 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::LinkList
         | Request::LinkRevoke { .. }
         | Request::SpaceUsage { .. }
-        | Request::Duplicates { .. } => Capability::Admin,
+        | Request::Duplicates { .. }
+        | Request::BackupCreate { .. }
+        | Request::BackupConnect { .. }
+        | Request::BackupList
+        | Request::BackupSources { .. }
+        | Request::BackupRun { .. }
+        | Request::BackupSnapshots { .. }
+        | Request::BackupBrowse { .. }
+        | Request::BackupRestore { .. }
+        | Request::BackupCheck { .. }
+        | Request::BackupRemove { .. } => Capability::Admin,
     }
 }
 

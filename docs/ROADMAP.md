@@ -48,6 +48,9 @@ Abstriche bei der Sicherheit.
 | 2026-11-06 | **Grenzen fürs Hochladen**: 20 GB pro Gerät und Tag (`upload_daily_gb`), mindestens 5 GB bleiben frei (`upload_reserve_gb`) | Ein kompromittiertes Gerät kann die Platte nicht füllen. |
 | 2026-11-06 | **Kamera-Upload-Regeln im Back-end**: Ordner beobachten und neue Dateien automatisch zu einem Gerät/einer Freigabe hochladen (Warteschlange, ohne Duplikate) | Ersetzt Google Fotos' Sicherung; die Mobile-App nutzt dieselben Regeln. |
 | 2026-11-06 | **Freigabelinks über die eigene Domain mit Cloudflare Worker + R2** (kostenloser Bereich), Ende-zu-Ende-verschlüsselt: Schlüssel nur im Link-Teil nach `#`; verschlüsselte Kopie in R2 bis Ablauf/Widerruf; Standard 7 Tage, unbegrenzt oft; optional Passwort. Rückfall: Cloudflare Tunnel/Docker auf eigenem Server | Personen ohne Snap erreichen Dateien, auch wenn die eigenen Geräte aus sind; Cloudflare sieht nur verschlüsselte Daten und Metadaten. |
+| 2026-11-06 | **Sicherungen und Versionen in einer eigenen Engine (Rust)**: Stücke nach Inhalt (FastCDC), dedupliziert, Ende-zu-Ende-verschlüsselt (AES-256-GCM, ring); Ziele: externe Platte/USB und Cloudflare R2/S3 | Voll integriert (Fortschritt, einzelne Dateien wiederherstellen, App, Mobile); Ziele sehen keinen Inhalt. |
+| 2026-11-06 | **Sicherungsschlüssel: Passwort + Wiederherstellungsschlüssel**; der Hauptschlüssel liegt zusätzlich auf dem sichernden Gerät (0600), damit stündliche Sicherungen ohne Eingabe laufen | Ohne Passwort und ohne Wiederherstellungsschlüssel ist eine Sicherung auf einem neuen Gerät nicht lesbar. |
+| 2026-11-06 | **Zeitplan: stündlich; behalten 24 Stunden / 30 Tage / 12 Monate** (änderbar) | Feine Versionen für den Alltag, lange Aufbewahrung bei moderatem Platz. |
 | 2026-11-06 | **Grenzen zur Laufzeit änderbar** (`settings set`, ohne Neustart; Standard aus `config.toml`) | Im Alltag nachjustieren, ohne den Daemon neu zu starten. |
 | 2026-11-06 | **Eigene PRs bei grüner CI selbst mergen** | Freigabe des Nutzers; Designs sicherheitsrelevanter Systeme werden weiterhin vorher vorgelegt. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
@@ -76,7 +79,7 @@ Abstriche bei der Sicherheit.
 | **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |
 | **5 – Medien & Teilen** (5a Streaming + Fern-Vorschaubilder ✅ PR #11 · 5b Hochladen + Kamera-Upload ✅ PR #13 · 5c Freigabelinks ✅ PR #14) | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | offen |
-| **6 – Schutz** (6a Speicheranalyse + Duplikate ✅ PR #15) | Versionen und Snapshots, verschlüsselte Backup-Ziele, Duplikat-Bereinigung, Speicheranalyse | offen |
+| **6 – Schutz** (6a Speicheranalyse + Duplikate ✅ PR #15 · 6b-1 Sicherungs-Engine ✅ PR #16) | Versionen und Snapshots, verschlüsselte Backup-Ziele, Duplikat-Bereinigung, Speicheranalyse | offen |
 | **7 – Veröffentlichung** | Sicherheits-Checkliste unten abarbeiten, dann öffentliches Repository | offen |
 
 ## Checkliste vor der Veröffentlichung (Phase 7)

@@ -350,6 +350,51 @@ pub enum Request {
         #[serde(default)]
         limit: u32,
     },
+    /// Sicherung einrichten (Ziel + Quellordner + Passwort); liefert den Wiederherstellungsschlüssel.
+    BackupCreate {
+        target: crate::backup::repo::BackupTarget,
+        sources: Vec<PathBuf>,
+        password: String,
+    },
+    /// Bestehende Sicherung verbinden (neues Gerät): Passwort oder Wiederherstellungsschlüssel.
+    BackupConnect {
+        target: crate::backup::repo::BackupTarget,
+        id: String,
+        secret: String,
+    },
+    BackupList,
+    BackupSources {
+        id: String,
+        sources: Vec<PathBuf>,
+    },
+    BackupRun {
+        id: String,
+    },
+    BackupSnapshots {
+        id: String,
+    },
+    BackupBrowse {
+        id: String,
+        snapshot: String,
+        path: PathBuf,
+    },
+    /// Datei/Ordner aus einem Stand in `dest` wiederherstellen (nie überschreibend).
+    BackupRestore {
+        id: String,
+        snapshot: String,
+        path: PathBuf,
+        dest: PathBuf,
+    },
+    /// Sicherung prüfen (alle Bäume, `sample` Stücke; 0 = alle).
+    BackupCheck {
+        id: String,
+        #[serde(default)]
+        sample: u32,
+    },
+    /// Sicherung von diesem Gerät entfernen (Daten am Ziel bleiben).
+    BackupRemove {
+        id: String,
+    },
 }
 
 /// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
@@ -502,6 +547,21 @@ pub enum Response {
     },
     Link(crate::links::LinkInfo),
     SpaceUsage(crate::analysis::SpaceUsage),
+    BackupCreated(crate::backup::BackupCreated),
+    Backups {
+        jobs: Vec<crate::backup::BackupJob>,
+    },
+    Snapshot(crate::backup::repo::SnapshotInfo),
+    Snapshots {
+        items: Vec<crate::backup::repo::SnapshotInfo>,
+    },
+    BackupEntries {
+        entries: Vec<crate::backup::engine::BrowseEntry>,
+    },
+    Restored {
+        path: PathBuf,
+        files: u64,
+    },
     Duplicates(crate::analysis::DuplicateReport),
     Links {
         items: Vec<crate::links::LinkInfo>,

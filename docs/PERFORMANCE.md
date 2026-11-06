@@ -324,3 +324,24 @@ Hintergrund mit Ladeanzeige ausführen, denn bei 1 Mio. Dateien liegt sie über 
 
 **Offen:** Ordnergrößen könnten beim Indexieren fortlaufend mitgeführt werden; dann wäre die
 Analyse sofort da, kostet aber Schreibarbeit bei jeder Änderung.
+
+## Review 14 – Sicherungen (2026-11-06)
+
+Messung (`backup_engine`, Release, Ziel: Ordner auf derselben Platte): 210 MB in vier großen
+Dateien und 5 000 kleinen.
+
+| Messung | Vorher | Nachher | Maßnahme |
+|---|---|---|---|
+| Erster Lauf | 6,4 s (33 MB/s) | **3,8 s (55 MB/s)** | Kein `fsync` je Objekt; ein `syncfs` vor dem Katalog |
+| Zweiter Lauf ohne Änderung | – | **26 ms** | Unveränderte Dateien (Größe + mtime) werden nicht gelesen |
+| 1 MB in einem 50-MB-Video geändert | – | 165 ms, **4,8 MB** neu gespeichert | Stücke nach Inhalt (FastCDC) |
+| Alles wiederherstellen | – | 0,8 s (256 MB/s) | |
+| RAM-Spitze | – | 53 MiB (Test inkl. Daten) | Stücke höchstens 4 MiB, gestreamt |
+
+**Offen:**
+
+- Kleine Dateien erzeugen je ein eigenes Objekt (5 000 Objekte für 5 000 Notizen). Pakete mit
+  vielen Stücken würden den ersten Lauf und vor allem R2 (Anzahl der Schreibzugriffe)
+  beschleunigen.
+- Verschlüsselt und hochgeladen wird nacheinander. Parallel ginge es bei langsamen Zielen (R2)
+  deutlich schneller.

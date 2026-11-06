@@ -68,6 +68,8 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `upload rule-add <ordner> <gerät>:<Freigabe[/ordner]>` / `upload rule-list` / `upload rule-remove <nr>` | Kamera-Upload: Ordner automatisch hochladen |
 | `links create <datei> [--days N] [--max-downloads N] [--password]` / `links` / `links revoke <id>` | Freigabelinks für Personen ohne Snap (Ende-zu-Ende-verschlüsselt über die eigene Domain) |
 | `links setup --url … --endpoint … --bucket … --key-id …` | Freigabelinks einrichten (Cloudflare Worker + R2, siehe `gateway/cloudflare/README.md`) |
+| `backup create --to <platte\|r2> <ordner>…` / `backup run <id>` / `backup snapshots <id>` | Verschlüsselte, deduplizierte Sicherungen mit Versionen |
+| `backup restore <id> <stand> <pfad> --to <ordner>` / `backup ls …` / `backup check <id>` / `backup connect …` | Wiederherstellen (auch auf einem neuen Gerät), prüfen |
 | `usage [ordner]` | Speicheranalyse: Unterordner nach Größe, Anteile nach Typ, größte Dateien |
 | `dupes [ordner] [--min-mb N]` | Doppelte Dateien finden (nur anzeigen; zeigt auch Kopien auf anderen Geräten) |
 | `settings` / `settings set <name> <wert>` / `settings reset <name>` | Grenzen sofort ändern (ohne Neustart) |
@@ -228,6 +230,20 @@ core/src
   (`settings set link_default_days …`), unbegrenzt oft; Widerruf löscht die Kopie sofort.
 - Einrichtung (einmalig, kostenloser Bereich von Cloudflare): `gateway/cloudflare/README.md`.
   Format: `docs/LINK_FORMAT.md`.
+
+### Sicherungen & Versionen
+
+- `backup create --to /media/ich/Platte ~/Dokumente ~/Fotos` richtet eine Sicherung ein. Du legst
+  ein Passwort fest und bekommst einmalig einen Wiederherstellungsschlüssel zum Aufbewahren.
+- Gesichert wird verschlüsselt (AES-256-GCM) und dedupliziert (Stücke nach Inhalt). Unveränderte
+  Dateien werden nicht erneut gelesen; ändert sich 1 MB in einem großen Video, werden nur ein paar MB
+  neu gespeichert.
+- `backup snapshots`, `backup ls` und `backup restore` holen jeden früheren Stand einer Datei oder
+  eines Ordners zurück. Es wird nie überschrieben.
+- **Neues Gerät:** `backup connect --from /media/… --id <id>` mit Passwort oder
+  Wiederherstellungsschlüssel.
+- Ziele: externe Platte/USB, Cloudflare R2 (`--to r2`, gleicher Zugang wie die Freigabelinks).
+  Format: `docs/BACKUP_FORMAT.md`.
 
 ### Speicheranalyse & Duplikate
 

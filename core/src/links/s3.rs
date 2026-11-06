@@ -203,6 +203,26 @@ impl S3Client {
         self.put(key, reqwest::Body::from(data), len, content_type).await
     }
 
+    /// Lädt ein Objekt (`None`, wenn es nicht existiert). Höchstens 64 MiB.
+    pub async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        let mut resp = self.send(reqwest::Method::GET, key, None).await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            api_bail!(Unavailable, "Speicher lehnte das Lesen ab ({})", resp.status());
+        }
+        const MAX: usize = 64 * 1024 * 1024;
+        let mut out = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            if out.len() + chunk.len() > MAX {
+                api_bail!(InvalidInput, "Objekt zu groß");
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok(Some(out))
+    }
+
     pub async fn delete(&self, key: &str) -> Result<()> {
         let resp = self.send(reqwest::Method::DELETE, key, None).await?;
         // 404: schon weg – auch in Ordnung.

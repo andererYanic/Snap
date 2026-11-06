@@ -3728,13 +3728,17 @@ dependencies = [
  "lofty",
  "n0-future",
  "notify",
+ "reqwest",
+ "ring",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
  "toml",
  "tracing",
  "walkdir",
+ "webpki-roots",
 ]
 
 [[package]]
