@@ -36,6 +36,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      # Cloudflare-Worker und Browser-Entschlüsselung für Freigabelinks (Node ist vorinstalliert)
+      - run: node --test gateway/cloudflare/test/worker.test.mjs
 
   supply-chain:
     name: Abhängigkeiten (audit, deny)

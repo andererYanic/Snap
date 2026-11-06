@@ -79,6 +79,21 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   `upload_daily_gb` je Gerät und Tag, `upload_reserve_gb` freier Platz. Hashes aus fremden
   Nachrichten werden streng geprüft (genau 64 Hex-Zeichen), denn `Hash::from_str` aus iroh-blobs
   stürzt bei Mehrbyte-Unicode ab (per Fuzzing gefunden).
+- **Freigabelinks (Cloudflare Worker + R2):** Ende-zu-Ende-verschlüsselt (AES-256-GCM in
+  64-KiB-Stücken, HKDF-SHA256, optional PBKDF2-SHA256 mit 600 000 Runden für ein Passwort; nur
+  `ring` bzw. WebCrypto). Der Schlüssel steht nur im URL-Fragment, Speicher und Worker sehen nur
+  Chiffretext. Stücknummer und Endmarke im Nonce erkennen Vertauschen und Abschneiden. Ein
+  Kreuztest prüft die Browser-Implementierung gegen die Rust-Implementierung. Der Worker liefert
+  nur GET/HEAD, strenge IDs, CSP `default-src 'none'`, `frame-ancestors 'none'`, keine fremden
+  Skripte; Ablauf wird serverseitig durchgesetzt, abgelaufene Objekte werden gelöscht.
+  Download-Grenzen über KV gelten nur näherungsweise. S3-Zugang mit SigV4 (geprüft gegen die
+  AWS-Prüfwerte), nur HTTPS mit den Mozilla-Wurzelzertifikaten, Token nur für einen Bucket,
+  gespeichert mit 0600; Geheimnisse werden verdeckt eingegeben, nie als Argument.
+  **Restrisiken:** Wer den Link hat, hat die Datei (bis Ablauf/Widerruf). Cloudflare sieht
+  Metadaten (Größe, Zeiten, IP-Adressen der Abrufer). Wer das Cloudflare-Konto übernimmt, könnte
+  veränderten Seiten-Code ausliefern und Schlüssel abgreifen; dagegen hilft
+  Zwei-Faktor-Anmeldung. Die Link-Geheimnisse liegen lokal in der Datenbank (privater
+  Datenordner), damit Links später erneut angezeigt werden können.
 - **Einstellungen:** nur lokal änderbar (für Geräte `admin`, also gesperrt), Wertebereiche
   geprüft; manipulierte gespeicherte Werte werden beim Laden verworfen.
 - **Fernoperationen (`snap/ops/1`):** nicht gekoppelte Gegenstellen werden vor dem Lesen

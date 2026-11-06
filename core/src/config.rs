@@ -68,6 +68,8 @@ pub struct ConfigFile {
     pub upload_daily_gb: Option<u64>,
     /// So viel Platz muss nach dem Empfang frei bleiben (GB). Standard: 5.
     pub upload_reserve_gb: Option<u64>,
+    /// Gültigkeit neuer Freigabelinks in Tagen. Standard: 7.
+    pub link_default_days: Option<u32>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -101,6 +103,7 @@ pub struct Config {
     pub stream_cache_bytes: u64,
     pub upload_daily_gb: u64,
     pub upload_reserve_gb: u64,
+    pub link_default_days: u32,
 }
 
 impl Config {
@@ -216,6 +219,7 @@ impl Config {
             stream_cache_bytes: file.stream_cache_mb.unwrap_or(2048) * 1024 * 1024,
             upload_daily_gb: file.upload_daily_gb.unwrap_or(20),
             upload_reserve_gb: file.upload_reserve_gb.unwrap_or(5),
+            link_default_days: file.link_default_days.unwrap_or(7).clamp(1, 3650),
         })
     }
 
@@ -245,6 +249,7 @@ impl Config {
             stream_cache_bytes: 256 * 1024 * 1024,
             upload_daily_gb: 20,
             upload_reserve_gb: 0,
+            link_default_days: 7,
         }
     }
 }
@@ -340,6 +345,10 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # Zur Laufzeit änderbar: space-daemon settings set upload_daily_gb 50
 # upload_daily_gb = 20
 # upload_reserve_gb = 5
+
+# Freigabelinks (Cloudflare Worker + R2): Gültigkeit neuer Links in Tagen.
+# Einrichtung: space-daemon links setup (siehe gateway/cloudflare/README.md)
+# link_default_days = 7
 "#;
 
 #[cfg(test)]

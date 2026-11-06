@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -31,6 +31,21 @@ pub struct FileRecord {
     /// Pfad relativ zur Freigabe.
     #[serde(default)]
     pub rel_path: Option<String>,
+}
+
+/// Ein Freigabelink (lokal gespeichert; `secret` ist der Schlüssel aus dem Link).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkRow {
+    pub id: String,
+    pub secret: String,
+    pub name: String,
+    pub local_path: String,
+    pub size: u64,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub max_downloads: Option<u32>,
+    pub password: bool,
+    pub state: String,
 }
 
 /// Neuer Upload-Auftrag.
@@ -546,6 +561,25 @@ impl DatabaseManager {
                     day     INTEGER NOT NULL,
                     bytes   INTEGER NOT NULL,
                     PRIMARY KEY (node_id, day)
+                );
+                ",
+            )?;
+        }
+        if version < 9 {
+            // Migration -> 9: Freigabelinks (Geheimnis bleibt im privaten Datenordner).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS links (
+                    id            TEXT    PRIMARY KEY,
+                    secret        TEXT    NOT NULL,
+                    name          TEXT    NOT NULL,
+                    local_path    TEXT    NOT NULL,
+                    size          INTEGER NOT NULL,
+                    created_at    INTEGER NOT NULL,
+                    expires_at    INTEGER NOT NULL,
+                    max_downloads INTEGER,
+                    password      INTEGER NOT NULL,
+                    state         TEXT    NOT NULL   -- 'active' | 'revoked' | 'expired'
                 );
                 ",
             )?;
@@ -1603,6 +1637,57 @@ impl DatabaseManager {
             .into_iter()
             .filter(|d| d.name == q || by_id.as_deref().is_some_and(|p| d.node_id.starts_with(p)))
             .collect())
+    }
+
+    pub fn add_link(&self, l: &LinkRow) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO links (id, secret, name, local_path, size, created_at, expires_at, max_downloads, password, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                l.id,
+                l.secret,
+                l.name,
+                l.local_path,
+                l.size as i64,
+                l.created_at,
+                l.expires_at,
+                l.max_downloads,
+                l.password,
+                l.state
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Alle Links, neueste zuerst.
+    pub fn links(&self) -> Result<Vec<LinkRow>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, secret, name, local_path, size, created_at, expires_at, max_downloads, password, state
+             FROM links ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(LinkRow {
+                    id: r.get(0)?,
+                    secret: r.get(1)?,
+                    name: r.get(2)?,
+                    local_path: r.get(3)?,
+                    size: r.get::<_, i64>(4)? as u64,
+                    created_at: r.get(5)?,
+                    expires_at: r.get(6)?,
+                    max_downloads: r.get(7)?,
+                    password: r.get(8)?,
+                    state: r.get(9)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn set_link_state(&self, id: &str, state: &str) -> Result<()> {
+        self.conn().execute("UPDATE links SET state = ?2 WHERE id = ?1", params![id, state])?;
+        Ok(())
     }
 
     /// Zur Laufzeit gesetzte Einstellungen.

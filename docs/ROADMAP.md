@@ -47,6 +47,7 @@ Abstriche bei der Sicherheit.
 | 2026-11-06 | **Hochladen: das Zielgerät holt die Datei** – Auftrag über `snap/ops/1`, das Ziel lädt den Inhalt BLAKE3-geprüft per iroh-blobs vom Auftraggeber (Angebot gilt nur für dieses eine Gerät); nur mit `files.write`, nie überschreiben | Kein neuer Datenweg, fortsetzbar, der Inhalt ist durch den Hash garantiert. |
 | 2026-11-06 | **Grenzen fürs Hochladen**: 20 GB pro Gerät und Tag (`upload_daily_gb`), mindestens 5 GB bleiben frei (`upload_reserve_gb`) | Ein kompromittiertes Gerät kann die Platte nicht füllen. |
 | 2026-11-06 | **Kamera-Upload-Regeln im Back-end**: Ordner beobachten und neue Dateien automatisch zu einem Gerät/einer Freigabe hochladen (Warteschlange, ohne Duplikate) | Ersetzt Google Fotos' Sicherung; die Mobile-App nutzt dieselben Regeln. |
+| 2026-11-06 | **Freigabelinks über die eigene Domain mit Cloudflare Worker + R2** (kostenloser Bereich), Ende-zu-Ende-verschlüsselt: Schlüssel nur im Link-Teil nach `#`; verschlüsselte Kopie in R2 bis Ablauf/Widerruf; Standard 7 Tage, unbegrenzt oft; optional Passwort. Rückfall: Cloudflare Tunnel/Docker auf eigenem Server | Personen ohne Snap erreichen Dateien, auch wenn die eigenen Geräte aus sind; Cloudflare sieht nur verschlüsselte Daten und Metadaten. |
 | 2026-11-06 | **Grenzen zur Laufzeit änderbar** (`settings set`, ohne Neustart; Standard aus `config.toml`) | Im Alltag nachjustieren, ohne den Daemon neu zu starten. |
 | 2026-11-06 | **Eigene PRs bei grüner CI selbst mergen** | Freigabe des Nutzers; Designs sicherheitsrelevanter Systeme werden weiterhin vorher vorgelegt. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
@@ -74,7 +75,7 @@ Abstriche bei der Sicherheit.
 | **2 – Explorer-Kern** (2a Index & Suche ✅ PR #8 · 2b Dateioperationen ✅ PR #9 · 2c Vorschaubilder & Metadaten ✅ PR #10) | Index des lokalen Dateisystems, FTS5-Suche, Ordner live lesen, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
 | **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |
-| **5 – Medien & Teilen** (5a Streaming + Fern-Vorschaubilder ✅ PR #11 · 5b Hochladen + Kamera-Upload ✅ PR #13) | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | offen |
+| **5 – Medien & Teilen** (5a Streaming + Fern-Vorschaubilder ✅ PR #11 · 5b Hochladen + Kamera-Upload ✅ PR #13 · 5c Freigabelinks ✅ PR #14) | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | offen |
 | **6 – Schutz** | Versionen und Snapshots, verschlüsselte Backup-Ziele, Duplikat-Bereinigung, Speicheranalyse | offen |
 | **7 – Veröffentlichung** | Sicherheits-Checkliste unten abarbeiten, dann öffentliches Repository | offen |
 

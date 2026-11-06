@@ -1,0 +1,22 @@
+# Vorlage – als wrangler.toml kopieren und anpassen (siehe README.md).
+name = "snap-links"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+# Download-Seite und Browser-Code
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# R2-Bucket mit den verschlüsselten Dateien
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "snap-links"
+
+# Optional: Download-Grenzen (KV-Namespace anlegen und ID eintragen)
+# [[kv_namespaces]]
+# binding = "COUNTS"
+# id = "<kv-namespace-id>"
+
+# Eigene Domain
+routes = [{ pattern = "share.example.de", custom_domain = true }]

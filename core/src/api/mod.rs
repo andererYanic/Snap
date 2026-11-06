@@ -127,6 +127,14 @@ pub(crate) async fn handle_request(
         Request::UploadRuleAdd { path, device, share, dest_dir } => {
             fileops::upload_rule_add(inner, &path, &device, &share, &dest_dir)
         }
+        Request::LinkSetup(s) => {
+            crate::links::setup(inner, s).map(|_| Response::Success { message: "Freigabelinks eingerichtet.".into() })
+        }
+        Request::LinkCreate { path, days, max_downloads, password } => {
+            crate::links::create(inner, &path, days, max_downloads, password).await.map(Response::Link)
+        }
+        Request::LinkList => crate::links::list(inner).map(|(items, base_url)| Response::Links { items, base_url }),
+        Request::LinkRevoke { id } => crate::links::revoke(inner, &id).await.map(Response::Link),
         Request::UploadRuleList => inner.db.upload_rules().map(|rules| Response::UploadRules { rules }),
         Request::UploadRuleRemove { id } => match inner.db.remove_upload_rule(id) {
             Ok(true) => {
@@ -238,6 +246,10 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::UploadRuleAdd { .. } => "upload.rule.add",
         Request::UploadRuleList => "upload.rule.list",
         Request::UploadRuleRemove { .. } => "upload.rule.remove",
+        Request::LinkSetup(_) => "link.setup",
+        Request::LinkCreate { .. } => "link.create",
+        Request::LinkList => "link.list",
+        Request::LinkRevoke { .. } => "link.revoke",
         Request::RemoteThumbnail { .. } => "thumb.remote",
     })
 }

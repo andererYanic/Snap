@@ -55,6 +55,14 @@ const SPECS: &[Spec] = &[
         default: |c| c.upload_reserve_gb as i64,
     },
     Spec {
+        key: "link_default_days",
+        unit: "Tage",
+        min: 1,
+        max: 3650,
+        help: "So lange gelten neue Freigabelinks (je Link änderbar)",
+        default: |c| c.link_default_days as i64,
+    },
+    Spec {
         key: "pin_max_gb",
         unit: "GB",
         min: 0,
@@ -149,6 +157,9 @@ impl Settings {
     }
     pub fn upload_reserve_bytes(&self) -> u64 {
         self.get("upload_reserve_gb") as u64 * GB
+    }
+    pub fn link_default_days(&self) -> u32 {
+        self.get("link_default_days").clamp(1, 3650) as u32
     }
     /// 0 = unbegrenzt.
     pub fn pin_max_bytes(&self) -> u64 {

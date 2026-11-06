@@ -66,6 +66,8 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `remote <gerät> thumb Freigabe/pfad [--large]` | Vorschaubild einer Datei auf einem anderen Gerät (braucht dort `files.read`) |
 | `upload send <datei>… <gerät>:<Freigabe[/ordner]>` / `upload list` / `upload retry` / `upload cancel <nr>` | Auf ein gekoppeltes Gerät hochladen (Warteschlange, wird nachgeholt) |
 | `upload rule-add <ordner> <gerät>:<Freigabe[/ordner]>` / `upload rule-list` / `upload rule-remove <nr>` | Kamera-Upload: Ordner automatisch hochladen |
+| `links create <datei> [--days N] [--max-downloads N] [--password]` / `links` / `links revoke <id>` | Freigabelinks für Personen ohne Snap (Ende-zu-Ende-verschlüsselt über die eigene Domain) |
+| `links setup --url … --endpoint … --bucket … --key-id …` | Freigabelinks einrichten (Cloudflare Worker + R2, siehe `gateway/cloudflare/README.md`) |
 | `settings` / `settings set <name> <wert>` / `settings reset <name>` | Grenzen sofort ändern (ohne Neustart) |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
@@ -212,6 +214,18 @@ core/src
 - Das Ziel braucht dafür `files.write` auf den Ordner (`pair grant Handy files.write --folder ~/Fotos`),
   überschreibt nie („Name (2)“), legt keine versteckten Dateien an und setzt nie das Ausführungsrecht.
 - Grenzen je Gerät: 20 GB pro Tag, mindestens 5 GB bleiben frei.
+
+### Freigabelinks für Personen ohne Snap
+
+- `links create urlaub.mp4` erzeugt `https://share.deine-domain.de/l/<id>#<schlüssel>`. Der
+  Empfänger braucht nur einen Browser.
+- Snap verschlüsselt auf deinem Gerät (AES-256-GCM). In deinem Cloudflare-R2-Bucket liegt nur
+  Chiffretext. Der Schlüssel steht im Link nach `#` und erreicht nie einen Server. Optional kommt
+  ein Passwort dazu.
+- Links funktionieren auch, wenn deine Geräte aus sind. Standard: 7 Tage
+  (`settings set link_default_days …`), unbegrenzt oft; Widerruf löscht die Kopie sofort.
+- Einrichtung (einmalig, kostenloser Bereich von Cloudflare): `gateway/cloudflare/README.md`.
+  Format: `docs/LINK_FORMAT.md`.
 
 ### Einstellungen zur Laufzeit
 

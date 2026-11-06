@@ -9,6 +9,7 @@ pub mod index;
 pub mod indexer;
 pub mod ipc;
 pub mod ledger;
+pub mod links;
 pub mod live;
 pub mod media;
 pub mod network;

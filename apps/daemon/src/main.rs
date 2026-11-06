@@ -186,6 +186,11 @@ enum Commands {
         #[command(subcommand)]
         action: UploadAction,
     },
+    /// Freigabelinks für Personen ohne Snap (verschlüsselt über die eigene Domain)
+    Links {
+        #[command(subcommand)]
+        action: Option<LinksAction>,
+    },
     /// Grenzen anzeigen und sofort ändern (ohne Neustart)
     Settings {
         #[command(subcommand)]
@@ -227,6 +232,65 @@ fn parse_upload_target(t: &str) -> Result<(String, String, String)> {
         anyhow::bail!("Ziel bitte als <gerät>:<Freigabe[/ordner]> angeben");
     }
     Ok((dev.to_string(), share, dir))
+}
+
+#[derive(Subcommand)]
+enum LinksAction {
+    /// Links anzeigen (Standard)
+    List,
+    /// Link erstellen: Datei wird verschlüsselt hochgeladen
+    Create {
+        file: PathBuf,
+        /// Gültigkeit in Tagen (Standard: Einstellung link_default_days)
+        #[arg(long)]
+        days: Option<u32>,
+        /// Höchstzahl Downloads (Standard: unbegrenzt)
+        #[arg(long)]
+        max_downloads: Option<u32>,
+        /// Zusätzlich ein Passwort verlangen (wird verdeckt abgefragt)
+        #[arg(long)]
+        password: bool,
+    },
+    /// Link widerrufen (ID oder Anfang der ID); löscht die verschlüsselte Kopie
+    Revoke { id: String },
+    /// Einrichten: Worker-Adresse und R2-Zugang (geheimer Schlüssel wird verdeckt abgefragt)
+    Setup {
+        /// Öffentliche Adresse des Workers, z. B. https://share.example.de
+        #[arg(long)]
+        url: String,
+        /// R2-Endpunkt, z. B. https://<konto-id>.r2.cloudflarestorage.com
+        #[arg(long)]
+        endpoint: String,
+        #[arg(long)]
+        bucket: String,
+        /// Access Key ID des R2-API-Tokens
+        #[arg(long)]
+        key_id: String,
+    },
+}
+
+/// Liest ein Geheimnis von der Konsole, ohne es anzuzeigen (nie über die Kommandozeile).
+fn read_secret(prompt: &str) -> Result<String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    let stdin = std::io::stdin();
+    let tty = stdin.is_terminal();
+    // SAFETY: termios wird vollständig von tcgetattr gefüllt und unverändert zurückgeschrieben.
+    let mut old: libc::termios = unsafe { std::mem::zeroed() };
+    if tty && unsafe { libc::tcgetattr(0, &mut old) } == 0 {
+        let mut silent = old;
+        silent.c_lflag &= !libc::ECHO;
+        unsafe { libc::tcsetattr(0, libc::TCSANOW, &silent) };
+    }
+    let mut line = String::new();
+    let res = stdin.lock().read_line(&mut line);
+    if tty {
+        unsafe { libc::tcsetattr(0, libc::TCSANOW, &old) };
+        eprintln!();
+    }
+    res?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
 }
 
 #[derive(Subcommand)]
@@ -615,6 +679,35 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Commands::Upload { action: UploadAction::RuleList } => Request::UploadRuleList,
         Commands::Upload { action: UploadAction::RuleRemove { id } } => Request::UploadRuleRemove { id },
+        Commands::Links { action: None | Some(LinksAction::List) } => Request::LinkList,
+        Commands::Links { action: Some(LinksAction::Create { file, days, max_downloads, password }) } => {
+            let password = if password {
+                let a = read_secret("Passwort für den Link: ")?;
+                let b = read_secret("Passwort wiederholen: ")?;
+                if a != b {
+                    anyhow::bail!("Die Passwörter stimmen nicht überein.");
+                }
+                Some(a)
+            } else {
+                None
+            };
+            eprintln!("⏳ Datei wird verschlüsselt hochgeladen …");
+            Request::LinkCreate { path: absolute(&file)?, days, max_downloads, password }
+        }
+        Commands::Links { action: Some(LinksAction::Revoke { id }) } => Request::LinkRevoke { id },
+        Commands::Links { action: Some(LinksAction::Setup { url, endpoint, bucket, key_id }) } => {
+            let secret = read_secret("Secret Access Key des R2-Tokens: ")?;
+            Request::LinkSetup(space_core::links::LinkSettings {
+                base_url: url,
+                s3: space_core::links::s3::S3Config {
+                    endpoint,
+                    bucket,
+                    region: "auto".into(),
+                    access_key_id: key_id,
+                    secret_access_key: secret,
+                },
+            })
+        }
         Commands::Settings { action: None | Some(SettingsAction::List) } => Request::Settings,
         Commands::Settings { action: Some(SettingsAction::Set { key, value }) } => {
             Request::SettingSet { key, value: Some(value) }
@@ -905,6 +998,47 @@ fn print_response(res: Response) -> ExitCode {
         }
         Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
         Response::StreamUrl(s) => println!("{}", s.url),
+        Response::Link(l) => {
+            if l.state == "revoked" {
+                println!("🚫 Link {} widerrufen – die verschlüsselte Kopie wurde gelöscht.", short(&l.id, 8));
+            } else {
+                println!("🔗 {}", l.url);
+                println!(
+                    "   {} ({}) · gültig bis {}{}{}",
+                    l.name,
+                    human_size(l.size),
+                    fmt_time(l.expires_at),
+                    l.max_downloads.map(|m| format!(" · höchstens {m} Downloads")).unwrap_or_default(),
+                    if l.password { " · mit Passwort" } else { "" }
+                );
+                println!(
+                    "   Wer diesen Link hat, kann die Datei laden. Widerrufen: space-daemon links revoke {}",
+                    short(&l.id, 8)
+                );
+            }
+        }
+        Response::Links { items, base_url } => {
+            match &base_url {
+                None => println!(
+                    "Noch nicht eingerichtet: space-daemon links setup … (Anleitung: gateway/cloudflare/README.md)"
+                ),
+                Some(b) => println!("Worker: {b}"),
+            }
+            for l in &items {
+                let icon = match l.state.as_str() {
+                    "active" => "🔗",
+                    "revoked" => "🚫",
+                    _ => "⌛",
+                };
+                println!(
+                    "{icon} {}  {:<30} bis {}  {}",
+                    short(&l.id, 8),
+                    l.name,
+                    fmt_time(l.expires_at),
+                    if l.state == "active" { l.url.as_str() } else { "" }
+                );
+            }
+        }
         Response::Uploads { items } => {
             if items.is_empty() {
                 println!("Keine Uploads.");

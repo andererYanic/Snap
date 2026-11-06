@@ -303,6 +303,7 @@ impl Daemon {
         let pins = tokio::spawn(crate::pins::run_pin_loop(inner.clone()));
         let indexer = tokio::spawn(crate::indexer::run_indexer(inner.clone()));
         let uploads = tokio::spawn(crate::upload::run_worker(inner.clone()));
+        let links = tokio::spawn(crate::links::run_cleanup(inner.clone()));
         let upload_rules = tokio::spawn(crate::upload::run_rules(inner.clone()));
         let streamer = match (stream, stream_listener) {
             (Some(s), Some(l)) => tokio::spawn(crate::stream::serve(s, l, Arc::downgrade(&inner))),
@@ -338,6 +339,7 @@ impl Daemon {
             stream_cache,
             uploads,
             upload_rules,
+            links,
         ]);
 
         Ok(daemon)

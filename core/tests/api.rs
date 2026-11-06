@@ -185,6 +185,9 @@ mod permissions {
             Request::UploadRetry,
             Request::UploadRuleAdd { path: "/etc".into(), device: "x".into(), share: "F".into(), dest_dir: "".into() },
             Request::UploadRuleList,
+            Request::LinkList,
+            Request::LinkRevoke { id: "abcd".into() },
+            Request::LinkCreate { path: "/etc/passwd".into(), days: None, max_downloads: None, password: None },
             Request::UploadRuleRemove { id: 1 },
             Request::SettingSet { key: "upload_daily_gb".into(), value: Some(100_000) },
             Request::RemoteThumbnail {
