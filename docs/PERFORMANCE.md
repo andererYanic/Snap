@@ -124,3 +124,36 @@ Dateien eines Geräts eine Verbindung.
 **Offen:** Der Pin-Abgleich prüft bei jeder Katalogänderung alle Einträge der Pins (Datenbank +
 `stat`); bei sehr großen Pins (100 000+ Dateien) wäre ein inkrementeller Abgleich nur der
 geänderten Einträge sinnvoll.
+
+## Review 7 – Lokaler Index & Suche, Prototyp (2026-11-06)
+
+Messung (`local_index_million`, Release): 100 000 echte leere Dateien gescannt, dazu 1 Mio.
+synthetische Einträge (10 000 Ordner à 100 Dateien); Suche mit frisch geöffnetem Index.
+
+| Messung | Wert | Vergleich Spacedrive |
+|---|---|---|
+| **RAM des Prozesses bei 1,1 Mio. Einträgen** | **32 MiB** (Spitze 32 MiB) | 1,26–1,89 GB (Index im RAM) |
+| Plattenplatz | 322 MiB (304 B/Eintrag inkl. Trigramm-Index) | – |
+| Echter Scan (walkdir + Einfügen) | 5 µs/Datei → 1 Mio. Dateien ≈ 5 s (+ Plattenzugriffe) | – |
+| Einfügen + Suchindex, 1 Mio. | 4,7 s | – |
+| Suche, gezielt („rechnung-0042“, Nummer) | 0,6–2,6 ms | – |
+| Suche, breit („laub“ bei 125 000 Treffern) | 63 ms → **2,3 ms** | – |
+| Suche, 2 Zeichen („mu“) | 14 ms | – |
+| Ungünstigster Fall: häufiges Wort + Filter ohne Treffer | 84 ms | – |
+
+**Maßnahmen:**
+
+- Pfade werden nicht gespeichert, sondern nur Name und Elternordner. Die Suche rekonstruiert den
+  Pfad nur für die angezeigten Treffer.
+- Der SQLite-Cache ist auf 8 MiB pro Verbindung begrenzt; insgesamt gibt es 3 Verbindungen.
+- Breite Anfragen wurden zunächst komplett sortiert (63 ms). Jetzt werden höchstens 2 000
+  Kandidaten gelesen und in Rust gewichtet (Namensanfang vor Treffer in der Mitte, dann kürzere
+  Namen).
+
+**Offen:**
+
+- Der ungünstigste Fall (häufiges Wort, dazu ein Endungsfilter ohne Treffer) liest alle Treffer
+  des Wortes. Er bleibt unter 100 ms, aber die Oberfläche sollte die Suche entprellt und
+  abbrechbar ausführen.
+- Inkrementeller Scan und Watcher folgen. Gemessen wird dann die Zeit bis eine Änderung
+  auffindbar ist, und der Leerlauf bei 1 Mio. Dateien.

@@ -367,3 +367,88 @@ fn walk_count(p: &std::path::Path) -> usize {
     let Ok(rd) = std::fs::read_dir(p) else { return 0 };
     rd.flatten().map(|e| if e.path().is_dir() { walk_count(&e.path()) } else { 1 }).sum()
 }
+
+/// Aktueller und maximaler Arbeitsspeicher dieses Prozesses (MiB) aus /proc.
+fn rss_mib() -> (f64, f64) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let field = |k: &str| {
+        status
+            .lines()
+            .find(|l| l.starts_with(k))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            / 1024.0
+    };
+    (field("VmRSS:"), field("VmHWM:"))
+}
+
+#[test]
+#[ignore]
+fn local_index_million() {
+    use space_core::index::{LocalIndex, NodeKind, SearchFilter};
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("index.db");
+    let (rss0, _) = rss_mib();
+
+    // 1) Echter Scan: 100 000 leere Dateien in 1 000 Ordnern
+    let tree = dir.path().join("baum");
+    for d in 0..1_000 {
+        let p = tree.join(format!("ordner-{}/sub-{d}", d / 50));
+        std::fs::create_dir_all(&p).unwrap();
+        for f in 0..100 {
+            std::fs::File::create(p.join(format!("datei-{d}-{f}.txt"))).unwrap();
+        }
+    }
+    let idx = LocalIndex::open(&db_path, vec![]).unwrap();
+    let root = idx.add_root(&tree).unwrap();
+    let t = Instant::now();
+    let st = idx.rebuild_root(root, &tree).unwrap();
+    report("index: echter Scan (Dateien)", st.files as usize, t.elapsed());
+    std::fs::remove_dir_all(&tree).unwrap();
+
+    // 2) 1 Mio. synthetische Einträge
+    let syn = idx.add_root(std::path::Path::new("/synthetisch")).unwrap();
+    let t = Instant::now();
+    idx.insert_synthetic(syn, 10_000, 100).unwrap();
+    report("index: 1 Mio. Einträge einfügen + FTS", 1_000_000, t.elapsed());
+    let total = idx.count().unwrap();
+    let db_mib = ["", "-wal"]
+        .iter()
+        .map(|s| std::fs::metadata(format!("{}{s}", db_path.display())).map(|m| m.len()).unwrap_or(0))
+        .sum::<u64>() as f64
+        / 1_048_576.0;
+    println!("index: {total} Einträge, Datei {db_mib:.0} MiB ({:.0} B/Eintrag)", db_mib * 1_048_576.0 / total as f64);
+
+    // 3) Suchen (Index neu geöffnet = kalter Cache)
+    drop(idx);
+    let idx = LocalIndex::open(&db_path, vec![]).unwrap();
+    let f = SearchFilter::default();
+    let mut worst = Duration::ZERO;
+    for (q, filter) in [
+        ("rechnung-0042", f.clone()),
+        ("laub", f.clone()),
+        ("0099999", f.clone()),
+        ("vertrag", SearchFilter { extensions: vec!["pdf".into()], ..Default::default() }),
+        ("projekt 77", SearchFilter { kind: Some(NodeKind::Dir), ..Default::default() }),
+        ("gibtsnicht", f.clone()),
+        ("mu", f.clone()),
+    ] {
+        let t = Instant::now();
+        let hits = idx.search(q, &filter, 100).unwrap();
+        let d = t.elapsed();
+        worst = worst.max(d);
+        println!("index: suche {q:<16} {:>4} Treffer  {:>8.2} ms", hits.len(), d.as_secs_f64() * 1e3);
+    }
+    let n = 200;
+    let t = Instant::now();
+    for i in 0..n {
+        idx.search(&format!("{:07}", i * 4_999), &f, 50).unwrap();
+    }
+    report("index: suche (warm, zufällige Nummern)", n, t.elapsed());
+    let (rss, hwm) = rss_mib();
+    println!(
+        "index: RAM jetzt {rss:.0} MiB, Spitze {hwm:.0} MiB (Start {rss0:.0} MiB); langsamste Suche {:.2} ms",
+        worst.as_secs_f64() * 1e3
+    );
+}

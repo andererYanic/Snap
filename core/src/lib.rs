@@ -4,6 +4,7 @@ pub mod config;
 pub mod daemon;
 pub mod database;
 pub mod events;
+pub mod index;
 pub mod ipc;
 pub mod ledger;
 pub mod live;
