@@ -125,35 +125,52 @@ Dateien eines Geräts eine Verbindung.
 `stat`); bei sehr großen Pins (100 000+ Dateien) wäre ein inkrementeller Abgleich nur der
 geänderten Einträge sinnvoll.
 
-## Review 7 – Lokaler Index & Suche, Prototyp (2026-11-06)
+## Review 7 – Lokaler Index & Suche (2026-11-06)
 
-Messung (`local_index_million`, Release): 100 000 echte leere Dateien gescannt, dazu 1 Mio.
-synthetische Einträge (10 000 Ordner à 100 Dateien); Suche mit frisch geöffnetem Index.
+Messung (`local_index_million`, Release): 100 000 echte leere Dateien in 1 000 Ordnern, dazu
+1 Mio. synthetische Einträge (10 000 Ordner à 100 Dateien). Gesucht wird mit frisch geöffnetem Index.
 
 | Messung | Wert | Vergleich Spacedrive |
 |---|---|---|
-| **RAM des Prozesses bei 1,1 Mio. Einträgen** | **32 MiB** (Spitze 32 MiB) | 1,26–1,89 GB (Index im RAM) |
-| Plattenplatz | 322 MiB (304 B/Eintrag inkl. Trigramm-Index) | – |
-| Echter Scan (walkdir + Einfügen) | 5 µs/Datei → 1 Mio. Dateien ≈ 5 s (+ Plattenzugriffe) | – |
-| Einfügen + Suchindex, 1 Mio. | 4,7 s | – |
+| **RAM des Prozesses bei 1,1 Mio. Einträgen** | **33 MiB** (Spitze 33 MiB) | 1,26–1,89 GB (Index im RAM) |
+| Plattenplatz | 335 MiB (316 B/Eintrag inkl. Trigramm-Index) | – |
+| Erstindexierung (walkdir + Einfügen) | 5–6 µs/Datei → 1 Mio. Dateien ≈ 6 s (+ Plattenzugriffe) | – |
 | Suche, gezielt („rechnung-0042“, Nummer) | 0,6–2,6 ms | – |
-| Suche, breit („laub“ bei 125 000 Treffern) | 63 ms → **2,3 ms** | – |
-| Suche, 2 Zeichen („mu“) | 14 ms | – |
-| Ungünstigster Fall: häufiges Wort + Filter ohne Treffer | 84 ms | – |
+| Suche, breit („laub“ bei 125 000 Treffern) | 63 ms → **1,8 ms** | – |
+| Suche, 2 Zeichen („mu“) | 8 ms | – |
+| Ungünstigster Fall: häufiges Wort + Filter ohne Treffer | 65–84 ms | – |
+| Periodischer Abgleich ohne Änderungen | 55 → **6 µs/Ordner** (100 000 Ordner ≈ 0,6 s) | – |
+| Abgleich nach einem Watcher-Ereignis (Ordner mit 100 Dateien) | 0,15 ms | – |
+| Neue/gelöschte Datei → auffindbar (Daemon, Watcher) | **~1,0 s** (Bündelung 1 s) | – |
+| Explorer: Ordner mit 10 000 Dateien, erste Seite | 17,9 → **5 ms** | – |
 
 **Maßnahmen:**
 
 - Pfade werden nicht gespeichert, sondern nur Name und Elternordner. Die Suche rekonstruiert den
   Pfad nur für die angezeigten Treffer.
 - Der SQLite-Cache ist auf 8 MiB pro Verbindung begrenzt; insgesamt gibt es 3 Verbindungen.
-- Breite Anfragen wurden zunächst komplett sortiert (63 ms). Jetzt werden höchstens 2 000
-  Kandidaten gelesen und in Rust gewichtet (Namensanfang vor Treffer in der Mitte, dann kürzere
-  Namen).
+- **Breite Anfragen** wurden zunächst komplett sortiert (63 ms). Jetzt werden höchstens 2 000
+  Kandidaten gelesen und in Rust gewichtet: Namensanfang vor Treffer in der Mitte, dann kürzere Namen.
+- **Abgleich:** Für Ordner mit unveränderter mtime (ns-genau) genügt ein `stat`. Zunächst wurden
+  dabei alle Kinder gelesen, um die Unterordner zu finden. Ein Teilindex nur über Ordner
+  (`WHERE kind = 1`, mit Stempel) macht den Abgleich 9× schneller.
+- **Explorer:** Zum Sortieren reichen Name und Typ aus `readdir`. `stat` (Größe, Datum) läuft nur
+  für die angeforderte Seite (3,5× schneller).
+- **Watcher** je Ordner, nicht rekursiv: Ausgeschlossene Bäume wie `node_modules` belegen keine
+  inotify-Plätze. Die Obergrenze liegt bei 50 000. Den Rest erledigt der periodische Abgleich.
+
+**Gefundener Fehler (Fuzzing):** Eine Suche nach `\0` lieferte alle Dateien, weil SQLite den
+Suchbegriff am Nullbyte abschnitt und nur `%` übrig blieb. Behoben: Ein Nullbyte im Suchbegriff
+bedeutet keinen Treffer.
 
 **Offen:**
 
 - Der ungünstigste Fall (häufiges Wort, dazu ein Endungsfilter ohne Treffer) liest alle Treffer
-  des Wortes. Er bleibt unter 100 ms, aber die Oberfläche sollte die Suche entprellt und
-  abbrechbar ausführen.
-- Inkrementeller Scan und Watcher folgen. Gemessen wird dann die Zeit bis eine Änderung
-  auffindbar ist, und der Leerlauf bei 1 Mio. Dateien.
+  des Wortes. Er bleibt unter 100 ms; die Oberfläche sollte die Suche entprellt ausführen.
+- Jede inotify-Beobachtung belegt Kernel-Speicher (etwa 1 KiB je Ordner, bei 50 000 Ordnern also
+  bis zu ~50 MiB). Das ist Kernel- und kein Prozessspeicher, aber spürbar. Alternative für später:
+  fanotify (braucht Rechte).
+- Gelöschte Ordner geben ihren Platz im Watcher-Kontingent nicht frei. Bei viel Wechsel greift
+  früher der periodische Abgleich.
+- Sortieren nach Größe oder Datum im Explorer braucht `stat` für alle Einträge (bei Bedarf
+  parallelisieren).

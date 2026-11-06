@@ -405,7 +405,46 @@ fn local_index_million() {
     let t = Instant::now();
     let st = idx.rebuild_root(root, &tree).unwrap();
     report("index: echter Scan (Dateien)", st.files as usize, t.elapsed());
+    // Periodischer Abgleich ohne Änderungen: nur `stat` je Ordner
+    let t = Instant::now();
+    let r = idx.refresh(root, &tree, &tree, true).unwrap();
+    report("index: Abgleich unverändert (Ordner)", (r.dirs_read + r.dirs_unchanged) as usize, t.elapsed());
+    // 100 neue Dateien in 100 Ordnern
+    for d in 0..100 {
+        let p = tree.join(format!("ordner-{}/sub-{}", d * 10 / 50, d * 10));
+        std::fs::File::create(p.join("neu.txt")).unwrap();
+    }
+    let t = Instant::now();
+    let r = idx.refresh(root, &tree, &tree, true).unwrap();
+    assert_eq!(r.added, 100);
+    report("index: Abgleich mit 100 Änderungen (Ordner)", (r.dirs_read + r.dirs_unchanged) as usize, t.elapsed());
+    // Watcher-Ereignis: ein Ordner mit 100 Dateien
+    let one = tree.join("ordner-0/sub-0");
+    let t = Instant::now();
+    let n = 200;
+    for _ in 0..n {
+        idx.refresh(root, &tree, &one, false).unwrap();
+    }
+    report("index: Watcher-Abgleich eines Ordners", n, t.elapsed());
+    let t = Instant::now();
+    let dirs = idx.dir_paths(root, 50_000).unwrap();
+    report("index: Ordnerliste für den Watcher", dirs.len(), t.elapsed());
     std::fs::remove_dir_all(&tree).unwrap();
+
+    // Explorer: Ordner mit 10 000 Dateien live lesen und sortieren
+    let big = dir.path().join("gross");
+    std::fs::create_dir(&big).unwrap();
+    for i in 0..10_000 {
+        std::fs::File::create(big.join(format!("Bild_{i}.jpg"))).unwrap();
+    }
+    let t = Instant::now();
+    let n = 20;
+    for _ in 0..n {
+        let (page, total) = space_core::api::explorer::read_dir_page(&big, false, 0, 200).unwrap();
+        assert_eq!((page.len(), total), (200, 10_000));
+    }
+    report("explorer: 10 000 Dateien, erste Seite (200)", n, t.elapsed());
+    std::fs::remove_dir_all(&big).unwrap();
 
     // 2) 1 Mio. synthetische Einträge
     let syn = idx.add_root(std::path::Path::new("/synthetisch")).unwrap();

@@ -59,7 +59,7 @@ Abstriche bei der Sicherheit.
 | **0a** | Core härten (PR #1), Pairing & Ledger-Gossip (PR #2) | ✅ |
 | **0b** | **API-Schicht**: Fehlercodes, API-Version, Ereignis-Stream, seitenweiser Katalog, Rechte pro Gerät mit Audit-Log, Modulaufteilung | ✅ |
 | **1 – Drive-Kern** (1a Shares + Rechte ✅ PR #4 · 1b Live ✅ PR #6 · 1c Pinning ✅ PR #7) | Ordner freigeben und beobachten (Watcher), relative Pfade im Ledger, **Smart-Pinning mit mehreren Quellen** (Server springt ein), kein doppelter Speicher (`TryReference`), Anzeige der Kopien, **Live-Verbindungen** zwischen gekoppelten Geräten | offen |
-| **2 – Explorer-Kern** | Index des lokalen Dateisystems, FTS5-Suche, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
+| **2 – Explorer-Kern** (2a Index & Suche ✅ PR #8) | Index des lokalen Dateisystems, FTS5-Suche, Ordner live lesen, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
 | **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |
 | **5 – Medien & Teilen** | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | offen |

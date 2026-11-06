@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [invite_code, ledger_entry, ipc_frame, paths, live_msg]
+        target: [invite_code, ledger_entry, ipc_frame, paths, live_msg, search_query]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:

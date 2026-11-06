@@ -105,7 +105,14 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::ShareRescan { .. }
         | Request::PinAdd { .. }
         | Request::PinList
-        | Request::PinRemove { .. } => Capability::Admin,
+        | Request::PinRemove { .. }
+        // Lokaler Index und Dateisystem bleiben auf dem Gerät (kein Zugriff für Geräte).
+        | Request::Search { .. }
+        | Request::ListDir { .. }
+        | Request::IndexRoots
+        | Request::IndexAdd { .. }
+        | Request::IndexRemove { .. }
+        | Request::IndexRescan => Capability::Admin,
     }
 }
 

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile, ShareInfo};
 use space_core::events::Event;
+use space_core::index::NodeKind;
 use space_core::ipc::{read_frame, write_frame, Envelope, PinInfo, Request, Response, ScanResult, SyncResult};
 use space_core::{Config, Daemon, FileRecord};
 use std::path::{Path, PathBuf};
@@ -89,6 +90,49 @@ enum Commands {
         #[arg(short, long, default_value_t = 50)]
         limit: u32,
     },
+    /// Sucht Dateien und Ordner auf diesem Gerät (Teil des Namens, ohne Groß-/Kleinschreibung)
+    Search {
+        query: String,
+        /// Nur diese Endungen, kommagetrennt (z. B. jpg,png)
+        #[arg(long, value_delimiter = ',')]
+        ext: Vec<String>,
+        /// Nur Ordner
+        #[arg(long)]
+        dirs: bool,
+        /// Nur Dateien
+        #[arg(long, conflicts_with = "dirs")]
+        files: bool,
+        /// Versteckte Dateien einbeziehen
+        #[arg(long)]
+        hidden: bool,
+        #[arg(short, long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Ordnerinhalt anzeigen (live vom Dateisystem)
+    Ls {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Versteckte Dateien anzeigen
+        #[arg(short, long)]
+        all: bool,
+    },
+    /// Orte der lokalen Suche verwalten
+    Index {
+        #[command(subcommand)]
+        action: IndexAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum IndexAction {
+    /// Indexierte Orte mit Anzahl der Einträge
+    List,
+    /// Ordner zur Suche hinzufügen
+    Add { path: PathBuf },
+    /// Ort aus der Suche entfernen
+    Remove { id: i64 },
+    /// Alle Orte sofort abgleichen
+    Rescan,
 }
 
 #[derive(Subcommand)]
@@ -220,6 +264,29 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Queue { action: Some(QueueAction::Retry { id }) } => Request::QueueRetry { id },
         Commands::Peers => Request::Peers,
         Commands::Info => Request::Info,
+        Commands::Search { query, ext, dirs, files, hidden, limit } => Request::Search {
+            query,
+            filter: space_core::index::SearchFilter {
+                kind: if dirs {
+                    Some(NodeKind::Dir)
+                } else if files {
+                    Some(NodeKind::File)
+                } else {
+                    None
+                },
+                extensions: ext,
+                include_hidden: hidden,
+                ..Default::default()
+            },
+            limit,
+        },
+        Commands::Ls { path, all } => {
+            Request::ListDir { path: absolute(&path)?, show_hidden: all, offset: 0, limit: 1_000 }
+        }
+        Commands::Index { action: IndexAction::List } => Request::IndexRoots,
+        Commands::Index { action: IndexAction::Add { path } } => Request::IndexAdd { path: absolute(&path)? },
+        Commands::Index { action: IndexAction::Remove { id } } => Request::IndexRemove { id },
+        Commands::Index { action: IndexAction::Rescan } => Request::IndexRescan,
         Commands::Watch => return watch(&config.socket_path).await,
     };
 
@@ -441,6 +508,41 @@ fn print_response(res: Response) -> ExitCode {
             println!("Gekoppelt:      {} Gerät(e)", i.paired_devices);
             println!("Freigaben:      {}", i.shared_files);
             println!("Warteschlange:  {} wartend", i.pending_jobs);
+        }
+        Response::SearchResults { hits } => {
+            if hits.is_empty() {
+                println!("Nichts gefunden.");
+            }
+            for h in &hits {
+                let size = if h.kind == NodeKind::File { human_size(h.size) } else { String::new() };
+                println!("{} {:>10}  {}", kind_icon(h.kind), size, h.path);
+            }
+        }
+        Response::DirListing { path, entries, total } => {
+            println!("📂 {}", path.display());
+            for e in &entries {
+                let size = if e.kind == NodeKind::File { human_size(e.size) } else { String::new() };
+                println!("{} {:>10}  {}  {}", kind_icon(e.kind), size, fmt_time(e.mtime), e.name);
+            }
+            if (entries.len() as u64) < total {
+                println!("… {} von {total} angezeigt", entries.len());
+            }
+        }
+        Response::IndexRoots { roots, watched_dirs } => {
+            if roots.is_empty() {
+                println!("Keine Orte indexiert. Hinzufügen: space-daemon index add <ordner>");
+            }
+            for r in &roots {
+                let state = if !r.enabled {
+                    "entfernt".to_string()
+                } else if let Some(t) = r.last_scan {
+                    format!("{} Einträge, Stand {}", r.entries, fmt_time(t))
+                } else {
+                    "wird indexiert …".to_string()
+                };
+                println!("{:>4}  {}  ({state})", r.id, r.path);
+            }
+            println!("{watched_dirs} Ordner werden live beobachtet.");
         }
         Response::Error { message, .. } => {
             eprintln!("❌ {message}");
@@ -667,6 +769,14 @@ fn short(s: &str, n: usize) -> &str {
 fn fmt_time(ts: i64) -> String {
     use chrono::{Local, TimeZone};
     Local.timestamp_opt(ts, 0).single().map(|t| t.format("%d.%m.%Y %H:%M").to_string()).unwrap_or_else(|| "?".into())
+}
+
+fn kind_icon(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Dir => "📁",
+        NodeKind::Symlink => "🔗",
+        NodeKind::File => "📄",
+    }
 }
 
 fn human_size(bytes: u64) -> String {
