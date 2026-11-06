@@ -9,14 +9,11 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
-fn free_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
 async fn start(root: &Path, name: &str) -> Daemon {
     let mut c = Config::portable(root);
     c.use_relay = false;
-    c.bind_port = Some(free_port());
+    // Port vom Betriebssystem (0): kein Wettlauf mit parallel laufenden Tests.
+    c.bind_port = None;
     c.connect_timeout_secs = 2;
     c.device_name = name.to_string();
     Daemon::start_loopback(c).await.expect("Daemon startet")

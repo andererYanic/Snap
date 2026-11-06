@@ -10,14 +10,11 @@ use space_core::{Config, Daemon};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-fn free_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
 async fn start(root: &Path) -> Daemon {
     let mut c = Config::portable(root);
     c.use_relay = false;
-    c.bind_port = Some(free_port());
+    // Port vom Betriebssystem (0): kein Wettlauf mit parallel laufenden Tests.
+    c.bind_port = None;
     c.live_connections = false;
     Daemon::start_loopback(c).await.unwrap()
 }
