@@ -364,3 +364,26 @@ Messung `core/tests/perf.rs::backup_engine` (Release):
   laufen im Hintergrund, nie im Pfad einer GUI-Abfrage.
 - **Ausdünnen:** liest den Katalog und die Bäume der verbleibenden Stände (Dateidaten werden nicht
   gelesen) und löscht nur, was der lokale Bekannt-Zwischenspeicher als vorhanden führt.
+
+## Review 16 – Foto-Zeitachse (5d, 2026-11-06)
+
+Messung `photo_timeline` (Release): 1 Mio. Index-Einträge, davon 375 000 Bilder/Videos.
+
+| Messung | Vorher | Nachher | Maßnahme |
+|---|---|---|---|
+| Erste Seite (200) | – | 1,1 ms | Index `(hidden, taken, node_id)`, Cursor statt OFFSET |
+| Seite 502 | – | 0,6 ms | ebenso (Kosten unabhängig von der Tiefe) |
+| Erste Seite eines Ordners (3 750 Fotos) | 142 ms | **3,3 ms** | `find_dir` ohne Zählung (s. u.), Ordnerindex mit `INDEXED BY` für kleine Bereiche |
+| Monate eines Ordners | 424 ms | **1,0 ms** | ebenso |
+| Monate gesamt (375 000) | 21 ms | **0 ms** (Zwischenspeicher) | vom Aktualisierer im Hintergrund vorberechnet; ohne Zwischenspeicher 20 ms |
+| Erstes Füllen | – | 16 µs je Datei (ohne Lesen) | EXIF wird nur für sichtbare Dateien gelesen |
+| Prüfung ohne Änderung | 370 ms | **211 ms** (Hintergrund) | Teilindex auf Bild-/Video-Endungen; Waisen nur alle 10 min |
+
+- **Nebenbefund:** `LocalIndex::find_dir` rief `roots()` auf, das jeden Ort komplett zählt
+  (`COUNT(*)` über 1 Mio. Einträge, ~30 ms). Jetzt nur noch die Pfade der Orte. Davon profitieren
+  auch Speicheranalyse und Duplikatsuche eines Ordners: 43 ms → **8 ms** (10 000 Dateien).
+- Große Bereiche (über 1 000 Unterordner) nutzen den Zeitindex mit Ordnerbedingung; dort sind die
+  Treffer dicht, die Abfrage endet nach einer Seite.
+- **Offen:** Die Prüfung im Hintergrund (211 ms bei 1 Mio. Einträgen) läuft nach jeder
+  Indexänderung (gebündelt, 5 s). Eine Warteschlange geänderter Knoten aus dem Indexer würde sie
+  auf die Änderungen beschränken.

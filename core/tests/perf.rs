@@ -910,6 +910,48 @@ fn share_links() {
 
 #[test]
 #[ignore]
+fn photo_timeline() {
+    use space_core::index::LocalIndex;
+    use space_core::photos::{months, refresh, timeline};
+    let dir = tempfile::tempdir().unwrap();
+    let idx = LocalIndex::open(&dir.path().join("index.db"), vec![]).unwrap();
+    let syn = idx.add_root(std::path::Path::new("/synthetisch")).unwrap();
+    idx.insert_synthetic(syn, 10_000, 100).unwrap();
+    // 1 Mio. Einträge, davon 375 000 Bilder/Videos (Dateien existieren nicht → Dateizeit)
+    let t = Instant::now();
+    let n = refresh(&idx, false, || false).unwrap();
+    report("zeitachse: erstes Füllen (je Datei)", n as usize, t.elapsed());
+    assert_eq!(n, 375_000);
+    let t = Instant::now();
+    assert_eq!(refresh(&idx, false, || false).unwrap(), 0);
+    report("zeitachse: Prüfung ohne Änderung", 1, t.elapsed());
+    let t = Instant::now();
+    let p = timeline(&idx, None, None, 200).unwrap();
+    report("zeitachse: erste Seite (200)", 1, t.elapsed());
+    let mut cursor = p.next;
+    for _ in 0..500 {
+        cursor = timeline(&idx, None, cursor.as_deref(), 200).unwrap().next;
+    }
+    let t = Instant::now();
+    let deep = timeline(&idx, None, cursor.as_deref(), 200).unwrap();
+    report("zeitachse: Seite 502 (Cursor)", 1, t.elapsed());
+    assert_eq!(deep.items.len(), 200);
+    let t = Instant::now();
+    let m = months(&idx, None).unwrap();
+    report("zeitachse: Monate (375 000)", 1, t.elapsed());
+    assert_eq!(m.iter().map(|m| m.count).sum::<u64>(), 375_000);
+    let g = std::path::Path::new("/synthetisch/Gruppe 7");
+    let t = Instant::now();
+    let sp = timeline(&idx, Some(g), None, 200).unwrap();
+    report("zeitachse: erste Seite, Ordner mit 3 750", 1, t.elapsed());
+    assert_eq!(sp.items.len(), 200);
+    let t = Instant::now();
+    months(&idx, Some(g)).unwrap();
+    report("zeitachse: Monate eines Ordners", 1, t.elapsed());
+}
+
+#[test]
+#[ignore]
 fn storage_analysis() {
     use space_core::analysis::{duplicates, space_usage};
     use space_core::index::LocalIndex;

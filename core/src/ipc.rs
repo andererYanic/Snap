@@ -350,6 +350,19 @@ pub enum Request {
         #[serde(default)]
         limit: u32,
     },
+    /// Foto-Zeitachse: Bilder und Videos nach Aufnahmezeit, neueste zuerst, seitenweise.
+    Timeline {
+        /// Nur unterhalb dieses indexierten Ordners (sonst alle Orte).
+        path: Option<PathBuf>,
+        /// Cursor aus der vorherigen Seite.
+        before: Option<String>,
+        #[serde(default)]
+        limit: u32,
+    },
+    /// Anzahl Fotos/Videos je Monat (für Sprungmarken).
+    TimelineMonths {
+        path: Option<PathBuf>,
+    },
     /// Sicherung einrichten (Ziel + Quellordner + Passwort); liefert den Wiederherstellungsschlüssel.
     BackupCreate {
         target: crate::backup::repo::BackupTarget,
@@ -563,6 +576,10 @@ pub enum Response {
         files: u64,
     },
     Duplicates(crate::analysis::DuplicateReport),
+    Timeline(crate::photos::TimelinePage),
+    TimelineMonths {
+        months: Vec<crate::photos::MonthCount>,
+    },
     Links {
         items: Vec<crate::links::LinkInfo>,
         /// Worker-Adresse (`None` = noch nicht eingerichtet).

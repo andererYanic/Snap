@@ -209,6 +209,19 @@ enum Commands {
         #[arg(short, long, default_value_t = 50)]
         limit: u32,
     },
+    /// Foto-Zeitachse: Bilder und Videos nach Aufnahmezeit (neueste zuerst)
+    Photos {
+        /// Nur in diesem Ordner (Standard: alle indexierten Orte)
+        path: Option<PathBuf>,
+        /// Weiter ab diesem Cursor (aus der vorherigen Ausgabe)
+        #[arg(long)]
+        before: Option<String>,
+        #[arg(short, long, default_value_t = 50)]
+        limit: u32,
+        /// Nur die Anzahl je Monat anzeigen
+        #[arg(long)]
+        months: bool,
+    },
     /// Sicherungen und Versionen (verschlüsselt, dedupliziert)
     Backup {
         #[command(subcommand)]
@@ -790,6 +803,12 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             min_size: Some((min_mb.max(0.0) * 1e6) as u64),
             limit,
         },
+        Commands::Photos { path, months: true, .. } => {
+            Request::TimelineMonths { path: path.map(|p| absolute(&p)).transpose()? }
+        }
+        Commands::Photos { path, before, limit, .. } => {
+            Request::Timeline { path: path.map(|p| absolute(&p)).transpose()?, before, limit }
+        }
         Commands::Backup { action: None | Some(BackupAction::List) } => Request::BackupList,
         Commands::Backup { action: Some(BackupAction::Create { to, sources }) } => {
             eprintln!("Das Passwort schützt die Sicherung außerhalb dieses Geräts (mindestens 10 Zeichen).");
@@ -1217,6 +1236,44 @@ fn print_response(res: Response) -> ExitCode {
                     "\nInsgesamt {} durch Duplikate belegt. Entfernen: space-daemon rm <pfad> (Papierkorb)",
                     human_size(r.wasted)
                 );
+            }
+        }
+        Response::Timeline(page) => {
+            if page.items.is_empty() {
+                println!("Keine Fotos oder Videos gefunden (die Zeitachse füllt sich nach dem Indexieren).");
+            }
+            let mut day = String::new();
+            for it in &page.items {
+                let t = chrono::DateTime::from_timestamp(it.taken, 0).unwrap_or_default();
+                let d = t.format("%d.%m.%Y").to_string();
+                if d != day {
+                    println!("\n📅 {d}");
+                    day = d;
+                }
+                let dims = match (it.width, it.height) {
+                    (Some(w), Some(h)) => format!(" {w}×{h}"),
+                    _ => String::new(),
+                };
+                println!(
+                    "  {} {}{}  {}{}{}",
+                    t.format("%H:%M"),
+                    if it.video { "🎬" } else { "🖼" },
+                    if it.exif { "" } else { " (Dateizeit)" },
+                    it.path,
+                    dims,
+                    it.camera.as_deref().map(|c| format!("  · {c}")).unwrap_or_default()
+                );
+            }
+            if let Some(next) = &page.next {
+                println!("\nWeiter: space-daemon photos --before {next}");
+            }
+        }
+        Response::TimelineMonths { months } => {
+            if months.is_empty() {
+                println!("Noch keine Fotos oder Videos in der Zeitachse.");
+            }
+            for m in &months {
+                println!("  {:04}-{:02}  {:>6}", m.year, m.month, m.count);
             }
         }
         Response::Link(l) => {
