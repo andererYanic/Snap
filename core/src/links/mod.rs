@@ -164,7 +164,7 @@ pub(crate) async fn create(
     );
 
     let mut rnd = [0u8; 48];
-    getrandom::getrandom(&mut rnd).map_err(|e| anyhow::anyhow!("Zufallszahlen des Betriebssystems: {e}"))?;
+    getrandom::fill(&mut rnd).map_err(|e| anyhow::anyhow!("Zufallszahlen des Betriebssystems: {e}"))?;
     let id = data_encoding::HEXLOWER.encode(&rnd[..16]);
     let secret: [u8; 32] = rnd[16..].try_into().expect("32 Byte");
     let has_pw = password.is_some();

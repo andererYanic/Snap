@@ -118,7 +118,7 @@ fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
 
 pub fn random_token() -> Result<[u8; 32]> {
     let mut t = [0u8; 32];
-    getrandom::getrandom(&mut t).map_err(|e| anyhow::anyhow!("Zufallsgenerator nicht verfügbar: {e}"))?;
+    getrandom::fill(&mut t).map_err(|e| anyhow::anyhow!("Zufallsgenerator nicht verfügbar: {e}"))?;
     Ok(t)
 }
 

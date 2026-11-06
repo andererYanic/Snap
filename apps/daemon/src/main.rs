@@ -1,3 +1,5 @@
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile, ShareInfo};
@@ -312,16 +314,21 @@ fn read_secret(prompt: &str) -> Result<String> {
     std::io::stderr().flush()?;
     let stdin = std::io::stdin();
     let tty = stdin.is_terminal();
-    // SAFETY: termios wird vollständig von tcgetattr gefüllt und unverändert zurückgeschrieben.
+    // SAFETY: termios ist ein reines C-Struct; Nullen sind ein gültiger Wert.
     let mut old: libc::termios = unsafe { std::mem::zeroed() };
-    if tty && unsafe { libc::tcgetattr(0, &mut old) } == 0 {
+    // SAFETY: Dateideskriptor 0 und ein gültiger Zeiger; bei Erfolg ist `old` vollständig gefüllt.
+    let saved = tty && unsafe { libc::tcgetattr(0, &mut old) } == 0;
+    if saved {
         let mut silent = old;
         silent.c_lflag &= !libc::ECHO;
+        // SAFETY: gültiger Zeiger auf eine aus tcgetattr abgeleitete Struktur.
         unsafe { libc::tcsetattr(0, libc::TCSANOW, &silent) };
     }
     let mut line = String::new();
     let res = stdin.lock().read_line(&mut line);
-    if tty {
+    // Nur zurückschreiben, was tcgetattr wirklich geliefert hat (sonst Nullen → kaputtes Terminal).
+    if saved {
+        // SAFETY: `old` stammt unverändert aus tcgetattr.
         unsafe { libc::tcsetattr(0, libc::TCSANOW, &old) };
         eprintln!();
     }

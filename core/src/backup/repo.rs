@@ -16,7 +16,7 @@ const B64: data_encoding::Encoding = data_encoding::BASE64;
 
 fn rand<const N: usize>() -> Result<[u8; N]> {
     let mut b = [0u8; N];
-    getrandom::getrandom(&mut b).map_err(|e| anyhow::anyhow!("Zufallszahlen des Betriebssystems: {e}"))?;
+    getrandom::fill(&mut b).map_err(|e| anyhow::anyhow!("Zufallszahlen des Betriebssystems: {e}"))?;
     Ok(b)
 }
 
