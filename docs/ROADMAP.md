@@ -89,8 +89,9 @@ Abstriche bei der Sicherheit.
 - [x] **`SECURITY.md`** mit vertraulichem Meldeweg; **Bedrohungsmodell** (`docs/SECURITY_MODEL.md`) – vor Veröffentlichung aktualisieren.
 - [x] **CI** (GitHub Actions, auf Commit-SHAs gepinnt): `fmt`, `clippy -D warnings`, `cargo test`, `cargo audit`, `cargo deny`.
 - [x] **Fuzzing** (`fuzz/`): Einladungscodes, Ledger-Einträge, IPC-Frames, Pfad-/Namensprüfung – Kurzlauf je PR, 20 min nächtlich. Neue Parser bekommen ein Ziel.
-- [ ] **Sichere Standardwerte** für fremde Umgebungen prüfen: Mehrbenutzer-Rechner, Betrieb als root/Docker, fehlendes `$XDG_RUNTIME_DIR`, Netzwerk-Dateisysteme.
-- [ ] **`unsafe`-Audit** (derzeit nur `libc::geteuid`) und Abhängigkeits-Review.
+- [x] **Sichere Standardwerte** für fremde Umgebungen prüfen: Mehrbenutzer-Rechner, Betrieb als root/Docker, fehlendes `$XDG_RUNTIME_DIR`, Netzwerk-Dateisysteme (Ergebnis: `docs/SECURITY_MODEL.md`, Warnung bei Datenordner auf Netzwerk-Dateisystem).
+- [x] **`unsafe`-Audit**: 6 libc-Aufrufe, alle begründet und per Lint erzwungen; ein Fehler (Terminal-Wiederherstellung) behoben.
+- [ ] **Abhängigkeits-Review** über `cargo audit`/`cargo deny` hinaus (Umfang, Pflege, Alternativen).
 - [ ] **Signierte Releases**, reproduzierbare Builds, SBOM.
 - [ ] Unabhängiges **Sicherheits-Review** (zweites Augenpaar) vor Version 1.0.
 

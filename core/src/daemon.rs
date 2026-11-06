@@ -140,6 +140,14 @@ impl Daemon {
         ensure_private_dir(&config.data_dir)?;
         let socket_dir = config.socket_path.parent().context("Ungültiger Socket-Pfad")?.to_path_buf();
         ensure_private_dir(&socket_dir)?;
+        if let Some(fs) = crate::indexer::on_network_fs(&config.data_dir) {
+            tracing::warn!(
+                "Datenordner {} liegt auf einem Netzwerk-Dateisystem ({fs}). SQLite kann dort Daten \
+                 beschädigen, wenn mehrere Rechner gleichzeitig zugreifen – besser data_dir auf ein \
+                 lokales Laufwerk legen (config.toml oder SPACE_DATA_DIR).",
+                config.data_dir.display()
+            );
+        }
         prepare_socket_path(&config.socket_path).await?;
 
         let db = Arc::new(DatabaseManager::open(&config.db_path())?);

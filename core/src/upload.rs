@@ -58,8 +58,9 @@ impl UploadOffers {
 fn free_space(path: &Path) -> Result<u64> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(path.as_os_str().as_bytes())?;
-    // SAFETY: gültiger, NUL-terminierter Pfad; `st` wird vollständig von statvfs beschrieben.
+    // SAFETY: statvfs ist ein reines C-Struct; Nullen sind ein gültiger Wert.
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: gültiger, NUL-terminierter Pfad; `st` wird vollständig von statvfs beschrieben.
     if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
         return Err(std::io::Error::last_os_error().into());
     }

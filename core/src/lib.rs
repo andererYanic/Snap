@@ -1,3 +1,6 @@
+//! Snap-Kern: Daemon, Index, Dateioperationen, Netzwerk, Sicherungen.
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 pub mod analysis;
 pub mod api;
 pub mod backoff;

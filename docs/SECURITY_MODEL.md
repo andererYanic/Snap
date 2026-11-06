@@ -120,6 +120,30 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.
 
+## Betrieb in fremden Umgebungen (geprüft 2026-11-06)
+
+- **Mehrbenutzer-Rechner:**
+  - Datenordner, Socket-Ordner und Schlüssel sind nur für den Besitzer zugänglich (0700/0600).
+  - Fremde Besitzer oder Symlinks führen zum Abbruch.
+  - Der Socket nimmt nur Verbindungen derselben uid an (`SO_PEERCRED`), auch falls die Rechte
+    geändert werden.
+- **Kein `$XDG_RUNTIME_DIR`** (z. B. Cron, Docker, SSH ohne systemd-Sitzung): Der Socket liegt
+  dann im privaten Datenordner, nie in `/tmp`.
+- **Betrieb als root / in Docker:**
+  - Dieselben Prüfungen gelten mit der uid 0.
+  - Geschützte Pfade (Datenordner, Socket) lassen sich weder freigeben noch über Fernoperationen
+    ändern.
+  - Empfehlung: als eigener Benutzer betreiben, Daten als Volume einhängen.
+- **Netzwerk-Dateisysteme:**
+  - Werden nicht automatisch indexiert oder beobachtet.
+  - Liegt der Datenordner selbst auf NFS/SMB/SSHFS, warnt der Daemon beim Start: SQLite (WAL) ist
+    dort bei gleichzeitigem Zugriff mehrerer Rechner nicht sicher.
+- **`unsafe`:**
+  - Nur dünne libc-Aufrufe: `renameat2`, `statvfs`, `geteuid`, `syncfs`, `tcgetattr`/`tcsetattr`.
+  - Jeder Block ist begründet; das erzwingt `clippy::undocumented_unsafe_blocks`.
+  - Beim Audit behoben: Schlug `tcgetattr` fehl, hätte die Passwortabfrage ein genulltes
+    `termios` zurückgeschrieben und damit das Terminal unbrauchbar gemacht.
+
 ## Bewusst nicht abgedeckt
 
 - **Metadaten gegenüber Relais/Netz:** Wer wann mit wem verbunden ist, ist sichtbar

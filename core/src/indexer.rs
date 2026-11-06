@@ -11,7 +11,7 @@
 use crate::daemon::DaemonInner;
 use crate::index::LocalIndex;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -148,6 +148,26 @@ fn unescape_mount(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Dateisystemtyp des Einhängepunkts, unter dem `path` liegt (längster passender Einhängepunkt).
+fn fs_type_in(mounts: &str, path: &Path) -> Option<String> {
+    let mut best: Option<(usize, String)> = None;
+    for line in mounts.lines() {
+        let mut f = line.split_whitespace();
+        let (Some(_dev), Some(mp), Some(fstype)) = (f.next(), f.next(), f.next()) else { continue };
+        let mp = unescape_mount(mp);
+        if path.starts_with(&mp) && best.as_ref().is_none_or(|(l, _)| mp.len() >= *l) {
+            best = Some((mp.len(), fstype.to_string()));
+        }
+    }
+    best.map(|(_, t)| t)
+}
+
+/// Liegt `path` auf einem Netzwerk-Dateisystem (NFS, SMB, SSHFS …)?
+pub fn on_network_fs(path: &Path) -> Option<String> {
+    let mounts = std::fs::read_to_string("/proc/self/mounts").ok()?;
+    fs_type_in(&mounts, path).filter(|t| NETWORK_FS.contains(&t.as_str()))
 }
 
 /// Angeschlossene Laufwerke des Nutzers aus einer Mount-Tabelle.
@@ -305,6 +325,14 @@ async fn run_event_loop(svc: Arc<IndexService>, mut rx: tokio::sync::mpsc::Unbou
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fs_type_longest_match() {
+        let m = "/dev/sda1 / ext4 rw 0 0\nserver:/home /home nfs4 rw 0 0\n/dev/sdb1 /home/ich/lokal ext4 rw 0 0\n";
+        assert_eq!(fs_type_in(m, Path::new("/home/ich/.local/share/snap")).as_deref(), Some("nfs4"));
+        assert_eq!(fs_type_in(m, Path::new("/home/ich/lokal/x")).as_deref(), Some("ext4"));
+        assert_eq!(fs_type_in(m, Path::new("/var/lib")).as_deref(), Some("ext4"));
+    }
 
     #[test]
     fn mount_table_parsing() {
