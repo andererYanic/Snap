@@ -594,12 +594,17 @@ mod tests {
         std::fs::create_dir_all(&out).unwrap();
         let latest = snapshot(&cat, &s2.id).unwrap();
         let (restored, files) = restore(&repo, latest, &src, &out).await.unwrap();
+        // Rechte werden mitgesichert: video.mp4 hatte beim zweiten Lauf 000
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&restored.join("video.mp4")), 0);
+        std::fs::set_permissions(restored.join("video.mp4"), std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(files, 4);
         std::fs::remove_dir_all(src.join("node_modules")).unwrap();
         tree_eq(&src, &restored);
         assert_eq!(std::fs::read_link(restored.join("verknuepfung")).unwrap(), PathBuf::from("Steuer"));
         // Einzelne Datei; nie überschreiben
         let (one, _) = restore(&repo, latest, &src.join("video.mp4"), &out).await.unwrap();
+        std::fs::set_permissions(&one, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(std::fs::read(&one).unwrap(), big);
         let (again, _) = restore(&repo, latest, &src.join("video.mp4"), &out).await.unwrap();
         assert_eq!(again, out.join("video (2).mp4"));
