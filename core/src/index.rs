@@ -298,6 +298,7 @@ impl Writer<'_> {
         ))?
         .execute(params![id])?;
         conn.prepare_cached(&format!("{SUB} DELETE FROM hashes WHERE node_id IN sub"))?.execute(params![id])?;
+        conn.prepare_cached(&format!("{SUB} DELETE FROM media_meta WHERE node_id IN sub"))?.execute(params![id])?;
         let n = conn.prepare_cached(&format!("{SUB} DELETE FROM nodes WHERE id IN sub"))?.execute(params![id])?;
         self.tick()?;
         Ok(n as u64)
@@ -346,6 +347,7 @@ impl LocalIndex {
             );
             ",
         )?;
+        conn.execute_batch(&crate::photos::schema())?;
         let mut readers = Vec::new();
         for _ in 0..READERS {
             let r =
@@ -369,17 +371,22 @@ impl LocalIndex {
     /// Knoten eines indexierten Ordners (`None`, wenn der Pfad in keinem Ort liegt oder
     /// (noch) nicht indexiert ist).
     pub fn find_dir(&self, path: &Path) -> Result<Option<i64>> {
-        let roots = self.roots()?;
-        let Some(root) = roots.iter().filter(|r| r.enabled && path.starts_with(&r.path)).max_by_key(|r| r.path.len())
+        let conn = self.r();
+        // Nur Pfade der Orte – ohne die Zählung aus `roots()` (bei 1 Mio. Einträgen ~30 ms).
+        let roots: Vec<(i64, String)> = conn
+            .prepare_cached("SELECT id, path FROM roots WHERE enabled = 1")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let Some((root_id, root_path)) =
+            roots.into_iter().filter(|(_, p)| path.starts_with(p)).max_by_key(|(_, p)| p.len())
         else {
             return Ok(None);
         };
-        let conn = self.r();
         let mut node: Option<i64> = conn
             .prepare_cached("SELECT id FROM nodes WHERE root_id = ?1 AND parent IS NULL")?
-            .query_row(params![root.id], |r| r.get(0))
+            .query_row(params![root_id], |r| r.get(0))
             .optional()?;
-        let rel = path.strip_prefix(&root.path).unwrap_or(Path::new(""));
+        let rel = path.strip_prefix(&root_path).unwrap_or(Path::new(""));
         for comp in rel.components() {
             let (Some(n), Some(name)) = (node, comp.as_os_str().to_str()) else { return Ok(None) };
             node = conn
@@ -444,6 +451,10 @@ impl LocalIndex {
         )?;
         conn.execute(
             "DELETE FROM hashes WHERE node_id IN (SELECT id FROM nodes WHERE root_id = ?1)",
+            params![root_id],
+        )?;
+        conn.execute(
+            "DELETE FROM media_meta WHERE node_id IN (SELECT id FROM nodes WHERE root_id = ?1)",
             params![root_id],
         )?;
         conn.execute("DELETE FROM nodes WHERE root_id = ?1", params![root_id])?;

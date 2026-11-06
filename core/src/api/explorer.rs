@@ -144,6 +144,7 @@ pub(crate) async fn index_remove(inner: &Arc<DaemonInner>, id: i64) -> Result<Re
     if !tokio::task::spawn_blocking(move || s.index.remove_root(id)).await?? {
         api_bail!(NotFound, "Kein indexierter Ort mit ID {id}.");
     }
+    *svc.months_cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
     index_roots(inner)
 }
 
@@ -203,6 +204,43 @@ pub(crate) async fn duplicates(
         g.other_devices = names;
     }
     Ok(Response::Duplicates(report))
+}
+
+fn check_scope(path: &Option<PathBuf>) -> Result<()> {
+    if let Some(p) = path {
+        if !p.is_absolute() {
+            api_bail!(InvalidInput, "Pfad muss absolut sein: {}", p.display());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn timeline(
+    inner: &Arc<DaemonInner>,
+    path: Option<PathBuf>,
+    before: Option<String>,
+    limit: u32,
+) -> Result<Response> {
+    let svc = service(inner)?;
+    check_scope(&path)?;
+    let limit = if limit == 0 { 200 } else { limit as usize };
+    let page = tokio::task::spawn_blocking(move || {
+        crate::photos::timeline(&svc.index, path.as_deref(), before.as_deref(), limit)
+    })
+    .await??;
+    Ok(Response::Timeline(page))
+}
+
+pub(crate) async fn timeline_months(inner: &Arc<DaemonInner>, path: Option<PathBuf>) -> Result<Response> {
+    let svc = service(inner)?;
+    check_scope(&path)?;
+    if path.is_none() {
+        if let Some(m) = svc.months_cache.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            return Ok(Response::TimelineMonths { months: m });
+        }
+    }
+    let months = tokio::task::spawn_blocking(move || crate::photos::months(&svc.index, path.as_deref())).await??;
+    Ok(Response::TimelineMonths { months })
 }
 
 #[cfg(test)]

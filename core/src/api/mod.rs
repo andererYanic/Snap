@@ -135,6 +135,8 @@ pub(crate) async fn handle_request(
         }
         Request::SpaceUsage { path, limit } => explorer::space_usage(inner, path, limit).await,
         Request::Duplicates { path, min_size, limit } => explorer::duplicates(inner, path, min_size, limit).await,
+        Request::Timeline { path, before, limit } => explorer::timeline(inner, path, before, limit).await,
+        Request::TimelineMonths { path } => explorer::timeline_months(inner, path).await,
         Request::BackupCreate { target, sources, password } => {
             crate::backup::create(inner, target, sources, password).await.map(Response::BackupCreated)
         }
@@ -281,6 +283,8 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::LinkRevoke { .. } => "link.revoke",
         Request::SpaceUsage { .. } => "space.usage",
         Request::Duplicates { .. } => "duplicates",
+        Request::Timeline { .. } => "timeline",
+        Request::TimelineMonths { .. } => "timeline.months",
         Request::BackupCreate { .. } => "backup.create",
         Request::BackupConnect { .. } => "backup.connect",
         Request::BackupList => "backup.list",

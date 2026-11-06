@@ -35,6 +35,11 @@ pub struct IndexService {
     max_watches: u64,
     limit_warned: AtomicBool,
     watched_roots: Mutex<HashSet<i64>>,
+    /// Signal an die Foto-Zeitachse: Index hat sich geändert.
+    pub(crate) media_dirty: Notify,
+    pub(crate) stopping: AtomicBool,
+    /// Monatsübersicht der ganzen Zeitachse (vom Aktualisierer vorberechnet).
+    pub(crate) months_cache: Mutex<Option<Vec<crate::photos::MonthCount>>>,
 }
 
 impl IndexService {
@@ -47,6 +52,9 @@ impl IndexService {
             max_watches: max_watches as u64,
             limit_warned: AtomicBool::new(false),
             watched_roots: Mutex::new(HashSet::new()),
+            media_dirty: Notify::new(),
+            stopping: AtomicBool::new(false),
+            months_cache: Mutex::new(None),
         }
     }
 
@@ -61,6 +69,7 @@ impl IndexService {
 
     /// Beendet die Beobachtung (Daemon fährt herunter).
     pub fn stop(&self) {
+        self.stopping.store(true, Ordering::Relaxed);
         self.watcher.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 
@@ -259,6 +268,7 @@ async fn full_pass(svc: &Arc<IndexService>, drives: bool) {
         Err(e) => tracing::warn!("Abgleich des Suchindex abgebrochen: {e}"),
         Ok(Ok(())) => {}
     }
+    svc.media_dirty.notify_one();
 }
 
 /// Verarbeitet Watcher-Ereignisse gebündelt: liest nur die betroffenen Ordner neu.
@@ -288,6 +298,7 @@ async fn run_event_loop(svc: Arc<IndexService>, mut rx: tokio::sync::mpsc::Unbou
         }
         let s = svc.clone();
         let _ = tokio::task::spawn_blocking(move || s.refresh_dirs(dirs)).await;
+        svc.media_dirty.notify_one();
     }
 }
 

@@ -12,6 +12,7 @@ libfuzzer-sys = "0.4"
 space-core = { path = "../core" }
 iroh-blobs = "0.103"
 serde_json = "1"
+chrono = "0.4"
 tokio = { version = "1", features = ["rt", "io-util"] }
 
 # Eigener Workspace, damit das Haupt-Workspace stabil (ohne nightly) baut.
@@ -98,6 +99,13 @@ bench = false
 [[bin]]
 name = "backup_keyfile"
 path = "fuzz_targets/backup_keyfile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timeline_input"
+path = "fuzz_targets/timeline_input.rs"
 test = false
 doc = false
 bench = false

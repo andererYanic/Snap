@@ -470,10 +470,10 @@ pub fn prune(dir: &Path, max_bytes: u64) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn jpeg(w: u32, h: u32) -> Vec<u8> {
+    pub(crate) fn jpeg(w: u32, h: u32) -> Vec<u8> {
         let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([(x % 255) as u8, (y % 255) as u8, 128]));
         let mut out = Vec::new();
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90).encode_image(&img).unwrap();
@@ -565,7 +565,7 @@ mod tests {
     }
 
     /// JPEG mit EXIF-Block (APP1) erzeugen.
-    fn jpeg_with_exif(w: u32, h: u32) -> Vec<u8> {
+    pub(crate) fn jpeg_with_exif(w: u32, h: u32) -> Vec<u8> {
         use exif::{experimental::Writer, Field, In, Rational, Tag, Value};
         let f = |tag, value| Field { tag, ifd_num: In::PRIMARY, value };
         let fields = [

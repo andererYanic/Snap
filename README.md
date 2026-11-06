@@ -72,6 +72,7 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `backup restore <id> <stand> <pfad> --to <ordner>` / `backup ls …` / `backup check <id>` / `backup connect …` | Wiederherstellen (auch auf einem neuen Gerät), prüfen |
 | `usage [ordner]` | Speicheranalyse: Unterordner nach Größe, Anteile nach Typ, größte Dateien |
 | `dupes [ordner] [--min-mb N]` | Doppelte Dateien finden (nur anzeigen; zeigt auch Kopien auf anderen Geräten) |
+| `photos [ordner] [--before <cursor>]` / `photos --months` | Foto-Zeitachse: Bilder und Videos nach Aufnahmezeit |
 | `settings` / `settings set <name> <wert>` / `settings reset <name>` | Grenzen sofort ändern (ohne Neustart) |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
@@ -258,6 +259,16 @@ core/src
 - `dupes` findet inhaltsgleiche Dateien in drei Stufen: gleiche Größe, gleicher Anfang, gleicher
   BLAKE3-Hash. Hashes werden zwischengespeichert, ein zweiter Lauf liest nichts neu. Angezeigt wird
   auch, auf welchen gekoppelten Geräten derselbe Inhalt liegt. Gelöscht wird nichts automatisch.
+
+### Foto-Zeitachse
+
+- `photos` zeigt alle Bilder und Videos der indexierten Orte nach Aufnahmezeit, neueste zuerst,
+  nach Tagen gruppiert, seitenweise (`--before <cursor>` für die nächste Seite). `photos ~/Bilder`
+  zeigt nur einen Ordner, `photos --months` die Anzahl je Monat.
+- Die Aufnahmezeit stammt aus EXIF; fehlt sie, gilt die Änderungszeit (markiert als „Dateizeit“).
+  Sie wird als lokale Uhrzeit gespeichert, wie die Kamera sie schreibt.
+- Die Zeitachse füllt sich im Hintergrund nach dem Indexieren und folgt Änderungen automatisch.
+  Versteckte Ordner wie `.thumbnails` bleiben außen vor.
 
 ### Einstellungen zur Laufzeit
 

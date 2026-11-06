@@ -307,6 +307,7 @@ impl Daemon {
         let uploads = tokio::spawn(crate::upload::run_worker(inner.clone()));
         let links = tokio::spawn(crate::links::run_cleanup(inner.clone()));
         let backups = tokio::spawn(crate::backup::run_scheduler(inner.clone()));
+        let photos = tokio::spawn(crate::photos::run_refresher(inner.clone()));
         let upload_rules = tokio::spawn(crate::upload::run_rules(inner.clone()));
         let streamer = match (stream, stream_listener) {
             (Some(s), Some(l)) => tokio::spawn(crate::stream::serve(s, l, Arc::downgrade(&inner))),
@@ -344,6 +345,7 @@ impl Daemon {
             upload_rules,
             links,
             backups,
+            photos,
         ]);
 
         Ok(daemon)

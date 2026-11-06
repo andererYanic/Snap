@@ -154,6 +154,8 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::LinkRevoke { .. }
         | Request::SpaceUsage { .. }
         | Request::Duplicates { .. }
+        | Request::Timeline { .. }
+        | Request::TimelineMonths { .. }
         | Request::BackupCreate { .. }
         | Request::BackupConnect { .. }
         | Request::BackupList
