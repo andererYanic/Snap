@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -449,6 +449,18 @@ impl DatabaseManager {
                     state      TEXT    NOT NULL   -- 'pending' | 'approved' | 'rejected'
                 );
                 CREATE INDEX IF NOT EXISTS idx_approvals_state ON op_approvals(state, created_at);
+                ",
+            )?;
+        }
+        if version < 7 {
+            // Migration -> 7: Streaming-Cache (welche Blobs wann zuletzt gestreamt wurden).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS stream_cache (
+                    hash        TEXT    PRIMARY KEY,
+                    last_access INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_stream_access ON stream_cache(last_access);
                 ",
             )?;
         }
@@ -1505,6 +1517,29 @@ impl DatabaseManager {
             .into_iter()
             .filter(|d| d.name == q || by_id.as_deref().is_some_and(|p| d.node_id.starts_with(p)))
             .collect())
+    }
+
+    /// Merkt sich, dass ein Blob gerade gestreamt wird (für die Cache-Grenze).
+    pub fn touch_stream(&self, hash: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO stream_cache (hash, last_access) VALUES (?1, ?2)
+             ON CONFLICT(hash) DO UPDATE SET last_access = excluded.last_access",
+            params![hash, now_unix()],
+        )?;
+        Ok(())
+    }
+
+    /// Gestreamte Blobs, älteste zuerst.
+    pub fn stream_entries(&self) -> Result<Vec<String>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached("SELECT hash FROM stream_cache ORDER BY last_access")?;
+        let rows = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
+    pub fn remove_stream(&self, hash: &str) -> Result<()> {
+        self.conn().execute("DELETE FROM stream_cache WHERE hash = ?1", params![hash])?;
+        Ok(())
     }
 
     /// Legt eine wartende Fernoperation an (Massenschutz). Gibt die Nummer zurück.

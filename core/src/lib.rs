@@ -15,8 +15,10 @@ pub mod network;
 pub mod pairing;
 pub mod pins;
 pub mod remote_ops;
+pub mod remote_thumbs;
 pub mod secure_fs;
 pub mod shares;
+pub mod stream;
 pub mod sync;
 pub mod worker;
 

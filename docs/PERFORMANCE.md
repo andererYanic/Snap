@@ -237,3 +237,27 @@ nicht überspringen. Bei einer Galerie mit 1 000 neuen Fotos sind das etwa 35 s 
 - Vorschaubilder bereits beim Indexieren im Hintergrund erzeugen (erst ab einer Galerie in der
   Oberfläche sinnvoll; Akku auf Mobile beachten).
 - Mehr parallele Decodierungen wären möglich, solange der speichersparende JPEG-Weg greift.
+
+## Review 10 – Streaming (2026-11-06)
+
+Messung (`streaming`, Release, zwei Daemons über Loopback-QUIC): 64-MiB-Videodatei auf dem
+PC, abgespielt vom Handy über den lokalen HTTP-Server.
+
+| Messung | Wert |
+|---|---|
+| Spulen in die Mitte → erstes Byte (nicht im Cache) | **6–7 ms** |
+| Abspielen am Stück, nicht im Cache | 101 → **111 MB/s** (≈ 900 Mbit/s; 4K-Video braucht ~6 MB/s) |
+| Abspielen am Stück, aus dem Streaming-Cache | **322–327 MB/s**, erstes Byte < 1 ms |
+| Übertragung beim Spulen | nur der angefragte Bereich (im Test < 50 % der Datei) |
+
+**Maßnahme:** adaptives Vorausladen. Das erste Fenster ist 1 MiB groß, damit Spulen schnell
+startet; bei durchgehendem Abspielen verdoppelt es sich bis 16 MiB. Auf Loopback bringt das
+wenig, weil dort die Übertragung selbst begrenzt (QUIC, bao-Prüfung, Schreiben in den Store).
+Über das Internet spart es je 16 MiB fünfzehn Umläufe.
+
+**Offen:**
+
+- Die Cache-Grenze wird alle 10 min durchgesetzt; ein sehr großer Film kann sie bis dahin
+  kurz überschreiten.
+- Die Größe zu bestimmen kostet beim ersten Abruf einen Umlauf. Bei Dateien aus dem Katalog
+  wäre sie bekannt, muss aber trotzdem verifiziert werden.

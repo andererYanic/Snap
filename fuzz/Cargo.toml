@@ -79,3 +79,10 @@ path = "fuzz_targets/media.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "stream_range"
+path = "fuzz_targets/stream_range.rs"
+test = false
+doc = false
+bench = false

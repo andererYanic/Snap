@@ -179,6 +179,8 @@ enum Commands {
     },
     /// Metadaten anzeigen (Aufnahmedatum, Kamera, GPS, Dauer, Titel …)
     Meta { path: PathBuf },
+    /// Lokale Abspiel-Adresse für eine Datei (auch von anderen Geräten), z. B. `mpv $(space-daemon stream Film.mkv)`
+    Stream { target: String },
 }
 
 #[derive(Subcommand)]
@@ -201,6 +203,12 @@ enum RemoteAction {
     },
     /// Ordner anlegen: mkdir Freigabe/pfad/neu
     Mkdir { path: String },
+    /// Vorschaubild einer Datei des Geräts (braucht dort files.read)
+    Thumb {
+        path: String,
+        #[arg(long)]
+        large: bool,
+    },
     /// In den Papierkorb des Geräts (mit --permanent endgültig, braucht files.purge)
     Rm {
         #[arg(required = true)]
@@ -260,6 +268,7 @@ fn remote_op(action: RemoteAction) -> Result<RemoteOp> {
             let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
             RemoteOp::Mkdir { share, parent: parent.to_string(), name: name.to_string() }
         }
+        RemoteAction::Thumb { .. } => anyhow::bail!("intern: Vorschaubild ist keine Dateioperation"),
         RemoteAction::Rm { paths, permanent } => {
             let (share, paths) = same_share(&paths)?;
             if permanent {
@@ -510,6 +519,11 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Request::TrashPurge { id: trash_id(&config.socket_path, &entry).await? }
         }
         Commands::Trash { action: Some(TrashAction::Empty) } => Request::TrashEmpty,
+        Commands::Remote { device, action: RemoteAction::Thumb { path, large } } => {
+            let (share, path) = split_share(&path);
+            let size = if large { space_core::media::ThumbSize::Large } else { space_core::media::ThumbSize::Small };
+            Request::RemoteThumbnail { device, share, path, size }
+        }
         Commands::Remote { device, action } => Request::RemoteOp { device, op: remote_op(action)? },
         Commands::Ops { action: None | Some(OpsAction::Pending) } => Request::OpsPending,
         Commands::Ops { action: Some(OpsAction::Approve { id }) } => Request::OpsApprove { id },
@@ -519,6 +533,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             size: if large { space_core::media::ThumbSize::Large } else { space_core::media::ThumbSize::Small },
         },
         Commands::Meta { path } => Request::Metadata { path: absolute(&path)? },
+        Commands::Stream { target } => Request::StreamUrl { target },
         Commands::Watch => return watch(&config.socket_path).await,
     };
 
@@ -801,6 +816,7 @@ fn print_response(res: Response) -> ExitCode {
             println!("{watched_dirs} Ordner werden live beobachtet.");
         }
         Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
+        Response::StreamUrl(s) => println!("{}", s.url),
         Response::Thumbnail(t) => {
             println!("{}", t.path.display());
             println!("{} × {} px{}", t.width, t.height, if t.cached { " (aus dem Cache)" } else { "" });
