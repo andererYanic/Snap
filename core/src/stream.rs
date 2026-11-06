@@ -146,7 +146,7 @@ impl StreamServer {
     /// Gibt eine Adresse für einen Blob aus.
     pub fn issue(&self, hash: Hash, name: &str, sources: Vec<iroh::EndpointAddr>) -> StreamInfo {
         let mut token = [0u8; 32];
-        getrandom::getrandom(&mut token).expect("Zufallszahlen des Betriebssystems");
+        getrandom::fill(&mut token).expect("Zufallszahlen des Betriebssystems");
         let token = data_encoding::HEXLOWER.encode(&token);
         let safe = crate::api::transfer::sanitize_file_name(name);
         let mime = mime_for(&safe).to_string();

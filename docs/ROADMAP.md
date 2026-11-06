@@ -91,7 +91,7 @@ Abstriche bei der Sicherheit.
 - [x] **Fuzzing** (`fuzz/`): Einladungscodes, Ledger-Einträge, IPC-Frames, Pfad-/Namensprüfung – Kurzlauf je PR, 20 min nächtlich. Neue Parser bekommen ein Ziel.
 - [x] **Sichere Standardwerte** für fremde Umgebungen prüfen: Mehrbenutzer-Rechner, Betrieb als root/Docker, fehlendes `$XDG_RUNTIME_DIR`, Netzwerk-Dateisysteme (Ergebnis: `docs/SECURITY_MODEL.md`, Warnung bei Datenordner auf Netzwerk-Dateisystem).
 - [x] **`unsafe`-Audit**: 6 libc-Aufrufe, alle begründet und per Lint erzwungen; ein Fehler (Terminal-Wiederherstellung) behoben.
-- [ ] **Abhängigkeits-Review** über `cargo audit`/`cargo deny` hinaus (Umfang, Pflege, Alternativen).
+- [x] **Abhängigkeits-Review** über `cargo audit`/`cargo deny` hinaus: `docs/DEPENDENCIES.md` (offen: `rusqlite`-Update).
 - [ ] **Signierte Releases**, reproduzierbare Builds, SBOM.
 - [ ] Unabhängiges **Sicherheits-Review** (zweites Augenpaar) vor Version 1.0.
 

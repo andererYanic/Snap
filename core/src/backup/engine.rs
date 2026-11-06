@@ -186,7 +186,7 @@ pub async fn backup(
     let info = SnapshotInfo {
         id: data_encoding::HEXLOWER.encode(&{
             let mut b = [0u8; 8];
-            getrandom::getrandom(&mut b).map_err(|e| anyhow::anyhow!("Zufall: {e}"))?;
+            getrandom::fill(&mut b).map_err(|e| anyhow::anyhow!("Zufall: {e}"))?;
             b
         }),
         time: started,
