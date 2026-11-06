@@ -152,6 +152,59 @@ pub(crate) fn index_rescan(inner: &DaemonInner) -> Result<Response> {
     Ok(Response::Success { message: "Abgleich der indexierten Orte gestartet.".into() })
 }
 
+pub(crate) async fn space_usage(inner: &Arc<DaemonInner>, path: PathBuf, limit: u32) -> Result<Response> {
+    let svc = service(inner)?;
+    if !path.is_absolute() {
+        api_bail!(InvalidInput, "Pfad muss absolut sein: {}", path.display());
+    }
+    let limit = if limit == 0 { 30 } else { limit as usize };
+    let usage = tokio::task::spawn_blocking(move || crate::analysis::space_usage(&svc.index, &path, limit)).await??;
+    Ok(Response::SpaceUsage(usage))
+}
+
+pub(crate) async fn duplicates(
+    inner: &Arc<DaemonInner>,
+    path: Option<PathBuf>,
+    min_size: Option<u64>,
+    limit: u32,
+) -> Result<Response> {
+    let svc = service(inner)?;
+    if let Some(p) = &path {
+        if !p.is_absolute() {
+            api_bail!(InvalidInput, "Pfad muss absolut sein: {}", p.display());
+        }
+    }
+    let min = min_size.unwrap_or(crate::analysis::DEFAULT_MIN_DUP_SIZE);
+    let limit = if limit == 0 { 200 } else { limit as usize };
+    let events = inner.db.events().clone();
+    let mut report = tokio::task::spawn_blocking(move || {
+        let mut last = std::time::Instant::now();
+        crate::analysis::duplicates(&svc.index, path.as_deref(), min, limit, |done, total| {
+            if last.elapsed() >= std::time::Duration::from_millis(500) {
+                last = std::time::Instant::now();
+                events.emit(crate::events::Event::DuplicateScanProgress { done_bytes: done, total_bytes: total });
+            }
+        })
+    })
+    .await??;
+    // Wo liegt derselbe Inhalt noch? (Katalog der gekoppelten Geräte)
+    let devices = inner.db.list_devices()?;
+    let me = inner.self_id();
+    for g in &mut report.groups {
+        let mut names: Vec<String> = inner
+            .db
+            .find_remote_by_hash_prefix(&g.hash, &me)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| devices.iter().find(|d| d.node_id == f.origin).map(|d| d.name.clone()).unwrap_or(f.origin))
+            .collect();
+        names.sort();
+        names.dedup();
+        g.other_devices = names;
+    }
+    Ok(Response::Duplicates(report))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

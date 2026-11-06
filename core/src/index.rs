@@ -297,6 +297,7 @@ impl Writer<'_> {
              SELECT 'delete', n.id, n.name FROM nodes n WHERE n.id IN sub AND n.parent IS NOT NULL"
         ))?
         .execute(params![id])?;
+        conn.prepare_cached(&format!("{SUB} DELETE FROM hashes WHERE node_id IN sub"))?.execute(params![id])?;
         let n = conn.prepare_cached(&format!("{SUB} DELETE FROM nodes WHERE id IN sub"))?.execute(params![id])?;
         self.tick()?;
         Ok(n as u64)
@@ -332,6 +333,14 @@ impl LocalIndex {
             CREATE INDEX IF NOT EXISTS idx_nodes_root ON nodes(root_id, parent);
             -- Nur Ordner: Abstieg beim Abgleich ohne die (vielen) Dateien zu lesen.
             CREATE INDEX IF NOT EXISTS idx_nodes_dirs ON nodes(parent, stamp) WHERE kind = 1;
+            -- Inhalts-Hashes für die Duplikatsuche (gültig, solange Größe und mtime passen).
+            CREATE TABLE IF NOT EXISTS hashes (
+                node_id INTEGER PRIMARY KEY,
+                size    INTEGER NOT NULL,
+                mtime   INTEGER NOT NULL,
+                head    TEXT,
+                full    TEXT
+            );
             CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
                 name, content='nodes', content_rowid='id', tokenize='trigram'
             );
@@ -346,6 +355,39 @@ impl LocalIndex {
         }
         let home = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf());
         Ok(Self { writer: Mutex::new(conn), readers, next: AtomicUsize::new(0), excluded_paths, home })
+    }
+
+    /// Lesende Verbindung (für Auswertungen wie Speicheranalyse und Duplikate).
+    pub(crate) fn reader(&self) -> MutexGuard<'_, Connection> {
+        self.r()
+    }
+
+    pub(crate) fn writer(&self) -> MutexGuard<'_, Connection> {
+        self.w()
+    }
+
+    /// Knoten eines indexierten Ordners (`None`, wenn der Pfad in keinem Ort liegt oder
+    /// (noch) nicht indexiert ist).
+    pub fn find_dir(&self, path: &Path) -> Result<Option<i64>> {
+        let roots = self.roots()?;
+        let Some(root) = roots.iter().filter(|r| r.enabled && path.starts_with(&r.path)).max_by_key(|r| r.path.len())
+        else {
+            return Ok(None);
+        };
+        let conn = self.r();
+        let mut node: Option<i64> = conn
+            .prepare_cached("SELECT id FROM nodes WHERE root_id = ?1 AND parent IS NULL")?
+            .query_row(params![root.id], |r| r.get(0))
+            .optional()?;
+        let rel = path.strip_prefix(&root.path).unwrap_or(Path::new(""));
+        for comp in rel.components() {
+            let (Some(n), Some(name)) = (node, comp.as_os_str().to_str()) else { return Ok(None) };
+            node = conn
+                .prepare_cached("SELECT id FROM nodes WHERE parent = ?1 AND name = ?2 AND kind = 1")?
+                .query_row(params![n, name], |r| r.get(0))
+                .optional()?;
+        }
+        Ok(node)
     }
 
     fn w(&self) -> MutexGuard<'_, Connection> {
@@ -398,6 +440,10 @@ impl LocalIndex {
         conn.execute(
             "INSERT INTO nodes_fts(nodes_fts, rowid, name)
              SELECT 'delete', id, name FROM nodes WHERE root_id = ?1 AND parent IS NOT NULL",
+            params![root_id],
+        )?;
+        conn.execute(
+            "DELETE FROM hashes WHERE node_id IN (SELECT id FROM nodes WHERE root_id = ?1)",
             params![root_id],
         )?;
         conn.execute("DELETE FROM nodes WHERE root_id = ?1", params![root_id])?;
@@ -759,7 +805,7 @@ impl LocalIndex {
     }
 
     /// Rekonstruiert den vollständigen Pfad eines Eintrags über die Elternkette.
-    fn path_of(conn: &Connection, id: i64, cache: &mut HashMap<i64, String>) -> Result<String> {
+    pub(crate) fn path_of(conn: &Connection, id: i64, cache: &mut HashMap<i64, String>) -> Result<String> {
         let mut chain: Vec<(i64, String)> = Vec::new();
         let mut cur = Some(id);
         let mut base: Option<String> = None;

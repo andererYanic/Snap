@@ -307,3 +307,20 @@ Jetzt werden nur neue Downloads abgewiesen.
 - Dateien über 5 GB brauchen mehrteiliges Hochladen (S3 Multipart).
 - Browser ohne direktes Schreiben auf die Platte (Firefox, Safari) halten große Dateien im
   Speicher. Ein Service Worker könnte das streamen.
+
+## Review 13 – Speicheranalyse & Duplikate (2026-11-06)
+
+Messung (`storage_analysis`, Release).
+
+| Messung | Vorher | Nachher | Maßnahme |
+|---|---|---|---|
+| Speicheranalyse über 1,1 Mio. Einträge | 1,85 s | **0,57 s** | Rekursion nur über Ordner (Teilindex), Dateien je Ordner direkt |
+| Speicheranalyse eines Ordners mit 10 000 Dateien | 109 ms | **43 ms** | ebenso |
+| Duplikate: 1 000 Dateien à 256 KB, erster Lauf | – | 0,38 s (850 MB/s gelesen) | Größe → Anfang (64 KiB) → BLAKE3; nur Kandidaten werden gelesen |
+| Duplikate: zweiter Lauf | – | 0,12 s, 0 Bytes gelesen | Hash-Cache im Index (gültig, solange Größe und mtime passen) |
+
+Die Speicheranalyse ist keine Abfrage pro Tastendruck. Die Oberfläche sollte sie trotzdem im
+Hintergrund mit Ladeanzeige ausführen, denn bei 1 Mio. Dateien liegt sie über der 16-ms-Grenze.
+
+**Offen:** Ordnergrößen könnten beim Indexieren fortlaufend mitgeführt werden; dann wäre die
+Analyse sofort da, kostet aber Schreibarbeit bei jeder Änderung.

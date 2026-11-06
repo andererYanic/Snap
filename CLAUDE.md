@@ -20,3 +20,5 @@
   mergen, sobald die CI auf dem aktuellen Stand vollständig grün ist (Merge-Commit, keine
   Umschreibung der Historie). Die Pflicht, sicherheitsrelevante Designs vorher vorzulegen,
   bleibt davon unberührt.
+- **Arbeitsweise (Wunsch des Nutzers vom 2026-11-06):** Selbstständig Phase für Phase weiterarbeiten,
+  bis eine Entscheidung des Nutzers nötig ist (z. B. sicherheitsrelevantes Design); dann gebündelt fragen.

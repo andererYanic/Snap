@@ -89,6 +89,11 @@ pub enum Event {
         state: String,
         message: String,
     },
+    /// Fortschritt der Duplikatsuche (höchstens 2× pro Sekunde).
+    DuplicateScanProgress {
+        done_bytes: u64,
+        total_bytes: u64,
+    },
     /// Eine Einstellung wurde zur Laufzeit geändert.
     SettingChanged {
         key: String,

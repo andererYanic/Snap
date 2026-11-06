@@ -191,6 +191,24 @@ enum Commands {
         #[command(subcommand)]
         action: Option<LinksAction>,
     },
+    /// Speicheranalyse: was belegt wie viel Platz (indexierte Ordner)
+    Usage {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Anzahl Unterordner/Dateien
+        #[arg(short, long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Doppelte Dateien finden (nur anzeigen; löschen mit `rm`)
+    Dupes {
+        /// Nur in diesem Ordner (Standard: alle indexierten Orte)
+        path: Option<PathBuf>,
+        /// Mindestgröße in MB
+        #[arg(long, default_value_t = 1.0)]
+        min_mb: f64,
+        #[arg(short, long, default_value_t = 50)]
+        limit: u32,
+    },
     /// Grenzen anzeigen und sofort ändern (ohne Neustart)
     Settings {
         #[command(subcommand)]
@@ -708,6 +726,12 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                 },
             })
         }
+        Commands::Usage { path, limit } => Request::SpaceUsage { path: absolute(&path)?, limit },
+        Commands::Dupes { path, min_mb, limit } => Request::Duplicates {
+            path: path.map(|p| absolute(&p)).transpose()?,
+            min_size: Some((min_mb.max(0.0) * 1e6) as u64),
+            limit,
+        },
         Commands::Settings { action: None | Some(SettingsAction::List) } => Request::Settings,
         Commands::Settings { action: Some(SettingsAction::Set { key, value }) } => {
             Request::SettingSet { key, value: Some(value) }
@@ -819,6 +843,9 @@ fn describe_event(e: &Event) -> String {
             format!("🛑 Gerät {} möchte: {summary} – bestätigen mit: space-daemon ops approve {id}", short(node_id, 10))
         }
         Event::UploadChanged { id, state, message } => format!("⬆️  Upload {id}: {state} {message}"),
+        Event::DuplicateScanProgress { done_bytes, total_bytes } => {
+            format!("🔍 Duplikatsuche: {} von {}", human_size(*done_bytes), human_size(*total_bytes))
+        }
         Event::SettingChanged { key, value } => format!("⚙️  Einstellung {key} = {value}"),
         Event::Lagged { missed } => format!("⚠️  {missed} Ereignisse verpasst"),
     }
@@ -998,6 +1025,44 @@ fn print_response(res: Response) -> ExitCode {
         }
         Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
         Response::StreamUrl(s) => println!("{}", s.url),
+        Response::SpaceUsage(u) => {
+            println!("📊 {}  –  {} in {} Dateien", u.path, human_size(u.total), u.files);
+            let bar = |size: u64| {
+                let n = if u.total == 0 { 0 } else { (size as f64 / u.total as f64 * 30.0).round() as usize };
+                format!("{:<30}", "█".repeat(n))
+            };
+            for c in &u.children {
+                println!("{} {:>10}  {}{}", bar(c.size), human_size(c.size), c.name, if c.is_dir { "/" } else { "" });
+            }
+            println!("\nNach Typ:");
+            for t in &u.by_type {
+                println!("  {:<14} {:>10}  ({} Dateien)", t.category, human_size(t.size), t.files);
+            }
+            println!("\nGrößte Dateien:");
+            for f in u.largest.iter().take(10) {
+                println!("  {:>10}  {}", human_size(f.size), f.path);
+            }
+        }
+        Response::Duplicates(r) => {
+            if r.groups.is_empty() {
+                println!("Keine Duplikate gefunden ({} Kandidaten geprüft).", r.candidates);
+            }
+            for g in &r.groups {
+                println!("🔁 {} × {}  (frei werdend: {})", g.paths.len(), human_size(g.size), human_size(g.wasted));
+                for p in &g.paths {
+                    println!("     {p}");
+                }
+                if !g.other_devices.is_empty() {
+                    println!("     auch auf: {}", g.other_devices.join(", "));
+                }
+            }
+            if !r.groups.is_empty() {
+                println!(
+                    "\nInsgesamt {} durch Duplikate belegt. Entfernen: space-daemon rm <pfad> (Papierkorb)",
+                    human_size(r.wasted)
+                );
+            }
+        }
         Response::Link(l) => {
             if l.state == "revoked" {
                 println!("🚫 Link {} widerrufen – die verschlüsselte Kopie wurde gelöscht.", short(&l.id, 8));

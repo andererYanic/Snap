@@ -186,6 +186,8 @@ mod permissions {
             Request::UploadRuleAdd { path: "/etc".into(), device: "x".into(), share: "F".into(), dest_dir: "".into() },
             Request::UploadRuleList,
             Request::LinkList,
+            Request::SpaceUsage { path: "/".into(), limit: 10 },
+            Request::Duplicates { path: None, min_size: None, limit: 10 },
             Request::LinkRevoke { id: "abcd".into() },
             Request::LinkCreate { path: "/etc/passwd".into(), days: None, max_downloads: None, password: None },
             Request::UploadRuleRemove { id: 1 },
