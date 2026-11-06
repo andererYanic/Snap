@@ -9,6 +9,7 @@ pub mod ledger;
 pub mod live;
 pub mod network;
 pub mod pairing;
+pub mod pins;
 pub mod secure_fs;
 pub mod shares;
 pub mod sync;

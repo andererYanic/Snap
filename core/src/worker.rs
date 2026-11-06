@@ -51,7 +51,10 @@ pub(crate) async fn run_pending_pin_worker(inner: Arc<DaemonInner>) {
 
 /// Arbeitet alle fälligen Aufträge ab. Ist ein Peer nicht erreichbar, werden
 /// seine übrigen Aufträge in dieser Runde übersprungen.
-pub(crate) async fn process_due_jobs(inner: &DaemonInner) -> bool {
+/// Gleichzeitig bearbeitete Aufträge.
+const PARALLEL_JOBS: usize = 8;
+
+pub(crate) async fn process_due_jobs(inner: &Arc<DaemonInner>) -> bool {
     let jobs = match inner.db.due_jobs(now_unix()) {
         Ok(j) => j,
         Err(e) => {
@@ -60,22 +63,30 @@ pub(crate) async fn process_due_jobs(inner: &DaemonInner) -> bool {
         }
     };
     let processed = !jobs.is_empty();
-    let mut unreachable: HashSet<String> = HashSet::new();
+    let unreachable: Arc<std::sync::Mutex<HashSet<String>>> = Arc::default();
+    let sem = Arc::new(tokio::sync::Semaphore::new(PARALLEL_JOBS));
+    let mut set = tokio::task::JoinSet::new();
     for job in jobs {
-        if unreachable.contains(&job.peer_id) {
+        let Ok(permit) = sem.clone().acquire_owned().await else { break };
+        if unreachable.lock().unwrap().contains(&job.peer_id) {
             continue;
         }
-        if let Err(e) = process_job(inner, &job, &mut unreachable).await {
-            tracing::error!("Auftrag {} fehlgeschlagen: {e:#}", job.id);
-        }
+        let (inner, unreachable) = (inner.clone(), unreachable.clone());
+        set.spawn(async move {
+            let _permit = permit;
+            if let Err(e) = process_job(&inner, &job, &unreachable).await {
+                tracing::error!("Auftrag {} fehlgeschlagen: {e:#}", job.id);
+            }
+        });
     }
+    while set.join_next().await.is_some() {}
     processed
 }
 
 pub(crate) async fn process_job(
     inner: &DaemonInner,
     job: &PendingJob,
-    unreachable: &mut HashSet<String>,
+    unreachable: &std::sync::Mutex<HashSet<String>>,
 ) -> Result<()> {
     let ticket: BlobTicket = match job.ticket.parse() {
         Ok(t) => t,
@@ -84,14 +95,24 @@ pub(crate) async fn process_job(
             return Ok(());
         }
     };
-    match inner.network.fetch(&ticket).await {
+    let (fetched, _source) = crate::api::transfer::fetch_with_fallback(inner, &ticket).await;
+    match fetched {
         Ok(temp) => {
-            inner.db.mark_peer_online(&job.peer_id)?;
             let output = PathBuf::from(&job.output_path);
+            let is_pin = job.action == "PIN";
+            if is_pin && !crate::pins::may_write_pin(inner, &output) {
+                // Seit dem Einreihen lokal verändert (oder durch einen Link ersetzt): nie überschreiben.
+                inner.db.pinned_mark_conflict(&job.output_path)?;
+                inner.db.job_failed(job.id, "Konflikt: Die lokale Kopie wurde verändert – nicht überschrieben")?;
+                return Ok(());
+            }
             let res = finalize_output(inner, ticket.hash(), &output, job.explicit_output, job.force).await;
             drop(temp);
             match res {
                 Ok(path) => {
+                    if is_pin {
+                        crate::pins::record_written(inner, &path, &job.target_hash)?;
+                    }
                     inner.db.complete_job(job.id)?;
                     tracing::info!("✅ Hintergrund-Download abgeschlossen: {}", path.display());
                 }
@@ -104,7 +125,7 @@ pub(crate) async fn process_job(
         Err(e) if e.is_retryable() => {
             let next = inner.db.mark_peer_unreachable(&job.peer_id, true)?;
             inner.db.job_attempt_failed(job.id, &e.to_string())?;
-            unreachable.insert(job.peer_id.clone());
+            unreachable.lock().unwrap().insert(job.peer_id.clone());
             tracing::info!(
                 "Peer {} weiterhin nicht erreichbar – nächster Versuch in {} s",
                 short(&job.peer_id),

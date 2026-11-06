@@ -102,7 +102,10 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::ShareAdd { .. }
         | Request::ShareList
         | Request::ShareRemove { .. }
-        | Request::ShareRescan { .. } => Capability::Admin,
+        | Request::ShareRescan { .. }
+        | Request::PinAdd { .. }
+        | Request::PinList
+        | Request::PinRemove { .. } => Capability::Admin,
     }
 }
 

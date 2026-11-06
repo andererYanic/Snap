@@ -53,6 +53,12 @@ pub enum Event {
         deleted: usize,
         total: usize,
     },
+    /// Pins wurden abgeglichen (neue Downloads, entfernte Kopien, Konflikte).
+    PinsChanged {
+        queued: usize,
+        removed: usize,
+        conflicts: usize,
+    },
     /// Rechte eines Geräts wurden geändert.
     GrantsChanged {
         node_id: String,

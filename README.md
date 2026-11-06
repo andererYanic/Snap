@@ -48,6 +48,8 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `sync` | Sofort mit allen gekoppelten Geräten abgleichen |
 | `share add <ordner> [--name N] [--devices a,b]` | Ordner freigeben (ohne `--devices`: alle gekoppelten, auch künftige Geräte) |
 | `share list` / `share remove <name>` / `share rescan [name]` | Freigaben verwalten |
+| `pin add <Freigabe[/pfad]>` (eindeutig: `Gerät:Freigabe/pfad`) | Ordner eines anderen Geräts offline verfügbar halten (`~/Snap/<Gerät>/…`) |
+| `pin list` / `pin remove <id>` | Pins mit Fortschritt, Konflikten, Platzbedarf |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
 | `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
@@ -92,6 +94,7 @@ core/src
   sync.rs        Ledger-Abgleich (auf Anfrage, Hintergrund, periodisch)
   shares.rs      Ordner-Freigaben: Scanner, Watcher, Import per Referenz
   live.rs        Live-Verbindungen (snap/live/1): Hinweise, Status, Wiederverbindung
+  pins.rs        Smart-Pinning: Abgleich, sichere Zielpfade, Konflikte, Kontingent
   pairing.rs     Einmal-Codes, Pairing-Protokoll (snap/pair/1)
   ledger.rs      signierte Dateilisten, Abgleich per Versionsvektor (snap/ledger/1)
   database.rs    SQLite: files, pending_pins, peer_status, devices, ledger_entries, peer_addrs
@@ -120,6 +123,17 @@ core/src
 - **Symlinks werden nie verfolgt**; temporäre und Systemdateien werden ignoriert.
 - Im Ledger stehen Freigabe-Name und Pfad **relativ** zur Freigabe – nie absolute Pfade.
 - Andere Geräte laden per `download Fotos/2024/strand.jpg`.
+
+### Smart-Pinning (offline verfügbar)
+
+- `pin add Fotos/2024` spiegelt den Ordner nach `~/Snap/<Gerät>/Fotos/2024/…` und hält ihn
+  aktuell: neue, geänderte und gelöschte Dateien folgen automatisch (über die Warteschlange –
+  Offline-Phasen werden nachgeholt).
+- **Lokal veränderte Kopien werden nie überschrieben oder gelöscht** (Konflikt in `pin list`).
+- **Mehrere Quellen:** Ist das Ursprungsgerät aus, wird jedes andere Gerät versucht, das denselben
+  Inhalt anbietet – z. B. ein Server, der seinen `~/Snap`-Ordner freigibt.
+- Sicherheit: Zielpfade werden streng geprüft, es wird nie durch Symlinks geschrieben.
+- `pin_dir` und Kontingent `pin_max_gb` in der Konfiguration.
 
 ### Live-Verbindungen
 

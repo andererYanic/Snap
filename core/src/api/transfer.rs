@@ -156,11 +156,9 @@ pub(crate) async fn download(
 
     let peer = ticket.addr().id;
     let is_self = peer == inner.network.node_id();
-    match inner.network.fetch(&ticket).await {
+    let (fetched, _source) = fetch_with_fallback(inner, &ticket).await;
+    match fetched {
         Ok(temp) => {
-            if !is_self {
-                inner.db.mark_peer_online(&peer.to_string())?;
-            }
             let final_path = finalize_output(inner, ticket.hash(), &output_path, explicit, force).await;
             drop(temp);
             Ok(Response::Downloaded { path: final_path? })
@@ -173,6 +171,7 @@ pub(crate) async fn download(
             let hash_hex = ticket.hash().to_string();
             let reason = e.to_string();
             let (job_id, already_queued) = inner.db.enqueue_download(&NewJob {
+                action: "DOWNLOAD",
                 target_hash: &hash_hex,
                 ticket: &ticket_str,
                 peer_id: &peer_str,
@@ -276,6 +275,63 @@ pub(crate) fn numbered(path: &Path, n: u32) -> PathBuf {
         None => format!("{stem} ({n})"),
     };
     path.with_file_name(name)
+}
+
+/// Holt einen Blob beim Anbieter aus dem Ticket. Ist dieser nicht erreichbar, werden andere
+/// Geräte versucht, die laut Ledger denselben Inhalt (gleicher Hash) anbieten – zuerst die
+/// zuletzt erreichbaren. Ob ein Gerät liefert, entscheidet es selbst (Rechte).
+/// Rückgabe: Ergebnis und Node-ID der tatsächlichen Quelle.
+pub(crate) async fn fetch_with_fallback(
+    inner: &DaemonInner,
+    ticket: &BlobTicket,
+) -> (Result<iroh_blobs::api::TempTag, FetchError>, String) {
+    let primary = ticket.addr().id.to_string();
+    let is_self = ticket.addr().id == inner.network.node_id();
+    let first = inner.network.fetch(ticket).await;
+    match &first {
+        Ok(_) => {
+            if !is_self {
+                let _ = inner.db.mark_peer_online(&primary);
+            }
+            return (first, primary);
+        }
+        Err(e) if !e.is_retryable() => return (first, primary),
+        Err(_) => {}
+    }
+    let self_id = inner.self_id();
+    let hash_hex = ticket.hash().to_string();
+    let mut origins: Vec<String> = inner
+        .db
+        .find_remote_by_hash_prefix(&hash_hex, &self_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|f| f.origin)
+        .filter(|o| *o != primary)
+        .collect();
+    origins.sort();
+    origins.dedup();
+    let peers = inner.db.list_peers().unwrap_or_default();
+    origins.sort_by_key(|o| {
+        let p = peers.iter().find(|p| p.node_id == *o);
+        std::cmp::Reverse((p.is_some_and(|p| p.status == "online"), p.and_then(|p| p.last_seen).unwrap_or(0)))
+    });
+    for origin in origins {
+        let Ok(id) = origin.parse::<EndpointId>() else { continue };
+        let hints = inner.db.addr_hints(&origin).unwrap_or_default();
+        let alt = BlobTicket::new(endpoint_addr(id, &hints), ticket.hash(), BlobFormat::Raw);
+        match inner.network.fetch(&alt).await {
+            Ok(temp) => {
+                let _ = inner.db.mark_peer_online(&origin);
+                tracing::info!("Quelle {} nicht erreichbar – geladen von {}", &primary[..10], &origin[..10]);
+                return (Ok(temp), origin);
+            }
+            Err(e) if e.is_retryable() => {
+                let _ = inner.db.mark_peer_unreachable(&origin, false);
+            }
+            Err(_) => {} // kein Recht oder Inhalt nicht (mehr) vorhanden
+        }
+    }
+    (first, primary)
 }
 
 #[cfg(test)]

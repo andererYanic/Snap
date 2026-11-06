@@ -26,8 +26,8 @@ Messungen: `cargo test --release -p space-core --test perf -- --ignored --nocapt
 | ~~`remote_files` lädt alle Einträge~~ | erledigt in Review 2 (`Browse` mit Cursor) | ✅ |
 | Publish 260–290 µs/Datei (2 Commits + Signatur) | Beim Ordner-Import Stapelverarbeitung in einer Transaktion | Phase 1 |
 | ~~Publish kopiert die Datei in den Blob-Store~~ | Freigaben importieren per Referenz (Review 4); Einzel-`publish` kopiert weiterhin (sicherer, da nicht beobachtet) | ✅ teilweise |
-| Jeder Download öffnet eine neue QUIC-Verbindung | bei vielen kleinen Dateien teuer → Verbindungs-Pool/Downloader von iroh-blobs | Phase 1 |
-| Warteschlangen-Worker arbeitet seriell | bei Ordner-Sync parallel pro Peer mit Limit | Phase 1 |
+| ~~Jeder Download öffnet eine neue QUIC-Verbindung~~ | Verbindungen je Gerät werden wiederverwendet (Review 6) | ✅ |
+| ~~Warteschlangen-Worker arbeitet seriell~~ | bis zu 8 Aufträge parallel (Review 6) | ✅ |
 | Export kopiert den Blob ein zweites Mal | Reflink/Hardlink wo möglich | Phase 1 |
 | Hashes als 64-Zeichen-Text in SQLite | 2× Platz ggü. BLOB(32); erst bei sehr großen Katalogen relevant | Phase 2 |
 | Synchrone SQLite-Aufrufe in async-Handlern | bei kurzen Abfragen unkritisch; lange Abfragen in `spawn_blocking` | laufend |
@@ -107,3 +107,20 @@ Rechteprüfung auch für ausgehende Verbindungen.
 
 **Offen:** Die Bündelung (300 ms) könnte für Einzeländerungen kürzer sein (adaptiv); der Abgleich
 selbst öffnet noch eine eigene Ledger-Verbindung statt die Live-Verbindung mitzunutzen.
+
+## Review 6 – Smart-Pinning (2026-11-05)
+
+Messung: Freigabe mit 2 000 Dateien (~300 B–1 KB) in 20 Ordnern, Handy pinnt die ganze Freigabe.
+
+| Messung | Erste Version | Nachher | Maßnahme |
+|---|---|---|---|
+| Erste Spiegelung | 4,9 s (2,5 ms/Datei) | **1,3 s** (0,66 ms/Datei) | Verbindung je Gerät wiederverwenden, 8 Aufträge parallel |
+| Einzeländerung auf dem PC → Kopie auf dem Handy | 3,3 s | **2,65 s** | Pin-Bündelung 1 s → 300 ms (2 s davon: Watcher-Bündelung beim PC) |
+
+**Warum das über das Internet noch wichtiger ist:** Vorher kostete jede Datei einen eigenen
+QUIC-Verbindungsaufbau (über Relais/WAN je ein bis mehrere Round-Trips). Jetzt teilen sich alle
+Dateien eines Geräts eine Verbindung.
+
+**Offen:** Der Pin-Abgleich prüft bei jeder Katalogänderung alle Einträge der Pins (Datenbank +
+`stat`); bei sehr großen Pins (100 000+ Dateien) wäre ein inkrementeller Abgleich nur der
+geänderten Einträge sinnvoll.
