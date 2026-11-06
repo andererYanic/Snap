@@ -137,7 +137,17 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::Thumbnail { .. }
         | Request::Metadata { .. }
         | Request::StreamUrl { .. }
-        | Request::RemoteThumbnail { .. } => Capability::Admin,
+        | Request::RemoteThumbnail { .. }
+        // Einstellungen: nur lokal – ein Gerät darf sich keine größeren Grenzen geben.
+        | Request::Settings
+        | Request::SettingSet { .. }
+        | Request::Upload { .. }
+        | Request::UploadList
+        | Request::UploadCancel { .. }
+        | Request::UploadRetry
+        | Request::UploadRuleAdd { .. }
+        | Request::UploadRuleList
+        | Request::UploadRuleRemove { .. } => Capability::Admin,
     }
 }
 

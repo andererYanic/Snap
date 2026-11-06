@@ -109,6 +109,43 @@ pub(crate) async fn handle_request(
         Request::OpsApprove { id } => crate::remote_ops::approve(inner, id).await,
         Request::OpsReject { id } => crate::remote_ops::reject(inner, id),
         Request::StreamUrl { target } => crate::stream::stream_url(inner, &target),
+        Request::Settings => Ok(Response::Settings { items: inner.settings.list() }),
+        Request::Upload { device, share, dest_dir, path } => {
+            crate::upload::enqueue(inner, &device, &share, dest_dir.trim_matches('/'), &path, None)
+                .map(|id| Response::Success { message: format!("Upload {id} eingeplant.") })
+        }
+        Request::UploadList => inner.db.list_uploads(200).map(|items| Response::Uploads { items }),
+        Request::UploadCancel { id } => match inner.db.cancel_upload(id) {
+            Ok(true) => Ok(Response::Success { message: format!("Upload {id} entfernt.") }),
+            Ok(false) => Ok(Response::error(error::ErrorCode::NotFound, format!("Kein offener Upload {id}."))),
+            Err(e) => Err(e),
+        },
+        Request::UploadRetry => inner.db.retry_uploads(None).map(|n| {
+            inner.upload_notify.notify_one();
+            Response::Success { message: format!("{n} Upload(s) werden erneut versucht.") }
+        }),
+        Request::UploadRuleAdd { path, device, share, dest_dir } => {
+            fileops::upload_rule_add(inner, &path, &device, &share, &dest_dir)
+        }
+        Request::UploadRuleList => inner.db.upload_rules().map(|rules| Response::UploadRules { rules }),
+        Request::UploadRuleRemove { id } => match inner.db.remove_upload_rule(id) {
+            Ok(true) => {
+                inner.rules_notify.notify_one();
+                Ok(Response::Success { message: format!("Regel {id} entfernt.") })
+            }
+            Ok(false) => Ok(Response::error(error::ErrorCode::NotFound, format!("Keine Regel {id}."))),
+            Err(e) => Err(e),
+        },
+        Request::SettingSet { key, value } => inner.settings.set(&key, value).map(|info| {
+            if info.key == "thumb_cache_mb" {
+                inner.thumbs.set_max(inner.settings.thumb_cache_bytes());
+            }
+            if info.key == "pin_max_gb" {
+                inner.pin_notify.notify_one();
+            }
+            inner.db.events().emit(crate::events::Event::SettingChanged { key: info.key.clone(), value: info.value });
+            Response::Settings { items: inner.settings.list() }
+        }),
         Request::RemoteThumbnail { device, share, path, size } => {
             crate::remote_thumbs::fetch(inner, &device, &share, &path, size).await.map(Response::Thumbnail)
         }
@@ -192,6 +229,15 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::Thumbnail { .. } => "thumbnail",
         Request::Metadata { .. } => "metadata",
         Request::StreamUrl { .. } => "stream.url",
+        Request::Settings => "settings",
+        Request::SettingSet { .. } => "settings.set",
+        Request::Upload { .. } => "upload",
+        Request::UploadList => "upload.list",
+        Request::UploadCancel { .. } => "upload.cancel",
+        Request::UploadRetry => "upload.retry",
+        Request::UploadRuleAdd { .. } => "upload.rule.add",
+        Request::UploadRuleList => "upload.rule.list",
+        Request::UploadRuleRemove { .. } => "upload.rule.remove",
         Request::RemoteThumbnail { .. } => "thumb.remote",
     })
 }

@@ -347,14 +347,26 @@ pub struct Thumbnail {
 /// Cache für Vorschaubilder im privaten Datenordner.
 pub struct ThumbCache {
     dir: PathBuf,
-    max_bytes: u64,
+    max_bytes: AtomicU64,
     slots: std::sync::Arc<tokio::sync::Semaphore>,
     writes: AtomicU64,
 }
 
 impl ThumbCache {
     pub fn new(dir: PathBuf, max_bytes: u64) -> Self {
-        Self { dir, max_bytes, slots: std::sync::Arc::new(tokio::sync::Semaphore::new(2)), writes: AtomicU64::new(0) }
+        Self {
+            dir,
+            max_bytes: AtomicU64::new(max_bytes),
+            slots: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
+            writes: AtomicU64::new(0),
+        }
+    }
+
+    /// Neue Höchstgröße (Einstellung `thumb_cache_mb`); räumt sofort auf.
+    pub fn set_max(&self, max_bytes: u64) {
+        self.max_bytes.store(max_bytes, Ordering::Relaxed);
+        let dir = self.dir.clone();
+        std::thread::spawn(move || prune(&dir, max_bytes));
     }
 
     fn key(path: &Path, meta: &std::fs::Metadata, size: ThumbSize) -> String {
@@ -422,7 +434,7 @@ impl ThumbCache {
         .await??;
         // Gelegentlich aufräumen (älteste zuerst), damit der Cache begrenzt bleibt.
         if self.writes.fetch_add(1, Ordering::Relaxed) % 200 == 199 {
-            let (dir, max) = (self.dir.clone(), self.max_bytes);
+            let (dir, max) = (self.dir.clone(), self.max_bytes.load(Ordering::Relaxed));
             tokio::task::spawn_blocking(move || prune(&dir, max));
         }
         Ok(Thumbnail { path: target, width: w, height: h, cached: false })

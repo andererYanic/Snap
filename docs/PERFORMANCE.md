@@ -261,3 +261,24 @@ wenig, weil dort die Übertragung selbst begrenzt (QUIC, bao-Prüfung, Schreiben
   kurz überschreiten.
 - Die Größe zu bestimmen kostet beim ersten Abruf einen Umlauf. Bei Dateien aus dem Katalog
   wäre sie bekannt, muss aber trotzdem verifiziert werden.
+
+## Review 11 – Hochladen & Kamera-Upload (2026-11-06)
+
+Messung (`upload`, Release, zwei Daemons über Loopback-QUIC).
+
+| Messung | Vorher | Nachher |
+|---|---|---|
+| 64-MiB-Video hochladen | – | **0,3 s** (≈ 200 MB/s) |
+| 100 Fotos à 3 MB | > 5 min | **1,7 s** (17 ms/Foto, 172 MB/s) |
+| Neues Kamerafoto → auf dem PC | – | ~3,5 s (davon 3 s gewollte Wartezeit, bis die Kamera fertig geschrieben hat) |
+
+**Gefundener Fehler:** Die Warteschlange schlief nach jedem Stapel von 8 Aufträgen bis zu 30 s,
+obwohl noch Aufträge fällig waren. Jetzt holt sie sofort weitere und lädt bis zu 4 Dateien
+parallel hoch.
+
+**Offen:**
+
+- Das Ziel kopiert die Datei aus dem Blob-Store an den Zielort, der Inhalt liegt also kurz
+  doppelt auf der Platte. Ein Export per Referenz würde das vermeiden.
+- Vor jedem Versuch wird die Datei neu gehasht (bei großen Videos merklich). Hash, Größe und
+  mtime ließen sich zwischenspeichern.

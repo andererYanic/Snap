@@ -81,7 +81,34 @@ pub enum RemoteOp {
         share: String,
         paths: Vec<String>,
     },
+    /// Hochladen: Das Zielgerät holt den Inhalt `hash` (BLAKE3) vom Auftraggeber und legt ihn
+    /// als `dest_dir/name` ab (Recht `files.write`). Fehlende Ordner werden angelegt.
+    Import {
+        share: String,
+        dest_dir: String,
+        name: String,
+        hash: String,
+        size: u64,
+        #[serde(default = "keep_both")]
+        conflict: Conflict,
+    },
 }
+
+fn keep_both() -> Conflict {
+    Conflict::KeepBoth
+}
+
+/// Hash aus fremder Eingabe: nur genau 64 Hex-Zeichen. `Hash::from_str` aus iroh-blobs stürzt
+/// bei 64 Zeichen mit Mehrbyte-Unicode ab (Panic in data-encoding; gefunden per Fuzzing).
+pub fn parse_hash_hex(s: &str) -> Option<iroh_blobs::Hash> {
+    if s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// Größte Datei, die hochgeladen werden kann.
+pub const MAX_IMPORT_BYTES: u64 = 1 << 40;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -98,11 +125,14 @@ pub struct OpsReply {
     pub message: String,
     #[serde(default)]
     pub approval_id: Option<i64>,
+    /// Ergebnis (z. B. Pfad der hochgeladenen Datei relativ zur Freigabe).
+    #[serde(default)]
+    pub result: Option<String>,
 }
 
 impl OpsReply {
     fn error(e: &anyhow::Error) -> Self {
-        Self { ok: false, code: Some(code_of(e)), message: format!("{e:#}"), approval_id: None }
+        Self { ok: false, code: Some(code_of(e)), message: format!("{e:#}"), approval_id: None, result: None }
     }
 }
 
@@ -114,7 +144,8 @@ impl RemoteOp {
             | RemoteOp::Copy { share, .. }
             | RemoteOp::Mkdir { share, .. }
             | RemoteOp::Trash { share, .. }
-            | RemoteOp::Purge { share, .. } => share,
+            | RemoteOp::Purge { share, .. }
+            | RemoteOp::Import { share, .. } => share,
         }
     }
 
@@ -126,6 +157,7 @@ impl RemoteOp {
             RemoteOp::Mkdir { .. } => "ops.mkdir",
             RemoteOp::Trash { .. } => "ops.trash",
             RemoteOp::Purge { .. } => "ops.purge",
+            RemoteOp::Import { .. } => "ops.import",
         }
     }
 
@@ -147,6 +179,9 @@ impl RemoteOp {
             RemoteOp::Mkdir { share, parent, name } => format!("Ordner '{name}' in '{share}/{parent}' anlegen"),
             RemoteOp::Trash { share, paths } => format!("in '{share}' in den Papierkorb: {}", list(paths)),
             RemoteOp::Purge { share, paths } => format!("in '{share}' ENDGÜLTIG löschen: {}", list(paths)),
+            RemoteOp::Import { share, dest_dir, name, size, .. } => {
+                format!("'{name}' ({:.1} MB) nach '{share}/{dest_dir}' hochladen", *size as f64 / 1e6)
+            }
         }
     }
 
@@ -176,6 +211,21 @@ impl RemoteOp {
                 validate_name(name)
             }
             RemoteOp::Trash { paths, .. } | RemoteOp::Purge { paths, .. } => many(paths),
+            RemoteOp::Import { dest_dir, name, hash, size, .. } => {
+                dir(dest_dir)?;
+                validate_name(name)?;
+                // Keine versteckten Dateien (.bashrc, .git …) über das Netz anlegen.
+                if name.starts_with('.') {
+                    return Err(bad("Versteckte Dateien können nicht hochgeladen werden"));
+                }
+                if parse_hash_hex(hash).is_none() {
+                    return Err(bad("Ungültiger Hash"));
+                }
+                if *size > MAX_IMPORT_BYTES {
+                    return Err(bad("Datei ist zu groß"));
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -207,8 +257,14 @@ pub fn resolve_in_share(root: &Path, rel: &str) -> Result<PathBuf> {
 }
 
 /// Vorbereitete Operation: absolute Pfade und die nötigen Rechte.
+/// Was nach der Prüfung ausgeführt wird.
+enum Action {
+    File(FileOp),
+    Import { dest: PathBuf, name: String, hash: iroh_blobs::Hash, size: u64, conflict: Conflict },
+}
+
 struct Prepared {
-    op: FileOp,
+    op: Action,
     checks: Vec<(Capability, PathBuf)>,
     /// Pfade, deren Dateien für den Massenschutz zählen.
     weighted: Vec<PathBuf>,
@@ -229,7 +285,7 @@ fn prepare(inner: &DaemonInner, op: &RemoteOp) -> Result<Prepared> {
             Prepared {
                 checks: vec![(Capability::FilesWrite, p.clone())],
                 weighted: vec![],
-                op: FileOp::Rename { path: p, new_name: new_name.clone() },
+                op: Action::File(FileOp::Rename { path: p, new_name: new_name.clone() }),
             }
         }
         RemoteOp::Move { paths, dest_dir, conflict, .. } => {
@@ -240,7 +296,11 @@ fn prepare(inner: &DaemonInner, op: &RemoteOp) -> Result<Prepared> {
             if *conflict == Conflict::Replace {
                 checks.push((Capability::FilesDelete, dest.clone()));
             }
-            Prepared { checks, weighted: sources.clone(), op: FileOp::Move { sources, dest, conflict: *conflict } }
+            Prepared {
+                checks,
+                weighted: sources.clone(),
+                op: Action::File(FileOp::Move { sources, dest, conflict: *conflict }),
+            }
         }
         RemoteOp::Copy { paths, dest_dir, conflict, .. } => {
             let (sources, dest) = (many(paths)?, r(dest_dir)?);
@@ -249,14 +309,14 @@ fn prepare(inner: &DaemonInner, op: &RemoteOp) -> Result<Prepared> {
             if *conflict == Conflict::Replace {
                 checks.push((Capability::FilesDelete, dest.clone()));
             }
-            Prepared { checks, weighted: vec![], op: FileOp::Copy { sources, dest, conflict: *conflict } }
+            Prepared { checks, weighted: vec![], op: Action::File(FileOp::Copy { sources, dest, conflict: *conflict }) }
         }
         RemoteOp::Mkdir { parent, name, .. } => {
             let p = r(parent)?;
             Prepared {
                 checks: vec![(Capability::FilesWrite, p.clone())],
                 weighted: vec![],
-                op: FileOp::Mkdir { parent: p, name: name.clone() },
+                op: Action::File(FileOp::Mkdir { parent: p, name: name.clone() }),
             }
         }
         RemoteOp::Trash { paths, .. } => {
@@ -264,7 +324,7 @@ fn prepare(inner: &DaemonInner, op: &RemoteOp) -> Result<Prepared> {
             Prepared {
                 checks: paths.iter().map(|p| (Capability::FilesDelete, p.clone())).collect(),
                 weighted: paths.clone(),
-                op: FileOp::Trash { paths },
+                op: Action::File(FileOp::Trash { paths }),
             }
         }
         RemoteOp::Purge { paths, .. } => {
@@ -272,7 +332,26 @@ fn prepare(inner: &DaemonInner, op: &RemoteOp) -> Result<Prepared> {
             Prepared {
                 checks: paths.iter().map(|p| (Capability::FilesPurge, p.clone())).collect(),
                 weighted: paths.clone(),
-                op: FileOp::Delete { paths },
+                op: Action::File(FileOp::Delete { paths }),
+            }
+        }
+        RemoteOp::Import { dest_dir, name, hash, size, conflict, .. } => {
+            let dest = r(dest_dir)?;
+            let mut checks = vec![(Capability::FilesWrite, dest.join(name))];
+            if *conflict == Conflict::Replace {
+                checks.push((Capability::FilesDelete, dest.join(name)));
+            }
+            Prepared {
+                checks,
+                weighted: vec![],
+                op: Action::Import {
+                    dest,
+                    name: name.clone(),
+                    hash: parse_hash_hex(hash)
+                        .ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Ungültiger Hash"))?,
+                    size: *size,
+                    conflict: *conflict,
+                },
             }
         }
     })
@@ -321,10 +400,21 @@ fn authorize_all(inner: &DaemonInner, peer: &str, op: &RemoteOp, prepared: &Prep
     Ok(())
 }
 
-async fn execute(inner: &Arc<DaemonInner>, op: &RemoteOp, prepared: Prepared) -> Result<OpsReply> {
-    let (job, p) = inner.files.register();
-    crate::api::fileops::run_job(inner.clone(), job, p, prepared.op).await?;
-    Ok(OpsReply { ok: true, code: None, message: format!("Erledigt: {}", op.summary()), approval_id: None })
+async fn execute(inner: &Arc<DaemonInner>, peer: &str, op: &RemoteOp, prepared: Prepared) -> Result<OpsReply> {
+    let result = match prepared.op {
+        Action::File(file_op) => {
+            let (job, p) = inner.files.register();
+            crate::api::fileops::run_job(inner.clone(), job, p, file_op).await?;
+            None
+        }
+        Action::Import { dest, name, hash, size, conflict } => {
+            let root =
+                inner.db.list_shares()?.into_iter().find(|s| s.name == op.share()).map(|s| PathBuf::from(s.root));
+            let path = crate::upload::receive(inner, peer, &dest, &name, hash, size, conflict).await?;
+            root.and_then(|r| path.strip_prefix(&r).ok().map(|p| p.to_string_lossy().into_owned()))
+        }
+    };
+    Ok(OpsReply { ok: true, code: None, message: format!("Erledigt: {}", op.summary()), approval_id: None, result })
 }
 
 /// Bearbeitet eine Anfrage eines gekoppelten Geräts (Identität aus TLS).
@@ -356,9 +446,11 @@ async fn serve_inner(inner: &Arc<DaemonInner>, peer: &str, req: OpsRequest) -> R
     let weighted = prepared.weighted.clone();
     let weight = match &op {
         RemoteOp::Rename { .. } => 1,
+        // Hochladen verändert nichts Bestehendes (eigene Grenze: upload_daily_gb) – außer beim Ersetzen.
+        RemoteOp::Import { conflict, .. } => u64::from(*conflict == Conflict::Replace),
         _ => tokio::task::spawn_blocking(move || weighted.iter().map(|p| measure(p).0.max(1)).sum::<u64>()).await?,
     };
-    if !inner.remote_ops.try_take(peer, weight, inner.config.ops_hourly_limit) {
+    if !inner.remote_ops.try_take(peer, weight, inner.settings.ops_hourly_limit()) {
         let json = serde_json::to_string(&op)?;
         let id = inner.db.add_approval(peer, &json, &op.summary())?;
         let _ = inner.db.audit(peer, op.kind(), Some(op.share()), false, Some("Massenschutz: wartet auf Bestätigung"));
@@ -373,9 +465,10 @@ async fn serve_inner(inner: &Arc<DaemonInner>, peer: &str, req: OpsRequest) -> R
                 "Zu viele Änderungen in kurzer Zeit – die Anfrage {id} muss auf dem Zielgerät bestätigt werden."
             ),
             approval_id: Some(id),
+            result: None,
         });
     }
-    execute(inner, &op, prepared).await
+    execute(inner, peer, &op, prepared).await
 }
 
 /// Bestätigt eine angehaltene Fernoperation und führt sie aus (Rechte werden erneut geprüft).
@@ -389,7 +482,7 @@ pub(crate) async fn approve(inner: &Arc<DaemonInner>, id: i64) -> Result<Respons
     let op: RemoteOp = serde_json::from_str(&json).context("Gespeicherte Anfrage ist beschädigt")?;
     let prepared = prepare(inner, &op)?;
     authorize_all(inner, &peer, &op, &prepared)?;
-    let reply = execute(inner, &op, prepared).await?;
+    let reply = execute(inner, &peer, &op, prepared).await?;
     let _ = inner.db.audit(&peer, op.kind(), Some(op.share()), true, Some(&format!("bestätigt (Anfrage {id})")));
     Ok(Response::Success { message: reply.message })
 }
@@ -404,6 +497,21 @@ pub(crate) fn reject(inner: &DaemonInner, id: i64) -> Result<Response> {
 
 /// Sendet eine Fernoperation an ein gekoppeltes Gerät (Aufruf durch den lokalen Nutzer).
 pub(crate) async fn send(inner: &Arc<DaemonInner>, device: &str, op: RemoteOp) -> Result<Response> {
+    let (name, reply) = send_op(inner, device, op, REPLY_TIMEOUT).await?;
+    if reply.ok {
+        Ok(Response::Success { message: format!("{name}: {}", reply.message) })
+    } else {
+        Ok(Response::error(reply.code.unwrap_or(ErrorCode::Internal), format!("{name}: {}", reply.message)))
+    }
+}
+
+/// Sendet eine Fernoperation und liefert (Gerätename, Antwort).
+pub(crate) async fn send_op(
+    inner: &Arc<DaemonInner>,
+    device: &str,
+    op: RemoteOp,
+    reply_timeout: Duration,
+) -> Result<(String, OpsReply)> {
     op.validate()?;
     let mut found = inner.db.find_devices(device)?;
     let dev = match found.len() {
@@ -422,19 +530,21 @@ pub(crate) async fn send(inner: &Arc<DaemonInner>, device: &str, op: RemoteOp) -
         let (mut s, mut r) = conn.open_bi().await?;
         write_frame_max(&mut s, &OpsRequest { v: PROTOCOL_VERSION, op }, MAX_FRAME).await?;
         s.finish()?;
-        let reply: OpsReply = tokio::time::timeout(REPLY_TIMEOUT, read_frame_max(&mut r, MAX_FRAME))
+        let reply: OpsReply = tokio::time::timeout(reply_timeout, read_frame_max(&mut r, MAX_FRAME))
             .await
-            .context("Zeitüberschreitung beim Warten auf das Ergebnis")??;
+            .map_err(|_| ApiError::new(ErrorCode::Timeout, "Zeitüberschreitung beim Warten auf das Ergebnis"))??;
         anyhow::Ok(reply)
     }
     .await;
     conn.close(0u32.into(), b"done");
-    let reply = result?;
-    if reply.ok {
-        Ok(Response::Success { message: format!("{}: {}", dev.name, reply.message) })
-    } else {
-        Ok(Response::error(reply.code.unwrap_or(ErrorCode::Internal), format!("{}: {}", dev.name, reply.message)))
-    }
+    let reply = result.map_err(|e| {
+        if crate::api::error::code_of(&e) == ErrorCode::Internal {
+            ApiError::new(ErrorCode::Unavailable, format!("Verbindung zu '{}' abgebrochen: {e:#}", dev.name)).into()
+        } else {
+            e
+        }
+    })?;
+    Ok((dev.name, reply))
 }
 
 /// Protokoll-Handler für eingehende Fernoperationen.
@@ -525,6 +635,11 @@ mod tests {
         ] {
             assert!(decode_request(bad).is_err(), "{}", String::from_utf8_lossy(bad));
         }
+        // Fuzzing-Fund: 64 Zeichen mit Mehrbyte-Unicode ließen Hash::from_str abstürzen.
+        let evil = "{\"v\":1,\"op\":{\"op\":\"Import\",\"share\":\"F\",\"dest_dir\":\"\",\"name\":\"a\",\"hash\":\"00000000000000000fff$fFf\\ufffffffffffffffwfff$000000000000000000\",\"size\":1}}";
+        assert!(decode_request(evil.as_bytes()).is_err());
+        assert!(parse_hash_hex(&"0".repeat(64)).is_some());
+        assert!(parse_hash_hex(&"ä".repeat(32)).is_none());
         let too_many = RemoteOp::Trash { share: "F".into(), paths: vec!["a".into(); MAX_PATHS + 1] };
         assert!(too_many.validate().is_err());
     }
@@ -553,5 +668,20 @@ mod tests {
         assert!(s.try_take("a", 0, 100), "nicht verändernde Operationen zählen nicht");
         assert!(s.try_take("b", 100, 100), "je Gerät getrennt");
         assert!(!s.try_take("c", 101, 100));
+    }
+}
+#[cfg(test)]
+mod ticket_parsing {
+    #[test]
+    fn ticket_parse_with_unicode_does_not_panic() {
+        for s in [
+            "blob".to_string() + &"ä".repeat(60),
+            "blob".to_string() + &"\u{ffff}".repeat(40),
+            "ä".repeat(32),
+            "x".repeat(64),
+        ] {
+            let r = std::panic::catch_unwind(|| s.parse::<iroh_blobs::ticket::BlobTicket>().is_ok());
+            assert!(r.is_ok(), "Panic beim Ticket-Parsen: {s:?}");
+        }
     }
 }

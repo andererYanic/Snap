@@ -114,3 +114,34 @@ pub(crate) fn ops_pending(inner: &DaemonInner) -> Result<Response> {
         .collect();
     Ok(Response::Approvals { items })
 }
+
+pub(crate) fn upload_rule_add(
+    inner: &DaemonInner,
+    path: &Path,
+    device: &str,
+    share: &str,
+    dest_dir: &str,
+) -> Result<Response> {
+    let real = match std::fs::canonicalize(path) {
+        Ok(p) if p.is_dir() => p,
+        Ok(_) => api_bail!(InvalidInput, "{} ist kein Ordner.", path.display()),
+        Err(_) => api_bail!(NotFound, "{} existiert nicht.", path.display()),
+    };
+    if inner.protected_paths().iter().any(|p| real.starts_with(p)) {
+        api_bail!(InvalidInput, "Die Snap-Daten können nicht hochgeladen werden.");
+    }
+    let dest_dir = dest_dir.trim_matches('/');
+    crate::remote_ops::RemoteOp::Mkdir { share: share.into(), parent: dest_dir.into(), name: "x".into() }.validate()?;
+    let mut found = inner.db.find_devices(device)?;
+    let dev = match found.len() {
+        0 => api_bail!(NotFound, "Kein gekoppeltes Gerät '{device}'."),
+        1 => found.remove(0),
+        _ => api_bail!(Ambiguous, "'{device}' passt auf mehrere Geräte."),
+    };
+    let local = real.to_str().ok_or_else(|| {
+        crate::api::error::ApiError::new(crate::api::error::ErrorCode::InvalidInput, "Pfad ist kein UTF-8")
+    })?;
+    inner.db.add_upload_rule(local, &dev.node_id, share, dest_dir)?;
+    inner.rules_notify.notify_one();
+    Ok(Response::UploadRules { rules: inner.db.upload_rules()? })
+}

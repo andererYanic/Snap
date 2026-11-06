@@ -59,6 +59,15 @@ pub struct DaemonInner {
     pub(crate) thumbs: crate::media::ThumbCache,
     /// Lokaler Streaming-Server (`None`, falls der Port nicht gebunden werden konnte).
     pub(crate) stream: Option<Arc<crate::stream::StreamServer>>,
+    /// Zur Laufzeit änderbare Grenzen.
+    pub(crate) settings: Arc<crate::settings::Settings>,
+    /// Zum Hochladen angebotene Inhalte (je genau ein Zielgerät).
+    pub(crate) offers: Arc<crate::upload::UploadOffers>,
+    /// Weckt die Upload-Warteschlange.
+    pub(crate) upload_notify: Arc<Notify>,
+    /// Weckt die Upload-Regeln (Watcher-Ereignis).
+    pub(crate) rules_notify: Arc<Notify>,
+    pub(crate) upload_watchers: Mutex<std::collections::HashMap<i64, notify::RecommendedWatcher>>,
 }
 
 impl DaemonInner {
@@ -138,10 +147,16 @@ impl Daemon {
 
         // Blob-Zugriff: Einzeln veröffentlicht -> Ticket reicht. Share-Datei -> nur mit
         // files.read auf ihren Pfad (gleiche Prüfstelle wie alle Operationen).
+        let offers = Arc::new(crate::upload::UploadOffers::default());
         let access: AccessCheck = {
             let db = db.clone();
+            let offers = offers.clone();
             let protected = vec![config.data_dir.clone(), socket_dir.clone()];
             Arc::new(move |hash: &Hash, node: Option<iroh::EndpointId>| {
+                // Zum Hochladen angeboten – nur genau diesem Gerät.
+                if offers.allows(hash, node) {
+                    return true;
+                }
                 let Ok(acc) = db.blob_access(&hash.to_string()) else { return false };
                 if acc.published {
                     return true;
@@ -247,7 +262,8 @@ impl Daemon {
                 (None, None)
             }
         };
-        let thumbs = crate::media::ThumbCache::new(config.thumb_dir(), config.thumb_cache_bytes);
+        let settings = Arc::new(crate::settings::Settings::load(db.clone(), &config)?);
+        let thumbs = crate::media::ThumbCache::new(config.thumb_dir(), settings.thumb_cache_bytes());
         let inner = Arc::new(DaemonInner {
             config,
             network,
@@ -266,6 +282,11 @@ impl Daemon {
             remote_ops: Default::default(),
             thumbs,
             stream: stream.clone(),
+            settings,
+            offers,
+            upload_notify: Arc::new(Notify::new()),
+            rules_notify: Arc::new(Notify::new()),
+            upload_watchers: Mutex::new(std::collections::HashMap::new()),
         });
         let _ = ops_slot.set(Arc::downgrade(&inner));
         if inner.config.live_connections {
@@ -281,6 +302,8 @@ impl Daemon {
         let shares = tokio::spawn(start_shares(inner.clone()));
         let pins = tokio::spawn(crate::pins::run_pin_loop(inner.clone()));
         let indexer = tokio::spawn(crate::indexer::run_indexer(inner.clone()));
+        let uploads = tokio::spawn(crate::upload::run_worker(inner.clone()));
+        let upload_rules = tokio::spawn(crate::upload::run_rules(inner.clone()));
         let streamer = match (stream, stream_listener) {
             (Some(s), Some(l)) => tokio::spawn(crate::stream::serve(s, l, Arc::downgrade(&inner))),
             _ => tokio::spawn(async {}),
@@ -289,7 +312,9 @@ impl Daemon {
             let inner = inner.clone();
             async move {
                 loop {
-                    if let Err(e) = crate::stream::enforce_cache_limit(&inner, inner.config.stream_cache_bytes).await {
+                    if let Err(e) =
+                        crate::stream::enforce_cache_limit(&inner, inner.settings.stream_cache_bytes()).await
+                    {
                         tracing::debug!("Streaming-Cache nicht aufgeräumt: {e:#}");
                     }
                     tokio::time::sleep(Duration::from_secs(600)).await;
@@ -298,7 +323,7 @@ impl Daemon {
         });
         {
             // Vorschaubild-Cache beim Start auf die eingestellte Größe bringen.
-            let (dir, max) = (inner.config.thumb_dir(), inner.config.thumb_cache_bytes);
+            let (dir, max) = (inner.config.thumb_dir(), inner.settings.thumb_cache_bytes());
             tokio::task::spawn_blocking(move || crate::media::prune(&dir, max));
         }
         daemon.tasks.lock().unwrap().extend([
@@ -311,6 +336,8 @@ impl Daemon {
             indexer,
             streamer,
             stream_cache,
+            uploads,
+            upload_rules,
         ]);
 
         Ok(daemon)
@@ -353,6 +380,7 @@ impl Daemon {
     pub async fn shutdown(&self) {
         self.inner.live.shutdown();
         self.inner.watchers.lock().unwrap().clear();
+        self.inner.upload_watchers.lock().unwrap().clear();
         if let Some(index) = &self.inner.index {
             index.stop();
         }

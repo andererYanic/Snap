@@ -3681,6 +3681,7 @@ dependencies = [
 name = "snap-fuzz"
 version = "0.0.0"
 dependencies = [
+ "iroh-blobs",
  "libfuzzer-sys",
  "serde_json",
  "space-core",

@@ -64,6 +64,10 @@ pub struct ConfigFile {
     pub stream_port: Option<u16>,
     /// Größe des Streaming-Caches in MB (angesehene Teile von Videos usw.). Standard: 2048.
     pub stream_cache_mb: Option<u64>,
+    /// Gekoppelte Geräte: höchstens so viele GB pro Tag hochladen. Standard: 20.
+    pub upload_daily_gb: Option<u64>,
+    /// So viel Platz muss nach dem Empfang frei bleiben (GB). Standard: 5.
+    pub upload_reserve_gb: Option<u64>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -95,6 +99,8 @@ pub struct Config {
     pub thumb_cache_bytes: u64,
     pub stream_port: u16,
     pub stream_cache_bytes: u64,
+    pub upload_daily_gb: u64,
+    pub upload_reserve_gb: u64,
 }
 
 impl Config {
@@ -208,6 +214,8 @@ impl Config {
             thumb_cache_bytes: file.thumb_cache_mb.unwrap_or(500).max(10) * 1024 * 1024,
             stream_port: file.stream_port.unwrap_or(0),
             stream_cache_bytes: file.stream_cache_mb.unwrap_or(2048) * 1024 * 1024,
+            upload_daily_gb: file.upload_daily_gb.unwrap_or(20),
+            upload_reserve_gb: file.upload_reserve_gb.unwrap_or(5),
         })
     }
 
@@ -235,6 +243,8 @@ impl Config {
             thumb_cache_bytes: 50 * 1024 * 1024,
             stream_port: 0,
             stream_cache_bytes: 256 * 1024 * 1024,
+            upload_daily_gb: 20,
+            upload_reserve_gb: 0,
         }
     }
 }
@@ -325,6 +335,11 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # Lokaler Streaming-Server (nur 127.0.0.1) für Player wie VLC/mpv. 0 = Port frei wählen.
 # stream_port = 0
 # stream_cache_mb = 2048
+
+# Hochladen durch gekoppelte Geräte: GB pro Gerät und Tag, und wie viel Platz frei bleiben muss.
+# Zur Laufzeit änderbar: space-daemon settings set upload_daily_gb 50
+# upload_daily_gb = 20
+# upload_reserve_gb = 5
 "#;
 
 #[cfg(test)]

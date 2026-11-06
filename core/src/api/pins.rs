@@ -85,7 +85,7 @@ pub(crate) fn pin_list(inner: &Arc<DaemonInner>) -> Result<Response> {
         pins,
         pin_dir: inner.config.pin_dir.clone(),
         used_bytes: inner.db.pinned_total_size()?,
-        max_bytes: inner.config.pin_max_bytes,
+        max_bytes: inner.settings.pin_max_bytes(),
     })
 }
 

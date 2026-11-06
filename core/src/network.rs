@@ -81,6 +81,8 @@ pub struct P2pNetwork {
 
 /// Tag-Präfix für freigegebene Dateien. Getaggte Blobs überleben die Garbage Collection.
 const PUBLISH_TAG_PREFIX: &str = "snap/pub/";
+/// Tags für Dateien, die gerade einem Gerät zum Hochladen angeboten werden.
+const UPLOAD_TAG_PREFIX: &str = "snap/upload/";
 /// Tags für den Streaming-Cache (auch unvollständige Blobs).
 const STREAM_TAG_PREFIX: &str = "snap/stream/";
 
@@ -346,6 +348,23 @@ impl P2pNetwork {
         }
         anyhow::ensure!(filled == len, "Bereich liegt nicht vollständig vor ({filled}/{len} Bytes)");
         Ok(out)
+    }
+
+    /// Nimmt eine Datei zum Hochladen auf (per Referenz, keine Kopie) und schützt sie vor der
+    /// GC, solange sie angeboten wird. Wird **nicht** veröffentlicht.
+    pub async fn import_for_upload(&self, abs_path: &Path) -> Result<Hash> {
+        use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
+        let opts =
+            AddPathOptions { path: abs_path.to_path_buf(), format: BlobFormat::Raw, mode: ImportMode::TryReference };
+        let temp = self.store.add_path_with_opts(opts).temp_tag().await?;
+        let hash = temp.hash();
+        self.store.tags().set(format!("{UPLOAD_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash)).await?;
+        Ok(hash)
+    }
+
+    pub async fn untag_upload(&self, hash: Hash) -> Result<()> {
+        self.store.tags().delete(format!("{UPLOAD_TAG_PREFIX}{hash}")).await?;
+        Ok(())
     }
 
     /// Hält gestreamte (auch unvollständige) Blobs über die GC hinaus (Streaming-Cache).

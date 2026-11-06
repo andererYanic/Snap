@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -31,6 +31,41 @@ pub struct FileRecord {
     /// Pfad relativ zur Freigabe.
     #[serde(default)]
     pub rel_path: Option<String>,
+}
+
+/// Neuer Upload-Auftrag.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewUpload {
+    pub device: String,
+    pub share: String,
+    pub dest_dir: String,
+    pub local_path: String,
+    pub rule_id: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UploadRow {
+    pub id: i64,
+    pub device: String,
+    pub share: String,
+    pub dest_dir: String,
+    pub local_path: String,
+    pub rule_id: Option<i64>,
+    pub state: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+    pub result: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct UploadRule {
+    pub id: i64,
+    pub local_dir: String,
+    pub device: String,
+    pub share: String,
+    pub dest_dir: String,
+    pub created_at: i64,
 }
 
 /// Eine Ordner-Freigabe.
@@ -461,6 +496,57 @@ impl DatabaseManager {
                     last_access INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_stream_access ON stream_cache(last_access);
+                ",
+            )?;
+        }
+        if version < 8 {
+            // Migration -> 8: Hochladen (Warteschlange, Ordner-Regeln, Tagesgrenzen).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS uploads (
+                    id         INTEGER PRIMARY KEY,
+                    device     TEXT    NOT NULL,   -- Node-ID des Ziels
+                    share      TEXT    NOT NULL,
+                    dest_dir   TEXT    NOT NULL,   -- relativ zur Freigabe ('' = Wurzel)
+                    local_path TEXT    NOT NULL,
+                    rule_id    INTEGER,
+                    state      TEXT    NOT NULL,   -- 'pending' | 'done' | 'failed'
+                    attempts   INTEGER NOT NULL DEFAULT 0,
+                    next_try   INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    result     TEXT,               -- Pfad auf dem Ziel
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_uploads_state ON uploads(state, next_try);
+                CREATE TABLE IF NOT EXISTS upload_rules (
+                    id         INTEGER PRIMARY KEY,
+                    local_dir  TEXT    NOT NULL,
+                    device     TEXT    NOT NULL,
+                    share      TEXT    NOT NULL,
+                    dest_dir   TEXT    NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE (local_dir, device, share, dest_dir)
+                );
+                -- Schon eingeplante Dateien je Regel (kein doppeltes Hochladen).
+                CREATE TABLE IF NOT EXISTS upload_seen (
+                    rule_id  INTEGER NOT NULL,
+                    rel_path TEXT    NOT NULL,
+                    size     INTEGER NOT NULL,
+                    mtime    INTEGER NOT NULL,
+                    PRIMARY KEY (rule_id, rel_path)
+                );
+                -- Zur Laufzeit geänderte Einstellungen (überschreiben config.toml).
+                CREATE TABLE IF NOT EXISTS settings (
+                    key   TEXT    PRIMARY KEY,
+                    value INTEGER NOT NULL
+                );
+                -- Empfangene Bytes je Gerät und Tag (Grenze gegen volle Platten).
+                CREATE TABLE IF NOT EXISTS upload_usage (
+                    node_id TEXT    NOT NULL,
+                    day     INTEGER NOT NULL,
+                    bytes   INTEGER NOT NULL,
+                    PRIMARY KEY (node_id, day)
+                );
                 ",
             )?;
         }
@@ -1517,6 +1603,199 @@ impl DatabaseManager {
             .into_iter()
             .filter(|d| d.name == q || by_id.as_deref().is_some_and(|p| d.node_id.starts_with(p)))
             .collect())
+    }
+
+    /// Zur Laufzeit gesetzte Einstellungen.
+    pub fn settings(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached("SELECT key, value FROM settings")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Setzt (`Some`) oder entfernt (`None`, zurück zum Standard) eine Einstellung.
+    pub fn put_setting(&self, key: &str, value: Option<i64>) -> Result<()> {
+        match value {
+            Some(v) => self.conn().execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, v],
+            )?,
+            None => self.conn().execute("DELETE FROM settings WHERE key = ?1", params![key])?,
+        };
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Hochladen
+    // ------------------------------------------------------------------
+
+    /// Plant ein Hochladen ein. Gibt die Nummer zurück.
+    pub fn add_upload(&self, u: &NewUpload) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO uploads (device, share, dest_dir, local_path, rule_id, state, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+            params![u.device, u.share, u.dest_dir, u.local_path, u.rule_id, now_unix()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Fällige Aufträge (ältester zuerst).
+    pub fn due_uploads(&self, limit: u32) -> Result<Vec<UploadRow>> {
+        self.uploads_where("state = 'pending' AND next_try <= ?1 ORDER BY id LIMIT ?2", params![now_unix(), limit])
+    }
+
+    pub fn list_uploads(&self, limit: u32) -> Result<Vec<UploadRow>> {
+        self.uploads_where("1 = 1 OR ?1 = 0 ORDER BY id DESC LIMIT ?2", params![0, limit])
+    }
+
+    fn uploads_where(&self, cond: &str, p: impl rusqlite::Params) -> Result<Vec<UploadRow>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT id, device, share, dest_dir, local_path, rule_id, state, attempts, last_error, result, created_at
+             FROM uploads WHERE {cond}"
+        ))?;
+        let rows = stmt
+            .query_map(p, |r| {
+                Ok(UploadRow {
+                    id: r.get(0)?,
+                    device: r.get(1)?,
+                    share: r.get(2)?,
+                    dest_dir: r.get(3)?,
+                    local_path: r.get(4)?,
+                    rule_id: r.get(5)?,
+                    state: r.get(6)?,
+                    attempts: r.get(7)?,
+                    last_error: r.get(8)?,
+                    result: r.get(9)?,
+                    created_at: r.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn finish_upload(&self, id: i64, result: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE uploads SET state = 'done', result = ?2, last_error = NULL WHERE id = ?1",
+            params![id, result],
+        )?;
+        Ok(())
+    }
+
+    /// Fehlschlag: erneut versuchen (`retry_in` Sekunden) oder endgültig aufgeben.
+    pub fn fail_upload(&self, id: i64, error: &str, retry_in: Option<i64>) -> Result<()> {
+        match retry_in {
+            Some(secs) => self.conn().execute(
+                "UPDATE uploads SET attempts = attempts + 1, last_error = ?2, next_try = ?3 WHERE id = ?1",
+                params![id, error, now_unix() + secs],
+            )?,
+            None => self.conn().execute(
+                "UPDATE uploads SET attempts = attempts + 1, last_error = ?2, state = 'failed' WHERE id = ?1",
+                params![id, error],
+            )?,
+        };
+        Ok(())
+    }
+
+    /// Fehlgeschlagene/wartende Aufträge sofort erneut versuchen (z. B. Gerät wieder online).
+    pub fn retry_uploads(&self, device: Option<&str>) -> Result<usize> {
+        Ok(self.conn().execute(
+            "UPDATE uploads SET next_try = 0, state = 'pending'
+             WHERE state IN ('pending', 'failed') AND (?1 IS NULL OR device = ?1)",
+            params![device],
+        )?)
+    }
+
+    pub fn cancel_upload(&self, id: i64) -> Result<bool> {
+        Ok(self.conn().execute("DELETE FROM uploads WHERE id = ?1 AND state != 'done'", params![id])? > 0)
+    }
+
+    pub fn add_upload_rule(&self, local_dir: &str, device: &str, share: &str, dest_dir: &str) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT OR IGNORE INTO upload_rules (local_dir, device, share, dest_dir, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![local_dir, device, share, dest_dir, now_unix()],
+        )?;
+        Ok(conn.query_row(
+            "SELECT id FROM upload_rules WHERE local_dir = ?1 AND device = ?2 AND share = ?3 AND dest_dir = ?4",
+            params![local_dir, device, share, dest_dir],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn upload_rules(&self) -> Result<Vec<UploadRule>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, local_dir, device, share, dest_dir, created_at FROM upload_rules ORDER BY id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(UploadRule {
+                    id: r.get(0)?,
+                    local_dir: r.get(1)?,
+                    device: r.get(2)?,
+                    share: r.get(3)?,
+                    dest_dir: r.get(4)?,
+                    created_at: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn remove_upload_rule(&self, id: i64) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let n = tx.execute("DELETE FROM upload_rules WHERE id = ?1", params![id])?;
+        tx.execute("DELETE FROM upload_seen WHERE rule_id = ?1", params![id])?;
+        tx.execute("DELETE FROM uploads WHERE rule_id = ?1 AND state = 'pending'", params![id])?;
+        tx.commit()?;
+        Ok(n > 0)
+    }
+
+    /// Merkt sich eine Datei für eine Regel. `true`, wenn sie neu oder geändert ist.
+    pub fn mark_upload_seen(&self, rule_id: i64, rel_path: &str, size: u64, mtime: i64) -> Result<bool> {
+        let n = self.conn().execute(
+            "INSERT INTO upload_seen (rule_id, rel_path, size, mtime) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(rule_id, rel_path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime
+             WHERE upload_seen.size != excluded.size OR upload_seen.mtime != excluded.mtime",
+            params![rule_id, rel_path, size as i64, mtime],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Bucht empfangene Bytes für ein Gerät, wenn die Tagesgrenze es erlaubt.
+    pub fn reserve_upload_bytes(&self, node_id: &str, bytes: u64, daily_limit: u64) -> Result<bool> {
+        let day = now_unix() / 86_400;
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let used: i64 = tx
+            .query_row("SELECT bytes FROM upload_usage WHERE node_id = ?1 AND day = ?2", params![node_id, day], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .unwrap_or(0);
+        if used as u64 + bytes > daily_limit {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO upload_usage (node_id, day, bytes) VALUES (?1, ?2, ?3)
+             ON CONFLICT(node_id, day) DO UPDATE SET bytes = bytes + excluded.bytes",
+            params![node_id, day, bytes as i64],
+        )?;
+        tx.execute("DELETE FROM upload_usage WHERE day < ?1", params![day - 7])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Gibt gebuchte Bytes zurück (Hochladen fehlgeschlagen).
+    pub fn release_upload_bytes(&self, node_id: &str, bytes: u64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE upload_usage SET bytes = MAX(0, bytes - ?3) WHERE node_id = ?1 AND day = ?2",
+            params![node_id, now_unix() / 86_400, bytes as i64],
+        )?;
+        Ok(())
     }
 
     /// Merkt sich, dass ein Blob gerade gestreamt wird (für die Cache-Grenze).

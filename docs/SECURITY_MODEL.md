@@ -71,6 +71,16 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Vorschaubilder fremder Freigaben (`snap/thumb/1`):** nur gekoppelt, nur mit `files.read`,
   nur innerhalb von Freigaben ohne Symlinks auf dem Weg; Anfrage ≤ 4 KiB, Antwort ≤ 1 MiB;
   empfangene Bilder werden mit den begrenzten Decodern neu codiert, bevor sie im Cache landen.
+- **Hochladen (`Import` über `snap/ops/1`):** Das Ziel holt den Inhalt selbst per iroh-blobs. Ein
+  Angebot gilt nur für genau dieses Gerät und diesen Hash (2 h) und wird danach zurückgezogen. Die
+  Größe wird per BLAKE3/bao nachgewiesen und muss der Angabe entsprechen. Nur mit `files.write`;
+  versteckte Namen sind verboten; hochgeladene Dateien sind nie ausführbar (0644) und
+  überschreiben nie etwas („ersetzen“ nur mit `files.delete`, über den Papierkorb). Grenzen:
+  `upload_daily_gb` je Gerät und Tag, `upload_reserve_gb` freier Platz. Hashes aus fremden
+  Nachrichten werden streng geprüft (genau 64 Hex-Zeichen), denn `Hash::from_str` aus iroh-blobs
+  stürzt bei Mehrbyte-Unicode ab (per Fuzzing gefunden).
+- **Einstellungen:** nur lokal änderbar (für Geräte `admin`, also gesperrt), Wertebereiche
+  geprüft; manipulierte gespeicherte Werte werden beim Laden verworfen.
 - **Fernoperationen (`snap/ops/1`):** nicht gekoppelte Gegenstellen werden vor dem Lesen
   getrennt; nur relative Pfade innerhalb einer Freigabe, Symlinks auf dem Weg werden abgelehnt,
   Ziele zusätzlich kanonisiert geprüft; jede Operation läuft durch die zentrale Rechteprüfung
