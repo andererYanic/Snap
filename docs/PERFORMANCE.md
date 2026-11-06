@@ -345,3 +345,22 @@ Dateien und 5 000 kleinen.
   beschleunigen.
 - Verschlüsselt und hochgeladen wird nacheinander. Parallel ginge es bei langsamen Zielen (R2)
   deutlich schneller.
+
+## Review 15 – Sicherungen: Zeitplan, Aufbewahrung, Ausdünnen (6b-2, 2026-11-06)
+
+Messung `core/tests/perf.rs::backup_engine` (Release):
+
+| Fall | Zeit |
+|---|---|
+| Erster Lauf 210 MB, 5 004 Dateien | 3,7 s (57 MB/s) |
+| Zweiter Lauf ohne Änderung | 24 ms |
+| 1 MB in einem Video geändert | 137 ms (4,8 MB neu) |
+| Alles wiederherstellen | 594 ms (353 MB/s) |
+
+- **Schutz vor groben Zeitstempeln:** Dateien, deren mtime weniger als 2 s vor dem Beginn des
+  vorherigen Laufs liegt, werden erneut gelesen. Im Alltag (stündlich) betrifft das praktisch keine
+  Datei; der Lauf ohne Änderung bleibt bei 24 ms.
+- **Zeitplaner:** prüft einmal pro Minute nur die Auftragsliste in SQLite (Mikrosekunden); Läufe
+  laufen im Hintergrund, nie im Pfad einer GUI-Abfrage.
+- **Ausdünnen:** liest den Katalog und die Bäume der verbleibenden Stände (Dateidaten werden nicht
+  gelesen) und löscht nur, was der lokale Bekannt-Zwischenspeicher als vorhanden führt.

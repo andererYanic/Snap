@@ -131,6 +131,8 @@ pub async fn backup(
     sources: &[PathBuf],
     progress: &BackupProgress,
 ) -> Result<SnapshotInfo> {
+    // Zeitpunkt des Beginns: Grundlage für den Schutz vor groben Zeitstempeln im nächsten Lauf.
+    let started = crate::database::now_unix();
     let mut catalog = repo.load_catalog().await?;
     if known.is_empty() && !catalog.snapshots.is_empty() {
         // Neues Gerät oder verlorener Zwischenspeicher: aus den Ständen wiederaufbauen.
@@ -159,7 +161,7 @@ pub async fn backup(
             getrandom::getrandom(&mut b).map_err(|e| anyhow::anyhow!("Zufall: {e}"))?;
             b
         }),
-        time: crate::database::now_unix(),
+        time: started,
         host: std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default().trim().to_string(),
         sources: roots,
         files: progress.files.load(Ordering::Relaxed),
@@ -183,7 +185,7 @@ async fn put_tree(repo: &Repo, known: &mut Known, tree: &Tree) -> Result<String>
     Ok(id)
 }
 
-/// `prev_time`: Zeitpunkt des vorherigen Stands (Sekunden). Dateien, deren mtime näher als
+/// `prev_time`: Beginn des vorherigen Laufs (Sekunden). Dateien, deren mtime näher als
 /// [`RACY_SECS`] daran liegt, werden immer neu gelesen: Grobe Zeitstempel des Dateisystems
 /// könnten sonst eine Änderung kurz nach dem Lesen verbergen („racy timestamp“, wie bei git).
 async fn backup_dir(
