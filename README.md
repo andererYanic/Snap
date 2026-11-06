@@ -50,6 +50,9 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `share list` / `share remove <name>` / `share rescan [name]` | Freigaben verwalten |
 | `pin add <Freigabe[/pfad]>` (eindeutig: `Gerät:Freigabe/pfad`) | Ordner eines anderen Geräts offline verfügbar halten (`~/Snap/<Gerät>/…`) |
 | `pin list` / `pin remove <id>` | Pins mit Fortschritt, Konflikten, Platzbedarf |
+| `search <begriff> [--ext jpg,png] [--dirs\|--files] [--hidden]` | Dateien und Ordner auf diesem Gerät finden (Teilwort, ohne Groß-/Kleinschreibung) |
+| `ls [ordner] [-a]` | Ordnerinhalt live anzeigen (Ordner zuerst) |
+| `index list` / `index add <ordner>` / `index remove <id>` / `index rescan` | Orte der lokalen Suche verwalten |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
 | `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
@@ -134,6 +137,20 @@ core/src
   Inhalt anbietet – z. B. ein Server, der seinen `~/Snap`-Ordner freigibt.
 - Sicherheit: Zielpfade werden streng geprüft, es wird nie durch Symlinks geschrieben.
 - `pin_dir` und Kontingent `pin_max_gb` in der Konfiguration.
+
+### Lokale Suche & Explorer
+
+- Home-Ordner und angeschlossene Laufwerke (`/media/<user>`, `/run/media/<user>`) werden
+  automatisch indexiert. Caches, `node_modules`, `.git`, Papierkorb und Ordner mit
+  `CACHEDIR.TAG` werden ausgelassen, ebenso die Snap-Daten.
+- Der Index liegt **auf der Platte** (`index.db`, SQLite + FTS5-Trigramm), nicht im Arbeitsspeicher.
+  Bei 1 Mio. Dateien braucht der Prozess rund 33 MiB RAM, eine Suche dauert typisch 1–3 ms.
+- Änderungen sind nach etwa 1 s auffindbar, weil jeder indexierte Ordner beobachtet wird
+  (höchstens `index_max_watches`). Zusätzlich läuft alle 30 min ein günstiger Abgleich, der nur
+  Ordner mit geänderter mtime neu liest.
+- Der Index bleibt **auf dem Gerät**. Gekoppelte Geräte können weder suchen noch Ordner lesen.
+- Ein entferntes Laufwerk wird übersprungen; sein Index bleibt erhalten. Ein vom Nutzer entfernter
+  Ort kommt auch bei automatischer Erkennung nicht zurück.
 
 ### Live-Verbindungen
 

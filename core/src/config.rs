@@ -48,6 +48,13 @@ pub struct ConfigFile {
     pub pin_dir: Option<PathBuf>,
     /// Kontingent für gepinnte Dateien in GB (0 = unbegrenzt).
     pub pin_max_gb: Option<f64>,
+    /// Lokale Suche: Home-Ordner und angeschlossene Laufwerke indexieren. Standard: true.
+    pub index_enabled: Option<bool>,
+    /// Angeschlossene Laufwerke (/media, /run/media) automatisch indexieren. Standard: true.
+    pub index_drives: Option<bool>,
+    /// Höchstzahl beobachteter Ordner (inotify). Darüber hinaus gleicht der periodische
+    /// Abgleich ab. Standard: 50 000.
+    pub index_max_watches: Option<usize>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -67,6 +74,11 @@ pub struct Config {
     pub pin_dir: PathBuf,
     /// 0 = unbegrenzt.
     pub pin_max_bytes: u64,
+    pub index_enabled: bool,
+    /// Home-Ordner beim ersten Start als Ort anlegen (in Tests aus).
+    pub index_home: bool,
+    pub index_drives: bool,
+    pub index_max_watches: usize,
 }
 
 impl Config {
@@ -80,6 +92,10 @@ impl Config {
 
     pub fn secret_key_path(&self) -> PathBuf {
         self.data_dir.join("secret.key")
+    }
+
+    pub fn index_path(&self) -> PathBuf {
+        self.data_dir.join("index.db")
     }
 
     /// Standardpfad der Konfigurationsdatei (oder `SPACE_CONFIG`).
@@ -161,6 +177,10 @@ impl Config {
             live_connections: file.live_connections.unwrap_or(true),
             pin_dir,
             pin_max_bytes: (file.pin_max_gb.unwrap_or(0.0).max(0.0) * 1e9) as u64,
+            index_enabled: file.index_enabled.unwrap_or(true),
+            index_home: true,
+            index_drives: file.index_drives.unwrap_or(true),
+            index_max_watches: file.index_max_watches.unwrap_or(50_000),
         })
     }
 
@@ -179,6 +199,10 @@ impl Config {
             live_connections: true,
             pin_dir: root.join("Snap"),
             pin_max_bytes: 0,
+            index_enabled: true,
+            index_home: false,
+            index_drives: false,
+            index_max_watches: 10_000,
         }
     }
 }
@@ -253,6 +277,11 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # pin_dir = "~/Snap"
 # Kontingent in GB (0 = unbegrenzt)
 # pin_max_gb = 0
+
+# Lokale Suche über Home-Ordner und angeschlossene Laufwerke (Index bleibt auf diesem Gerät).
+# index_enabled = true
+# index_drives = true
+# index_max_watches = 50000
 "#;
 
 #[cfg(test)]

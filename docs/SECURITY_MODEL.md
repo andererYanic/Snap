@@ -41,6 +41,12 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   Ersatzquellen liefern nur, wenn sie selbst das Recht dazu vergeben haben.
 - **Live-Verbindungen:** nur Hinweise (keine Daten), nur mit `catalog.read` in beide Richtungen,
   Frames ≤ 4 KiB, ≤ 50 Nachrichten/s, strikte Nachrichtentypen; Entzug trennt sofort.
+- **Lokale Suche & Explorer:** Index und Dateisystem-Zugriff sind nur lokal nutzbar (Recht `admin`,
+  für Geräte gesperrt). Der Index liegt im privaten Datenordner (0700) und wird nicht repliziert.
+  Die Snap-Daten werden weder indexiert noch als Suchort angenommen, auch nicht über Symlinks.
+  Symlinks werden erfasst, aber nicht verfolgt. Suchbegriffe gehen nur als Parameter in die
+  Datenbank; FTS5-Syntax wird neutralisiert (Fuzz-Ziel `search_query`). Zu große Antworten werden
+  als Fehler gemeldet, statt die Verbindung abzubrechen.
 - **Eingaben von außen:** Größenlimits (IPC 1 MiB, Ledger-Seite 1000 Einträge / 8 MiB,
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.

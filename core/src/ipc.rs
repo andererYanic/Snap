@@ -200,6 +200,45 @@ pub enum Request {
     /// Ereignisse abonnieren: Die Verbindung bleibt offen, der Daemon sendet
     /// fortlaufend `Response::Event`.
     Subscribe,
+    /// Lokale Suche in den indexierten Orten (Name enthält `query`). Nur lokal.
+    Search {
+        query: String,
+        #[serde(default)]
+        filter: crate::index::SearchFilter,
+        limit: u32,
+    },
+    /// Ordnerinhalt live lesen (Explorer), Ordner zuerst, seitenweise. Nur lokal.
+    ListDir {
+        path: PathBuf,
+        #[serde(default)]
+        show_hidden: bool,
+        #[serde(default)]
+        offset: u32,
+        limit: u32,
+    },
+    /// Indexierte Orte anzeigen.
+    IndexRoots,
+    /// Ordner zur Suche hinzufügen (oder wieder aktivieren).
+    IndexAdd {
+        path: PathBuf,
+    },
+    /// Ort aus der Suche entfernen (bleibt deaktiviert, auch für erkannte Laufwerke).
+    IndexRemove {
+        id: i64,
+    },
+    /// Alle Orte sofort abgleichen.
+    IndexRescan,
+}
+
+/// Ein Eintrag beim Lesen eines Ordners.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DirEntryInfo {
+    pub name: String,
+    pub kind: crate::index::NodeKind,
+    /// Bytes (nur Dateien).
+    pub size: u64,
+    pub mtime: i64,
+    pub hidden: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -306,6 +345,20 @@ pub enum Response {
         peers: Vec<PeerInfo>,
     },
     Info(DaemonInfo),
+    SearchResults {
+        hits: Vec<crate::index::SearchHit>,
+    },
+    DirListing {
+        path: PathBuf,
+        entries: Vec<DirEntryInfo>,
+        /// Gesamtzahl (nach Filter „versteckt“), für die Seitenanzeige.
+        total: u64,
+    },
+    IndexRoots {
+        roots: Vec<crate::index::IndexRoot>,
+        /// Beobachtete Ordner (Änderungen sofort sichtbar); der Rest per periodischem Abgleich.
+        watched_dirs: u64,
+    },
     Error {
         code: ErrorCode,
         message: String,

@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod devices;
 pub mod error;
+pub mod explorer;
 pub mod files;
 pub mod pins;
 pub mod shares;
@@ -87,6 +88,14 @@ pub(crate) async fn handle_request(
         Request::Peers => inner.db.list_peers().map(|peers| Response::Peers { peers }),
         Request::Info => info(inner),
         Request::Browse(q) => files::browse(inner, q),
+        Request::Search { query, filter, limit } => explorer::search(inner, query, filter, limit).await,
+        Request::ListDir { path, show_hidden, offset, limit } => {
+            explorer::list_dir(path, show_hidden, offset, limit).await
+        }
+        Request::IndexRoots => explorer::index_roots(inner),
+        Request::IndexAdd { path } => explorer::index_add(inner, &path).await,
+        Request::IndexRemove { id } => explorer::index_remove(inner, id).await,
+        Request::IndexRescan => explorer::index_rescan(inner),
         Request::Subscribe => Ok(Response::error(
             error::ErrorCode::InvalidInput,
             "Ereignisse gibt es nur über eine Socket-Verbindung oder Daemon::subscribe()",
@@ -141,5 +150,11 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::PinAdd { .. } => "pin.add",
         Request::PinList => "pin.list",
         Request::PinRemove { .. } => "pin.remove",
+        Request::Search { .. } => "search",
+        Request::ListDir { .. } => "listdir",
+        Request::IndexRoots => "index.roots",
+        Request::IndexAdd { .. } => "index.add",
+        Request::IndexRemove { .. } => "index.remove",
+        Request::IndexRescan => "index.rescan",
     })
 }

@@ -49,6 +49,8 @@ pub struct DaemonInner {
     pub(crate) live: Arc<crate::live::LiveManager>,
     /// Löst einen Pin-Abgleich aus (z. B. nach `pin add`).
     pub(crate) pin_notify: Arc<Notify>,
+    /// Lokale Suche (`None` = in der Konfiguration abgeschaltet).
+    pub(crate) index: Option<Arc<crate::indexer::IndexService>>,
 }
 
 impl DaemonInner {
@@ -203,6 +205,14 @@ impl Daemon {
             .with_context(|| format!("IPC-Socket {} nicht anlegbar", config.socket_path.display()))?;
         std::fs::set_permissions(&config.socket_path, std::fs::Permissions::from_mode(0o600))?;
 
+        let index = if config.index_enabled {
+            let excluded = vec![config.data_dir.clone(), socket_dir.clone()];
+            let idx = crate::index::LocalIndex::open(&config.index_path(), excluded)?;
+            Some(Arc::new(crate::indexer::IndexService::new(idx, config.index_max_watches)))
+        } else {
+            None
+        };
+
         let inner = Arc::new(DaemonInner {
             config,
             network,
@@ -216,6 +226,7 @@ impl Daemon {
             scan_locks: Mutex::new(std::collections::HashMap::new()),
             live,
             pin_notify: Arc::new(Notify::new()),
+            index,
         });
         if inner.config.live_connections {
             inner.live.start();
@@ -229,7 +240,8 @@ impl Daemon {
         let periodic = tokio::spawn(run_periodic_sync(inner.clone()));
         let shares = tokio::spawn(start_shares(inner.clone()));
         let pins = tokio::spawn(crate::pins::run_pin_loop(inner.clone()));
-        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic, shares, pins]);
+        let indexer = tokio::spawn(crate::indexer::run_indexer(inner.clone()));
+        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic, shares, pins, indexer]);
 
         Ok(daemon)
     }
@@ -271,6 +283,9 @@ impl Daemon {
     pub async fn shutdown(&self) {
         self.inner.live.shutdown();
         self.inner.watchers.lock().unwrap().clear();
+        if let Some(index) = &self.inner.index {
+            index.stop();
+        }
         let tasks: Vec<_> = std::mem::take(&mut *self.tasks.lock().unwrap());
         for t in tasks {
             t.abort();
@@ -343,6 +358,12 @@ pub(crate) async fn handle_ipc_connection(inner: &Arc<DaemonInner>, mut stream: 
     }
     // Über den Socket sprechen nur Prozesse desselben Benutzers (SO_PEERCRED oben).
     let res = handle_request(inner, &crate::api::auth::Caller::Local, envelope.req).await;
+    let size = serde_json::to_vec(&res).map(|b| b.len()).unwrap_or(usize::MAX);
+    if size > crate::ipc::MAX_FRAME_LEN as usize {
+        // Z. B. sehr lange Pfade: lieber ein klarer Fehler als eine abgebrochene Verbindung.
+        let err = Response::error(ErrorCode::InvalidInput, "Antwort zu groß – bitte eine kleinere Seite anfordern.");
+        return write_frame(&mut stream, &err).await;
+    }
     write_frame(&mut stream, &res).await
 }
 
