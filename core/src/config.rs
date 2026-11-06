@@ -58,6 +58,8 @@ pub struct ConfigFile {
     /// Gekoppelte Geräte: verändernde Operationen (Dateien) pro Stunde ohne Bestätigung.
     /// Standard: 100. 0 = jede Fernänderung muss bestätigt werden.
     pub ops_hourly_limit: Option<u32>,
+    /// Höchstgröße des Vorschaubild-Caches in MB. Standard: 500.
+    pub thumb_cache_mb: Option<u64>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -86,6 +88,7 @@ pub struct Config {
     pub trash_dir: PathBuf,
     /// Verändernde Fernoperationen pro Gerät und Stunde, darüber wird Bestätigung verlangt.
     pub ops_hourly_limit: u32,
+    pub thumb_cache_bytes: u64,
 }
 
 impl Config {
@@ -99,6 +102,10 @@ impl Config {
 
     pub fn secret_key_path(&self) -> PathBuf {
         self.data_dir.join("secret.key")
+    }
+
+    pub fn thumb_dir(&self) -> PathBuf {
+        self.data_dir.join("thumbs")
     }
 
     pub fn index_path(&self) -> PathBuf {
@@ -192,6 +199,7 @@ impl Config {
             index_max_watches: file.index_max_watches.unwrap_or(50_000),
             trash_dir,
             ops_hourly_limit: file.ops_hourly_limit.unwrap_or(100),
+            thumb_cache_bytes: file.thumb_cache_mb.unwrap_or(500).max(10) * 1024 * 1024,
         })
     }
 
@@ -216,6 +224,7 @@ impl Config {
             index_max_watches: 10_000,
             trash_dir: root.join("Trash"),
             ops_hourly_limit: 100,
+            thumb_cache_bytes: 50 * 1024 * 1024,
         }
     }
 }
@@ -299,6 +308,9 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # Gekoppelte Geräte: höchstens so viele Dateien pro Stunde verändern (umbenennen, verschieben,
 # löschen), darüber wird eine Bestätigung auf diesem Gerät verlangt (space-daemon ops pending).
 # ops_hourly_limit = 100
+
+# Größe des Caches für Vorschaubilder (MB).
+# thumb_cache_mb = 500
 "#;
 
 #[cfg(test)]

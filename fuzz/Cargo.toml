@@ -72,3 +72,10 @@ path = "fuzz_targets/ops_request.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "media"
+path = "fuzz_targets/media.rs"
+test = false
+doc = false
+bench = false

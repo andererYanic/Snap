@@ -51,6 +51,15 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   über den Papierkorb); Symlinks werden weder beim Kopieren noch beim Löschen verfolgt;
   `.trashinfo` gilt als fremde Eingabe (strenger Parser, nur absolute Ziele ohne `..`, Fuzz-Ziel
   `trashinfo`).
+- **Vorschaubilder & Metadaten:** Dateien fremder Herkunft werden nur mit reinen Rust-Decodern
+  gelesen. Abmessungen und Speicherbedarf werden *vor* dem Decodieren selbst geprüft, weil nicht
+  jeder Decoder seine Grenzen einhält: Per Fuzzing wurde eine 43-Byte-GIF-Datei gefunden, die
+  ~780 MB reservierte. Höchstens 2 Decodierungen laufen gleichzeitig, Panics werden abgefangen,
+  `O_NOFOLLOW`. `lofty` 0.25.5 hängt bei AAC mit Frame-Länge 0 in einer Endlosschleife (ebenfalls
+  per Fuzzing gefunden); für AAC wird die Dauer deshalb nicht berechnet. Fuzz-Ziel `media`.
+  Restrisiko: Endlosschleifen in weiteren Parsern lassen sich ohne Prozess-Isolation nicht
+  abbrechen. Für die Mobile-Einbettung wird geprüft, die Decoder in einem eigenen Prozess bzw.
+  einer eigenen Erweiterung auszuführen.
 - **Fernoperationen (`snap/ops/1`):** nicht gekoppelte Gegenstellen werden vor dem Lesen
   getrennt; nur relative Pfade innerhalb einer Freigabe, Symlinks auf dem Weg werden abgelehnt,
   Ziele zusätzlich kanonisiert geprüft; jede Operation läuft durch die zentrale Rechteprüfung

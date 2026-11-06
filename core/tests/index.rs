@@ -8,14 +8,11 @@ use space_core::{Config, Daemon};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-fn free_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
 async fn start(root: &Path) -> Daemon {
     let mut c = Config::portable(root);
     c.use_relay = false;
-    c.bind_port = Some(free_port());
+    // Port vom Betriebssystem (0): kein Wettlauf mit parallel laufenden Tests.
+    c.bind_port = None;
     c.live_connections = false;
     Daemon::start_loopback(c).await.unwrap()
 }
@@ -168,7 +165,8 @@ async fn index_can_be_disabled() {
     let tmp = tempfile::tempdir().unwrap();
     let mut c = Config::portable(tmp.path());
     c.use_relay = false;
-    c.bind_port = Some(free_port());
+    // Port vom Betriebssystem (0): kein Wettlauf mit parallel laufenden Tests.
+    c.bind_port = None;
     c.index_enabled = false;
     let d = Daemon::start_loopback(c).await.unwrap();
     let res = d.request(Request::Search { query: "abc".into(), filter: SearchFilter::default(), limit: 10 }).await;

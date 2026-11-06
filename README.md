@@ -60,6 +60,8 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `trash` / `trash restore <nr>` / `trash purge <nr>` / `trash empty` | Papierkorb |
 | `remote <gerät> rename\|mv\|cp\|mkdir\|rm Freigabe/pfad …` | Dateien in Freigaben eines gekoppelten Geräts bearbeiten |
 | `ops` / `ops approve <nr>` / `ops reject <nr>` | Vom Massenschutz angehaltene Änderungen anderer Geräte |
+| `thumb <bild> [--large]` | Vorschaubild erzeugen (256 bzw. 1024 px, Cache im Datenordner) |
+| `meta <datei>` | Metadaten: Art, Abmessungen, Aufnahmedatum, Kamera, Ort (GPS), Dauer, Titel/Interpret |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
 | `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
@@ -169,6 +171,18 @@ core/src
 - **Papierkorb nach freedesktop-Standard**: dieselben Einträge wie im Dateimanager des Desktops;
   auf anderen Laufwerken `.Trash-<uid>` auf dem Laufwerk selbst.
 - **Rückgängig** für die letzten 20 Schritte (im Speicher; endgültiges Löschen ausgenommen).
+
+### Vorschaubilder & Metadaten
+
+- Vorschaubilder für JPEG, PNG, GIF, WebP, BMP und TIFF, in zwei Stufen (256 und 1024 px), mit
+  EXIF-Ausrichtung. Der Cache liegt im Datenordner (`thumb_cache_mb`, Standard 500) und wird bei
+  geänderten Dateien automatisch erneuert.
+- JPEG wird direkt verkleinert decodiert. Ein 12-MP-Foto braucht etwa 70 ms, aus dem Cache 0,02 ms.
+- Metadaten: Art (nach Inhalt erkannt, nicht nach Endung), Abmessungen, Aufnahmezeit, Kamera,
+  GPS, Ausrichtung; bei Musik und Videos Dauer, Titel, Interpret, Album.
+- Sicherheit: nur reine Rust-Decoder, Größe und Speicher werden vor dem Decodieren geprüft
+  (Schutz vor Dekompressionsbomben), höchstens 2 Decodierungen gleichzeitig, Symlinks werden
+  nicht verfolgt. Die Vorschaubilder für gekoppelte Geräte folgen mit dem Streaming (5a).
 
 ### Dateien auf anderen Geräten bearbeiten
 

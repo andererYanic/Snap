@@ -5,14 +5,11 @@ use space_core::{Config, Daemon};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-fn free_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
 fn config(root: &Path, name: &str) -> Config {
     let mut c = Config::portable(root);
     c.use_relay = false;
-    c.bind_port = Some(free_port());
+    // Port vom Betriebssystem (0): kein Wettlauf mit parallel laufenden Tests.
+    c.bind_port = None;
     c.connect_timeout_secs = 2;
     c.device_name = name.into();
     c

@@ -10,6 +10,7 @@ pub mod indexer;
 pub mod ipc;
 pub mod ledger;
 pub mod live;
+pub mod media;
 pub mod network;
 pub mod pairing;
 pub mod pins;

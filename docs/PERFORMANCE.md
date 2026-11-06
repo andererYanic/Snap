@@ -207,3 +207,33 @@ Messung (`file_ops`, Release): Ordner mit 2 000 kleinen Dateien in 20 Unterordne
 - Der Massenschutz zählt die Dateien betroffener Ordner per Verzeichnisdurchlauf. Bei sehr
   großen Ordnern kostet das Zeit, bevor die Operation beginnt; der Index könnte das schneller
   liefern.
+
+## Review 9 – Vorschaubilder & Metadaten (2026-11-06)
+
+Messung (`media_thumbnails`, Release): 12-MP-JPEG (4000 × 3000, 2,2 MB), Vorschaubild 256 px.
+
+| Messung | Vorher | Nachher | Maßnahme |
+|---|---|---|---|
+| Vorschaubild neu erzeugen | 115 ms | **69 ms** | JPEG direkt verkleinert decodieren (DCT-Skalierung 1/8 mit `jpeg-decoder`) |
+| … zwei gleichzeitig | 60 ms/Bild | **31 ms/Bild** | |
+| RAM-Spitze beim Erzeugen | +38 MiB | **+6 MiB** | Es entsteht nie das volle 12-MP-Bild im Speicher |
+| Vorschaubild aus dem Cache | – | **0,012–0,019 ms** | Schlüssel aus Pfad, Größe und mtime; nur `stat` und Kopf lesen |
+| Metadaten (EXIF + Abmessungen) | – | 3 ms | |
+
+Den Rest der 69 ms kostet das Entpacken der komprimierten Bilddaten; das lässt sich bei JPEG
+nicht überspringen. Bei einer Galerie mit 1 000 neuen Fotos sind das etwa 35 s im Hintergrund
+(2 parallel). Danach kommt jedes Vorschaubild sofort aus dem Cache.
+
+**Gefundene Fehler (Fuzzing):**
+
+- Eine 43-Byte-GIF-Datei mit 16 641 × 11 780 Pixeln reservierte ~780 MB, obwohl eine
+  Speichergrenze gesetzt war. Jetzt prüft Snap Abmessungen und Speicherbedarf selbst, bevor
+  decodiert wird.
+- `lofty` (AAC) lief bei einer 245-Byte-Datei endlos. Für AAC wird die Dauer jetzt nicht
+  berechnet; ein Regressionstest ist eingecheckt. Upstream ist der Fehler noch nicht gemeldet.
+
+**Offen:**
+
+- Vorschaubilder bereits beim Indexieren im Hintergrund erzeugen (erst ab einer Galerie in der
+  Oberfläche sinnvoll; Akku auf Mobile beachten).
+- Mehr parallele Decodierungen wären möglich, solange der speichersparende JPEG-Weg greift.

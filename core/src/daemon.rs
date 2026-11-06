@@ -55,6 +55,8 @@ pub struct DaemonInner {
     pub(crate) files: Arc<crate::fileops::jobs::FileJobs>,
     /// Stundenfenster und Parallelität für Fernoperationen.
     pub(crate) remote_ops: crate::remote_ops::RemoteOpsState,
+    /// Vorschaubilder (Cache im Datenordner).
+    pub(crate) thumbs: crate::media::ThumbCache,
 }
 
 impl DaemonInner {
@@ -229,6 +231,7 @@ impl Daemon {
         };
 
         let config_trash_dir = config.trash_dir.clone();
+        let thumbs = crate::media::ThumbCache::new(config.thumb_dir(), config.thumb_cache_bytes);
         let inner = Arc::new(DaemonInner {
             config,
             network,
@@ -245,6 +248,7 @@ impl Daemon {
             files: Arc::new(crate::fileops::jobs::FileJobs::new(crate::fileops::trash::Trash::new(config_trash_dir))),
             index,
             remote_ops: Default::default(),
+            thumbs,
         });
         let _ = ops_slot.set(Arc::downgrade(&inner));
         if inner.config.live_connections {
@@ -260,6 +264,11 @@ impl Daemon {
         let shares = tokio::spawn(start_shares(inner.clone()));
         let pins = tokio::spawn(crate::pins::run_pin_loop(inner.clone()));
         let indexer = tokio::spawn(crate::indexer::run_indexer(inner.clone()));
+        {
+            // Vorschaubild-Cache beim Start auf die eingestellte Größe bringen.
+            let (dir, max) = (inner.config.thumb_dir(), inner.config.thumb_cache_bytes);
+            tokio::task::spawn_blocking(move || crate::media::prune(&dir, max));
+        }
         daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic, shares, pins, indexer]);
 
         Ok(daemon)
