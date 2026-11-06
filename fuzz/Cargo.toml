@@ -3,6 +3,7 @@ name = "snap-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
+license = "GPL-3.0-only"
 
 [package.metadata]
 cargo-fuzz = true

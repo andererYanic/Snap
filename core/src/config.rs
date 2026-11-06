@@ -38,6 +38,11 @@ pub struct ConfigFile {
     /// `false` = keine öffentlichen n0-Relais und kein n0-DNS (reiner LAN-/Direktmodus).
     /// Tickets enthalten dann direkte IP-Adressen.
     pub use_relay: Option<bool>,
+    /// Eigene Iroh-Relais (z. B. `https://relay.example.org`). Leer = öffentliche n0-Relais.
+    #[serde(default)]
+    pub relay_urls: Vec<String>,
+    /// Mit eigenen Relais zusätzlich die n0-Relais als Ausweich verwenden. Standard: true.
+    pub relay_fallback_n0: Option<bool>,
     /// Anzeigename dieses Geräts für gekoppelte Geräte. Standard: Hostname.
     pub device_name: Option<String>,
     /// Intervall für den automatischen Ledger-Abgleich in Stunden (±30 % Zufall). 0 = aus.
@@ -82,6 +87,9 @@ pub struct Config {
     pub connect_timeout_secs: u64,
     pub bind_port: Option<u16>,
     pub use_relay: bool,
+    /// Eigene Relais (geprüft: nur https). Leer = n0-Relais.
+    pub relay_urls: Vec<String>,
+    pub relay_fallback_n0: bool,
     pub device_name: String,
     /// 0.0 = periodischer Abgleich deaktiviert.
     pub sync_interval_hours: f64,
@@ -104,6 +112,25 @@ pub struct Config {
     pub upload_daily_gb: u64,
     pub upload_reserve_gb: u64,
     pub link_default_days: u32,
+}
+
+/// Prüft eigene Relais-Adressen: nur `https://` mit Rechnername, ohne Zugangsdaten, höchstens 8.
+fn check_relay_urls(urls: &[String]) -> Result<Vec<String>> {
+    if urls.len() > 8 {
+        anyhow::bail!("Höchstens 8 eigene Relais (relay_urls).");
+    }
+    urls.iter()
+        .map(|u| {
+            let url = reqwest::Url::parse(u.trim()).map_err(|e| anyhow::anyhow!("Ungültiges Relais {u:?}: {e}"))?;
+            if url.scheme() != "https" || url.host_str().is_none_or(str::is_empty) {
+                anyhow::bail!("Relais {u:?} muss https:// mit Rechnernamen verwenden.");
+            }
+            if !url.username().is_empty() || url.password().is_some() || url.query().is_some() {
+                anyhow::bail!("Relais {u:?}: keine Zugangsdaten oder Parameter in der Adresse.");
+            }
+            Ok(url.to_string())
+        })
+        .collect()
 }
 
 impl Config {
@@ -199,6 +226,8 @@ impl Config {
             connect_timeout_secs: file.connect_timeout_secs.unwrap_or(10).max(1),
             bind_port: file.bind_port,
             use_relay: file.use_relay.unwrap_or(true),
+            relay_urls: check_relay_urls(&file.relay_urls)?,
+            relay_fallback_n0: file.relay_fallback_n0.unwrap_or(true),
             device_name: file
                 .device_name
                 .map(|n| n.trim().to_string())
@@ -233,6 +262,8 @@ impl Config {
             connect_timeout_secs: 5,
             bind_port: None,
             use_relay: true,
+            relay_urls: Vec::new(),
+            relay_fallback_n0: true,
             device_name: "Testgerät".to_string(),
             sync_interval_hours: 0.0,
             live_connections: true,
@@ -308,6 +339,12 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # Tickets enthalten dann direkte IP-Adressen.
 # use_relay = true
 
+# Eigenes Iroh-Relais (Einrichtung: gateway/relay/README.md). Ohne Angabe: öffentliche n0-Relais.
+# Relais sehen, welche Geräte wann verbunden sind, aber nie Inhalte (Ende-zu-Ende-verschlüsselt).
+# relay_urls = ["https://relay.example.org"]
+# Zusätzlich die n0-Relais als Ausweich, falls das eigene nicht erreichbar ist (Standard: true)
+# relay_fallback_n0 = true
+
 # Name dieses Geräts, wie er auf gekoppelten Geräten angezeigt wird (Standard: Hostname)
 # device_name = "Arch-Desktop"
 
@@ -354,6 +391,23 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_urls_are_checked() {
+        let ok = check_relay_urls(&["https://relay.example.org".into()]).unwrap();
+        assert_eq!(ok, ["https://relay.example.org/"]);
+        for bad in [
+            "http://relay.example.org",
+            "https://user:pw@relay.example.org",
+            "https://relay.example.org/?token=x",
+            "relay.example.org",
+            "file:///etc/passwd",
+        ] {
+            assert!(check_relay_urls(&[bad.into()]).is_err(), "{bad}");
+        }
+        assert!(check_relay_urls(&vec!["https://a.example".to_string(); 9]).is_err());
+        assert!(check_relay_urls(&[]).unwrap().is_empty());
+    }
 
     #[test]
     fn template_parses() {

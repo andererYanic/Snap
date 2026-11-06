@@ -1,0 +1,19 @@
+services:
+  relay:
+    build: .
+    image: snap-iroh-relay:1.4.1
+    restart: unless-stopped
+    ports:
+      - "80:8080/tcp"
+      - "443:8443/tcp"
+      - "7842:7842/udp"
+    volumes:
+      - ./relay.toml:/etc/iroh-relay/relay.toml:ro
+      - relay-certs:/data/certs
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+
+volumes:
+  relay-certs:

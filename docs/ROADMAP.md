@@ -52,6 +52,10 @@ Abstriche bei der Sicherheit.
 | 2026-11-06 | **Sicherungsschlüssel: Passwort + Wiederherstellungsschlüssel**; der Hauptschlüssel liegt zusätzlich auf dem sichernden Gerät (0600), damit stündliche Sicherungen ohne Eingabe laufen | Ohne Passwort und ohne Wiederherstellungsschlüssel ist eine Sicherung auf einem neuen Gerät nicht lesbar. |
 | 2026-11-06 | **Zeitplan: stündlich; behalten 24 Stunden / 30 Tage / 12 Monate** (änderbar) | Feine Versionen für den Alltag, lange Aufbewahrung bei moderatem Platz. |
 | 2026-11-06 | **Grenzen zur Laufzeit änderbar** (`settings set`, ohne Neustart; Standard aus `config.toml`) | Im Alltag nachjustieren, ohne den Daemon neu zu starten. |
+| 2026-11-06 | **Lizenz GPL-3.0** | Freie Software; veränderte Weitergaben müssen offen bleiben. Alle Abhängigkeiten (MIT, Apache-2.0, BSD, MPL-2.0 …) sind mit GPL-3.0 verträglich. |
+| 2026-11-06 | **Veröffentlichung als neues Repository** (statt Historie umschreiben) | Keine alten Datenbankdateien in der öffentlichen Historie; private Historie bleibt unverändert als Archiv. |
+| 2026-11-06 | **Relais: vorerst n0, eigenes Relais vorbereitet** (`relay_urls`, `relay_fallback_n0`, Docker unter `gateway/relay/`) | Wechsel ohne Codeänderung möglich; eigenes Relais nur für eigene Geräte (Allowlist). |
+| 2026-11-06 | **Nächste Phase: Desktop-App (Tauri v2 + React)** | Backend weitgehend fertig; die App macht es im Alltag nutzbar und testbar. |
 | 2026-11-06 | **Eigene PRs bei grüner CI selbst mergen** | Freigabe des Nutzers; Designs sicherheitsrelevanter Systeme werden weiterhin vorher vorgelegt. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
 
@@ -78,14 +82,14 @@ Abstriche bei der Sicherheit.
 | **2 – Explorer-Kern** (2a Index & Suche ✅ PR #8 · 2b Dateioperationen ✅ PR #9 · 2c Vorschaubilder & Metadaten ✅ PR #10) | Index des lokalen Dateisystems, FTS5-Suche, Ordner live lesen, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
 | **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |
-| **5 – Medien & Teilen** (5a Streaming + Fern-Vorschaubilder ✅ PR #11 · 5b Hochladen + Kamera-Upload ✅ PR #13 · 5c Freigabelinks ✅ PR #14 · 5d Foto-Zeitachse ✅) | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | offen |
+| **5 – Medien & Teilen** (5a Streaming + Fern-Vorschaubilder ✅ PR #11 · 5b Hochladen + Kamera-Upload ✅ PR #13 · 5c Freigabelinks ✅ PR #14 · 5d Foto-Zeitachse ✅ PR #18 · eigenes Relais vorbereitet ✅) | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | ✅ |
 | **6 – Schutz** (6a Speicheranalyse + Duplikate ✅ PR #15 · 6b-1 Sicherungs-Engine ✅ PR #16 · 6b-2 Zeitplan, Aufbewahrung, R2 ✅ PR #17) | Versionen und Snapshots, verschlüsselte Backup-Ziele, Duplikat-Bereinigung, Speicheranalyse | ✅ |
 | **7 – Veröffentlichung** | Sicherheits-Checkliste unten abarbeiten, dann öffentliches Repository | offen |
 
 ## Checkliste vor der Veröffentlichung (Phase 7)
 
-- [ ] **Git-Historie bereinigen**: Der erste Upload enthält `space.db`, `space_ledger.db` und Testdateien (Tickets sind wertlos, trotzdem entfernen) – neues Repository oder `git filter-repo`.
-- [ ] **Lizenz** festlegen (z. B. Apache-2.0 oder MIT/Apache dual).
+- [ ] **Git-Historie bereinigen**: Der erste Upload enthält `space.db`, `space_ledger.db` und Testdateien. Entschieden: **neues öffentliches Repository** mit sauberem ersten Commit; das private Repository bleibt als Archiv.
+- [x] **Lizenz**: GPL-3.0 (`LICENSE`, `license = "GPL-3.0-only"` in allen Crates).
 - [x] **`SECURITY.md`** mit vertraulichem Meldeweg; **Bedrohungsmodell** (`docs/SECURITY_MODEL.md`) – vor Veröffentlichung aktualisieren.
 - [x] **CI** (GitHub Actions, auf Commit-SHAs gepinnt): `fmt`, `clippy -D warnings`, `cargo test`, `cargo audit`, `cargo deny`.
 - [x] **Fuzzing** (`fuzz/`): Einladungscodes, Ledger-Einträge, IPC-Frames, Pfad-/Namensprüfung – Kurzlauf je PR, 20 min nächtlich. Neue Parser bekommen ein Ziel.

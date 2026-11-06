@@ -99,6 +99,7 @@ Hashes können abgekürzt werden (mindestens 6 Hexzeichen, müssen eindeutig sei
 Weitere Optionen (siehe kommentierte `config.toml`): `retention_days` (Papierkorb, Standard 30),
 `connect_timeout_secs` (10), `bind_port` (fester UDP-Port, z. B. für Docker), `use_relay`
 (`false` = keine n0-Relais/kein n0-DNS, nur direkte Verbindungen; Tickets enthalten dann IP-Adressen),
+`relay_urls` / `relay_fallback_n0` (eigenes Relais, Einrichtung per Docker: `gateway/relay/README.md`),
 `device_name` (Anzeigename, Standard: Hostname), `sync_interval_hours` (periodischer Abgleich,
 Standard 6, ±30 % Zufall; 0 = aus).
 
@@ -356,7 +357,8 @@ Unbekannte Node-IDs werden nicht gespeichert.
   wird ihr Tag entfernt, und die Garbage Collection des Blob-Stores gibt den Speicher frei.
 - **Bekannte Metadaten-Lücke:** Mit `use_relay = true` veröffentlicht der Node seine Node-ID und sein
   Heim-Relais bei n0-DNS (keine IP-Adressen). Verbindungen können über n0-Relais laufen; die
-  Inhalte bleiben dabei durch QUIC/TLS Ende-zu-Ende verschlüsselt. Geplant ist ein eigenes Relais.
+  Inhalte bleiben dabei durch QUIC/TLS Ende-zu-Ende verschlüsselt. Ein eigenes Relais lässt sich
+  mit `relay_urls` einbinden (`gateway/relay/`). Es lässt nur die eigenen Geräte zu.
 
 ## API für Oberflächen
 
@@ -398,3 +400,9 @@ Sie prüfen:
 Siehe [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 Benötigt Rust ≥ 1.91 (Vorgabe von Iroh 1.4).
+
+## Lizenz
+
+Snap ist freie Software unter der [GNU General Public License v3.0](LICENSE) (`GPL-3.0-only`).
+Du darfst Snap nutzen, verändern und weitergeben. Wer veränderte Versionen weitergibt, muss den
+Quellcode unter derselben Lizenz offenlegen.

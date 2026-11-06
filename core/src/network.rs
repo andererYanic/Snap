@@ -31,8 +31,29 @@ pub struct NetworkOptions {
     pub connect_timeout: Duration,
     pub bind_port: Option<u16>,
     pub use_relay: bool,
+    /// Eigene Relais (bereits geprüft). Leer = n0-Relais.
+    pub relay_urls: Vec<String>,
+    /// Mit eigenen Relais zusätzlich die n0-Relais verwenden.
+    pub relay_fallback_n0: bool,
     /// Nur für Tests: an 127.0.0.1 binden.
     pub loopback_only: bool,
+}
+
+/// Relais-Konfiguration: `None` = Standard (n0). Eigene Relais zuerst, n0 optional als Ausweich.
+/// Die Adressauflösung (n0-DNS) bleibt unverändert, damit Tickets weiter nur die Node-ID brauchen.
+pub fn relay_mode(urls: &[String], fallback_n0: bool) -> Result<Option<RelayMode>> {
+    if urls.is_empty() {
+        return Ok(None);
+    }
+    let own: Vec<iroh::RelayUrl> = urls
+        .iter()
+        .map(|u| u.parse().map_err(|e| anyhow::anyhow!("Ungültiges Relais {u:?}: {e}")))
+        .collect::<Result<_>>()?;
+    let map = iroh::RelayMap::from_iter(own);
+    if fallback_n0 {
+        map.extend(&RelayMode::Default.relay_map());
+    }
+    Ok(Some(RelayMode::Custom(map)))
 }
 
 /// Fehlerarten beim Herunterladen – bestimmen, ob ein Auftrag in die
@@ -106,7 +127,11 @@ impl P2pNetwork {
         let store: iroh_blobs::api::Store = fs_store.into();
 
         let mut builder = if opts.use_relay {
-            Endpoint::builder(presets::N0)
+            let b = Endpoint::builder(presets::N0);
+            match relay_mode(&opts.relay_urls, opts.relay_fallback_n0)? {
+                Some(mode) => b.relay_mode(mode),
+                None => b,
+            }
         } else {
             Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
         };
@@ -486,4 +511,20 @@ fn access_control(access: AccessCheck, on_connect: ConnectHook) -> EventSender {
         }
     });
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_mode_own_and_fallback() {
+        assert!(relay_mode(&[], true).unwrap().is_none(), "Standard: n0");
+        let own = vec!["https://relay.example.org/".to_string()];
+        let only = relay_mode(&own, false).unwrap().unwrap().relay_map();
+        assert_eq!(only.len(), 1);
+        assert!(only.contains(&"https://relay.example.org/".parse().unwrap()));
+        let with = relay_mode(&own, true).unwrap().unwrap().relay_map();
+        assert!(with.len() > 1, "n0-Relais als Ausweich");
+    }
 }
