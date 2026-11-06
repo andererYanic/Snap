@@ -36,7 +36,7 @@ pub struct BackupProgress {
 /// Bekannte Inhalte der Ablage (lokaler Zwischenspeicher, damit nichts doppelt hochgeladen wird).
 pub struct Known {
     path: PathBuf,
-    set: HashSet<String>,
+    pub(crate) set: HashSet<String>,
     added: Vec<String>,
 }
 
@@ -87,6 +87,10 @@ impl Known {
         Ok(())
     }
 }
+
+/// Abstand (Sekunden) zwischen mtime und letzter Sicherung, ab dem eine unveränderte Datei
+/// nicht erneut gelesen wird.
+const RACY_SECS: i64 = 2;
 
 fn mtime_ns(m: &std::fs::Metadata) -> i64 {
     m.mtime().saturating_mul(1_000_000_000).saturating_add(m.mtime_nsec())
@@ -145,7 +149,8 @@ pub async fn backup(
             .as_ref()
             .and_then(|p| p.sources.iter().find(|r| Path::new(&r.path) == src.as_path()))
             .map(|r| r.tree.clone());
-        let tree = Box::pin(backup_dir(repo, known, src, prev_tree, progress)).await?;
+        let prev_time = prev.as_ref().map(|p| p.time).unwrap_or(0);
+        let tree = Box::pin(backup_dir(repo, known, src, prev_tree, prev_time, progress)).await?;
         roots.push(SourceRoot { path: src.to_string_lossy().into_owned(), tree });
     }
     let info = SnapshotInfo {
@@ -178,11 +183,15 @@ async fn put_tree(repo: &Repo, known: &mut Known, tree: &Tree) -> Result<String>
     Ok(id)
 }
 
+/// `prev_time`: Zeitpunkt des vorherigen Stands (Sekunden). Dateien, deren mtime näher als
+/// [`RACY_SECS`] daran liegt, werden immer neu gelesen: Grobe Zeitstempel des Dateisystems
+/// könnten sonst eine Änderung kurz nach dem Lesen verbergen („racy timestamp“, wie bei git).
 async fn backup_dir(
     repo: &Repo,
     known: &mut Known,
     dir: &Path,
     prev: Option<String>,
+    prev_time: i64,
     progress: &BackupProgress,
 ) -> Result<String> {
     let prev_entries: HashMap<String, TreeEntry> = match prev {
@@ -210,7 +219,7 @@ async fn backup_dir(
         let ft = meta.file_type();
         if ft.is_dir() {
             let prev_sub = prev_entries.get(&name).filter(|p| p.kind == 'd').and_then(|p| p.tree.clone());
-            let tree = Box::pin(backup_dir(repo, known, &path, prev_sub, progress)).await?;
+            let tree = Box::pin(backup_dir(repo, known, &path, prev_sub, prev_time, progress)).await?;
             entries.push(TreeEntry {
                 name,
                 kind: 'd',
@@ -239,7 +248,10 @@ async fn backup_dir(
             progress.files.fetch_add(1, Ordering::Relaxed);
             progress.bytes.fetch_add(size, Ordering::Relaxed);
             // Unverändert → Stückliste übernehmen, ohne die Datei zu lesen.
-            if let Some(p) = prev_entries.get(&name).filter(|p| p.kind == 'f' && p.size == size && p.mtime == mtime) {
+            let settled = mtime.div_euclid(1_000_000_000) + RACY_SECS < prev_time;
+            if let Some(p) =
+                prev_entries.get(&name).filter(|p| p.kind == 'f' && p.size == size && p.mtime == mtime && settled)
+            {
                 if p.chunks.iter().all(|c| known.contains(c)) {
                     entries.push(TreeEntry {
                         name,
@@ -278,6 +290,82 @@ async fn backup_dir(
         }
     }
     put_tree(repo, known, &Tree { entries }).await
+}
+
+/// Aufbewahrungsregeln: je Zeitraum der jeweils neueste Stand.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retention {
+    pub hourly: usize,
+    pub daily: usize,
+    pub monthly: usize,
+}
+
+/// Welche Stände bleiben (der neueste immer). Zeiträume nach UTC.
+pub fn select_keep(snapshots: &[SnapshotInfo], r: Retention) -> HashSet<String> {
+    // Neueste zuerst; bei gleicher Sekunde entscheidet die Reihenfolge im Katalog (angehängt).
+    let mut by_time: Vec<(usize, &SnapshotInfo)> = snapshots.iter().enumerate().collect();
+    by_time.sort_by_key(|(i, s)| std::cmp::Reverse((s.time, *i)));
+    let by_time: Vec<&SnapshotInfo> = by_time.into_iter().map(|(_, s)| s).collect();
+    let mut keep = HashSet::new();
+    if let Some(newest) = by_time.first() {
+        keep.insert(newest.id.clone());
+        // Schonfrist: Stände der letzten Stunde (z. B. von Hand ausgelöst) bleiben alle erhalten.
+        if r.hourly > 0 {
+            keep.extend(by_time.iter().filter(|s| s.time > newest.time - 3600).map(|s| s.id.clone()));
+        }
+    }
+    type BucketKey = fn(i64) -> i64;
+    let buckets: [(usize, BucketKey); 3] = [
+        (r.hourly, |t| t.div_euclid(3600)),
+        (r.daily, |t| t.div_euclid(86_400)),
+        (r.monthly, |t| {
+            use chrono::Datelike;
+            let d = chrono::DateTime::from_timestamp(t, 0).unwrap_or_default();
+            i64::from(d.year()) * 12 + i64::from(d.month0())
+        }),
+    ];
+    for (limit, key) in buckets {
+        let mut seen = HashSet::new();
+        for s in &by_time {
+            if seen.len() >= limit {
+                break;
+            }
+            if seen.insert(key(s.time)) {
+                keep.insert(s.id.clone());
+            }
+        }
+    }
+    keep
+}
+
+/// Entfernt Stände nach den Regeln und löscht nicht mehr benötigte Objekte.
+/// Gibt (entfernte Stände, gelöschte Objekte) zurück.
+pub async fn forget_and_prune(repo: &Repo, known: &mut Known, r: Retention) -> Result<(usize, usize)> {
+    let mut catalog = repo.load_catalog().await?;
+    if known.is_empty() && !catalog.snapshots.is_empty() {
+        for id in referenced(repo, &catalog).await? {
+            known.insert(id);
+        }
+        known.flush()?;
+    }
+    let keep = select_keep(&catalog.snapshots, r);
+    let before = catalog.snapshots.len();
+    catalog.snapshots.retain(|s| keep.contains(&s.id));
+    let forgotten = before - catalog.snapshots.len();
+    // Erst den Katalog schreiben (danach verweist nichts mehr auf die alten Stände) …
+    if forgotten > 0 {
+        repo.save_catalog(&catalog).await?;
+    }
+    // … dann alles löschen, was keiner der verbliebenen Stände braucht.
+    let live = referenced(repo, &catalog).await?;
+    let dead: Vec<String> = known.set.iter().filter(|id| !live.contains(*id)).cloned().collect();
+    for id in &dead {
+        // Bäume und Stücke teilen sich den ID-Raum; das jeweils andere Objekt existiert nicht.
+        repo.storage.delete(&chunk_name(id)).await?;
+        repo.storage.delete(&tree_name(id)).await?;
+    }
+    known.replace(live)?;
+    Ok((forgotten, dead.len()))
 }
 
 /// Eintrag beim Durchsuchen eines Stands.
@@ -461,6 +549,9 @@ mod tests {
             })
             .collect();
         std::fs::write(src.join("video.mp4"), &big).unwrap();
+        // Älter als die Schutzfrist für grobe Zeitstempel, damit der zweite Lauf sie überspringt
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options().write(true).open(src.join("video.mp4")).unwrap().set_modified(old).unwrap();
         std::fs::write(src.join("Steuer/2024/bescheid.pdf"), b"pdf-inhalt").unwrap();
         std::fs::write(src.join("leer.txt"), b"").unwrap();
         std::fs::write(src.join("node_modules/x/index.js"), b"ausgeschlossen").unwrap();
@@ -534,8 +625,12 @@ mod tests {
         assert_eq!(crate::api::error::code_of(&err), crate::api::error::ErrorCode::PermissionDenied);
 
         // Manipuliertes Stück am Ziel → Wiederherstellen schlägt fehl statt falscher Daten
-        let chunk =
-            walkdir::WalkDir::new(store.join("data")).into_iter().flatten().find(|e| e.file_type().is_file()).unwrap();
+        let chunk = walkdir::WalkDir::new(store.join("data"))
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_file())
+            .max_by_key(|e| e.metadata().map(|m| m.len()).unwrap_or(0))
+            .unwrap();
         let mut b = std::fs::read(chunk.path()).unwrap();
         b[40] ^= 1;
         std::fs::write(chunk.path(), b).unwrap();
@@ -548,5 +643,77 @@ mod tests {
         assert!(Repo::init(&target, None, "kurz").await.is_err());
         let gone = BackupTarget::Dir { path: tmp.path().join("nicht/da") };
         assert!(Repo::init(&gone, None, "langes passwort hier").await.is_err());
+    }
+
+    fn snap(id: &str, time: i64) -> SnapshotInfo {
+        SnapshotInfo { id: id.into(), time, host: String::new(), sources: vec![], files: 0, bytes: 0, new_bytes: 0 }
+    }
+
+    #[test]
+    fn retention_keeps_newest_per_period() {
+        let h = 3600;
+        let base = 1_800_000_000 - 1_800_000_000 % 86_400; // Mitternacht UTC
+                                                           // Stündlich über 3 Tage (72 Stände), zusätzlich zwei in derselben Stunde
+        let mut snaps: Vec<SnapshotInfo> = (0..72).map(|i| snap(&format!("s{i:02}"), base + i * h + 60)).collect();
+        snaps.push(snap("doppelt", base + 71 * h + 120));
+        snaps.push(snap("doppelt_alt", base + 60 * h + 120));
+        let keep = select_keep(&snaps, Retention { hourly: 24, daily: 30, monthly: 12 });
+        assert!(keep.contains("doppelt"), "neuester immer");
+        assert!(keep.contains("s71"), "Schonfrist: Stände der letzten Stunde bleiben");
+        assert!(keep.contains("doppelt_alt") && !keep.contains("s60"), "pro Stunde nur der neueste");
+        // 24 Stunden + s71 (Schonfrist) + je Tag der neueste der zwei älteren Tage
+        assert!(keep.contains("s48"));
+        assert!(keep.contains("s47"), "neuester Stand von Tag 2");
+        assert!(keep.contains("s23"), "neuester Stand von Tag 1");
+        assert!(!keep.contains("s22"));
+        assert_eq!(keep.len(), 24 + 1 + 2);
+        let none = select_keep(&snaps, Retention { hourly: 0, daily: 0, monthly: 0 });
+        assert_eq!(none.len(), 1, "der neueste bleibt immer");
+        // Gleiche Sekunde: der später angehängte gilt als neuester
+        let same = [snap("erst", base), snap("dann", base)];
+        assert_eq!(select_keep(&same, Retention { hourly: 0, daily: 0, monthly: 0 }), HashSet::from(["dann".into()]));
+    }
+
+    #[tokio::test]
+    async fn prune_deletes_only_unreferenced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("q");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("bleibt.txt"), b"bleibt").unwrap();
+        std::fs::write(src.join("weg.txt"), b"wird geloescht").unwrap();
+        let usb = tmp.path().join("usb");
+        std::fs::create_dir_all(&usb).unwrap();
+        let (repo, _, _) = Repo::init(&BackupTarget::Dir { path: usb.clone() }, None, "langes passwort").await.unwrap();
+        let mut known = Known::load(tmp.path().join("known"));
+        backup(&repo, &mut known, std::slice::from_ref(&src), &BackupProgress::default()).await.unwrap();
+        std::fs::remove_file(src.join("weg.txt")).unwrap();
+        // Zweiter Stand in einer späteren Stunde (Zeit im Katalog anpassen)
+        backup(&repo, &mut known, std::slice::from_ref(&src), &BackupProgress::default()).await.unwrap();
+        let mut cat = repo.load_catalog().await.unwrap();
+        cat.snapshots[0].time -= 7200;
+        repo.save_catalog(&cat).await.unwrap();
+        let objects =
+            |p: &Path| walkdir::WalkDir::new(p).into_iter().flatten().filter(|e| e.file_type().is_file()).count();
+        let store = usb.join(format!("snap-backup-{}", repo.id));
+        let before = objects(&store);
+        // Nur den neuesten behalten → alter Stand und die gelöschte Datei verschwinden
+        let (forgotten, deleted) =
+            forget_and_prune(&repo, &mut known, Retention { hourly: 1, daily: 0, monthly: 0 }).await.unwrap();
+        assert_eq!(forgotten, 1);
+        assert!(deleted >= 2, "Stück von weg.txt + alter Baum: {deleted}");
+        assert_eq!(objects(&store), before - deleted);
+        // Der verbliebene Stand ist vollständig wiederherstellbar und geprüft
+        check(&repo, 0).await.unwrap();
+        let out = tmp.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let cat = repo.load_catalog().await.unwrap();
+        let (p, files) = restore(&repo, &cat.snapshots[0], &src, &out).await.unwrap();
+        assert_eq!(files, 1);
+        assert_eq!(std::fs::read(p.join("bleibt.txt")).unwrap(), b"bleibt");
+        // Erneutes Ausdünnen ändert nichts
+        assert_eq!(
+            forget_and_prune(&repo, &mut known, Retention { hourly: 1, daily: 0, monthly: 0 }).await.unwrap(),
+            (0, 0)
+        );
     }
 }

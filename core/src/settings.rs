@@ -63,6 +63,38 @@ const SPECS: &[Spec] = &[
         default: |c| c.link_default_days as i64,
     },
     Spec {
+        key: "backup_interval_minutes",
+        unit: "Minuten",
+        min: 0,
+        max: 10_080,
+        help: "Abstand automatischer Sicherungen (0 = nur von Hand)",
+        default: |_| 60,
+    },
+    Spec {
+        key: "backup_keep_hourly",
+        unit: "Stände",
+        min: 0,
+        max: 10_000,
+        help: "Sicherungen: so viele stündliche Stände behalten",
+        default: |_| 24,
+    },
+    Spec {
+        key: "backup_keep_daily",
+        unit: "Stände",
+        min: 0,
+        max: 10_000,
+        help: "Sicherungen: so viele tägliche Stände behalten",
+        default: |_| 30,
+    },
+    Spec {
+        key: "backup_keep_monthly",
+        unit: "Stände",
+        min: 0,
+        max: 10_000,
+        help: "Sicherungen: so viele monatliche Stände behalten",
+        default: |_| 12,
+    },
+    Spec {
         key: "pin_max_gb",
         unit: "GB",
         min: 0,
@@ -157,6 +189,18 @@ impl Settings {
     }
     pub fn upload_reserve_bytes(&self) -> u64 {
         self.get("upload_reserve_gb") as u64 * GB
+    }
+    /// Abstand automatischer Sicherungen in Sekunden (`None` = aus).
+    pub fn backup_interval(&self) -> Option<i64> {
+        let m = self.get("backup_interval_minutes");
+        (m > 0).then_some(m * 60)
+    }
+    pub fn backup_retention(&self) -> crate::backup::engine::Retention {
+        crate::backup::engine::Retention {
+            hourly: self.get("backup_keep_hourly") as usize,
+            daily: self.get("backup_keep_daily") as usize,
+            monthly: self.get("backup_keep_monthly") as usize,
+        }
     }
     pub fn link_default_days(&self) -> u32 {
         self.get("link_default_days").clamp(1, 3650) as u32

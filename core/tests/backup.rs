@@ -155,3 +155,124 @@ async fn backup_versions_restore_and_new_device() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+type Store = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>>;
+
+/// Nachgebauter S3-Speicher mit PUT/GET/DELETE (prüft die Signatur-Kopfzeilen).
+async fn fake_s3() -> (u16, Store) {
+    use http_body_util::BodyExt;
+    let store: Store = Default::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let s = store.clone();
+    tokio::spawn(async move {
+        loop {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let s = s.clone();
+            tokio::spawn(async move {
+                let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                    let s = s.clone();
+                    async move {
+                        let signed = req
+                            .headers()
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .is_some_and(|a| a.starts_with("AWS4-HMAC-SHA256 Credential=K/"));
+                        let path = req.uri().path().to_string();
+                        let (status, body) = if !signed {
+                            (403, vec![])
+                        } else {
+                            match *req.method() {
+                                hyper::Method::PUT => {
+                                    let b = req.into_body().collect().await.unwrap().to_bytes().to_vec();
+                                    s.lock().unwrap().insert(path, b);
+                                    (200, vec![])
+                                }
+                                hyper::Method::GET => match s.lock().unwrap().get(&path) {
+                                    Some(b) => (200, b.clone()),
+                                    None => (404, vec![]),
+                                },
+                                hyper::Method::DELETE => {
+                                    s.lock().unwrap().remove(&path);
+                                    (204, vec![])
+                                }
+                                _ => (405, vec![]),
+                            }
+                        };
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .status(status)
+                                .body(http_body_util::Full::new(bytes::Bytes::from(body)))
+                                .unwrap(),
+                        )
+                    }
+                });
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(hyper_util::rt::TokioIo::new(tcp), svc)
+                    .await;
+            });
+        }
+    });
+    (port, store)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn backup_to_s3_and_retention() {
+    let tmp = tempfile::tempdir().unwrap();
+    let docs = tmp.path().join("Fotos");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("a.jpg"), vec![7u8; 300_000]).unwrap();
+    let (port, store) = fake_s3().await;
+    let a = start(&tmp.path().join("a")).await;
+    a.request(Request::LinkSetup(space_core::links::LinkSettings {
+        base_url: "http://localhost:8787".into(),
+        s3: space_core::links::s3::S3Config {
+            endpoint: format!("http://127.0.0.1:{port}"),
+            bucket: "b".into(),
+            region: "auto".into(),
+            access_key_id: "K".into(),
+            secret_access_key: "S".into(),
+        },
+    }))
+    .await;
+    let created = match a
+        .request(Request::BackupCreate {
+            target: BackupTarget::S3,
+            sources: vec![docs.clone()],
+            password: "r2 passwort lang".into(),
+        })
+        .await
+    {
+        Response::BackupCreated(c) => c,
+        other => panic!("{other:?}"),
+    };
+    let id = created.id[..8].to_string();
+    // Nur den neuesten Stand behalten
+    for k in ["backup_keep_hourly", "backup_keep_daily", "backup_keep_monthly"] {
+        a.request(Request::SettingSet { key: k.into(), value: Some(0) }).await;
+    }
+    assert!(matches!(a.request(Request::BackupRun { id: id.clone() }).await, Response::Snapshot(_)));
+    std::fs::write(docs.join("a.jpg"), vec![8u8; 300_000]).unwrap();
+    assert!(matches!(a.request(Request::BackupRun { id: id.clone() }).await, Response::Snapshot(_)));
+    // Alles liegt unter backups/<id>/ und ist verschlüsselt
+    let keys: Vec<String> = store.lock().unwrap().keys().cloned().collect();
+    assert!(keys.iter().all(|k| k.starts_with(&format!("/b/backups/{}/", created.id))), "{keys:?}");
+    assert!(store.lock().unwrap().values().all(|v| !v.windows(64).any(|w| w.iter().all(|b| *b == 8))));
+    match a.request(Request::BackupSnapshots { id: id.clone() }).await {
+        Response::Snapshots { items } => assert_eq!(items.len(), 1, "alter Stand entfernt"),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(a.request(Request::BackupCheck { id: id.clone(), sample: 0 }).await, Response::Success { .. }));
+    // Alte Daten (Version 1) sind gelöscht, neue wiederherstellbar
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let snap = match a.request(Request::BackupSnapshots { id: id.clone() }).await {
+        Response::Snapshots { items } => items[0].id.clone(),
+        other => panic!("{other:?}"),
+    };
+    match a.request(Request::BackupRestore { id, snapshot: snap, path: docs.join("a.jpg"), dest: out }).await {
+        Response::Restored { path, .. } => assert_eq!(std::fs::read(path).unwrap(), vec![8u8; 300_000]),
+        other => panic!("{other:?}"),
+    }
+    a.shutdown().await;
+}
