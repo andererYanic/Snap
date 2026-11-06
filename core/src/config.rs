@@ -55,6 +55,9 @@ pub struct ConfigFile {
     /// Höchstzahl beobachteter Ordner (inotify). Darüber hinaus gleicht der periodische
     /// Abgleich ab. Standard: 50 000.
     pub index_max_watches: Option<usize>,
+    /// Gekoppelte Geräte: verändernde Operationen (Dateien) pro Stunde ohne Bestätigung.
+    /// Standard: 100. 0 = jede Fernänderung muss bestätigt werden.
+    pub ops_hourly_limit: Option<u32>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -79,6 +82,10 @@ pub struct Config {
     pub index_home: bool,
     pub index_drives: bool,
     pub index_max_watches: usize,
+    /// Home-Papierkorb (freedesktop): `$XDG_DATA_HOME/Trash`.
+    pub trash_dir: PathBuf,
+    /// Verändernde Fernoperationen pro Gerät und Stunde, darüber wird Bestätigung verlangt.
+    pub ops_hourly_limit: u32,
 }
 
 impl Config {
@@ -160,6 +167,8 @@ impl Config {
             directories::BaseDirs::new().map(|b| b.home_dir().join("Snap")).unwrap_or_else(|| data_dir.join("pinned"))
         });
 
+        let trash_dir =
+            directories::BaseDirs::new().map(|b| b.data_dir().join("Trash")).unwrap_or_else(|| data_dir.join("Trash"));
         Ok(Self {
             data_dir,
             socket_path,
@@ -181,6 +190,8 @@ impl Config {
             index_home: true,
             index_drives: file.index_drives.unwrap_or(true),
             index_max_watches: file.index_max_watches.unwrap_or(50_000),
+            trash_dir,
+            ops_hourly_limit: file.ops_hourly_limit.unwrap_or(100),
         })
     }
 
@@ -203,6 +214,8 @@ impl Config {
             index_home: false,
             index_drives: false,
             index_max_watches: 10_000,
+            trash_dir: root.join("Trash"),
+            ops_hourly_limit: 100,
         }
     }
 }
@@ -282,6 +295,10 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # index_enabled = true
 # index_drives = true
 # index_max_watches = 50000
+
+# Gekoppelte Geräte: höchstens so viele Dateien pro Stunde verändern (umbenennen, verschieben,
+# löschen), darüber wird eine Bestätigung auf diesem Gerät verlangt (space-daemon ops pending).
+# ops_hourly_limit = 100
 "#;
 
 #[cfg(test)]

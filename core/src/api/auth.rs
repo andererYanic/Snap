@@ -112,7 +112,15 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::IndexRoots
         | Request::IndexAdd { .. }
         | Request::IndexRemove { .. }
-        | Request::IndexRescan => Capability::Admin,
+        | Request::IndexRescan
+        // Lokale Dateioperationen (Geräte nutzen das eigene Protokoll snap/ops/1).
+        | Request::FileOp { .. }
+        | Request::FileOpCancel { .. }
+        | Request::Undo
+        | Request::TrashList
+        | Request::TrashRestore { .. }
+        | Request::TrashPurge { .. }
+        | Request::TrashEmpty => Capability::Admin,
     }
 }
 

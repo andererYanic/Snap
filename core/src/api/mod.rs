@@ -7,6 +7,7 @@ pub mod auth;
 pub mod devices;
 pub mod error;
 pub mod explorer;
+pub mod fileops;
 pub mod files;
 pub mod pins;
 pub mod shares;
@@ -96,6 +97,13 @@ pub(crate) async fn handle_request(
         Request::IndexAdd { path } => explorer::index_add(inner, &path).await,
         Request::IndexRemove { id } => explorer::index_remove(inner, id).await,
         Request::IndexRescan => explorer::index_rescan(inner),
+        Request::FileOp { op, wait } => fileops::file_op(inner, op, wait).await,
+        Request::FileOpCancel { job } => fileops::cancel(inner, job),
+        Request::Undo => fileops::undo(inner).await,
+        Request::TrashList => fileops::trash_list(inner).await,
+        Request::TrashRestore { id, keep_both } => fileops::trash_restore(inner, id, keep_both).await,
+        Request::TrashPurge { id } => fileops::trash_purge(inner, id).await,
+        Request::TrashEmpty => fileops::trash_empty(inner).await,
         Request::Subscribe => Ok(Response::error(
             error::ErrorCode::InvalidInput,
             "Ereignisse gibt es nur über eine Socket-Verbindung oder Daemon::subscribe()",
@@ -156,5 +164,12 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::IndexAdd { .. } => "index.add",
         Request::IndexRemove { .. } => "index.remove",
         Request::IndexRescan => "index.rescan",
+        Request::FileOp { .. } => "file.op",
+        Request::FileOpCancel { .. } => "file.cancel",
+        Request::Undo => "file.undo",
+        Request::TrashList => "trash.list",
+        Request::TrashRestore { .. } => "trash.restore",
+        Request::TrashPurge { .. } => "trash.purge",
+        Request::TrashEmpty => "trash.empty",
     })
 }

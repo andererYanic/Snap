@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile, ShareInfo};
 use space_core::events::Event;
+use space_core::fileops::jobs::FileOp;
+use space_core::fileops::ops::Conflict;
 use space_core::index::NodeKind;
 use space_core::ipc::{read_frame, write_frame, Envelope, PinInfo, Request, Response, ScanResult, SyncResult};
 use space_core::{Config, Daemon, FileRecord};
@@ -121,6 +123,80 @@ enum Commands {
         #[command(subcommand)]
         action: IndexAction,
     },
+    /// Kopieren: cp <quelle>… <zielordner>
+    Cp {
+        #[arg(required = true, num_args = 2..)]
+        paths: Vec<PathBuf>,
+        /// Wenn das Ziel existiert
+        #[arg(long, value_enum, default_value_t = OnConflict::Fail)]
+        on_conflict: OnConflict,
+    },
+    /// Verschieben: mv <quelle>… <zielordner>
+    Mv {
+        #[arg(required = true, num_args = 2..)]
+        paths: Vec<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OnConflict::Fail)]
+        on_conflict: OnConflict,
+    },
+    /// Umbenennen (im selben Ordner)
+    Rename { path: PathBuf, new_name: String },
+    /// Ordner anlegen
+    Mkdir { path: PathBuf },
+    /// In den Papierkorb verschieben (mit --permanent endgültig löschen)
+    Rm {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Endgültig löschen statt Papierkorb (nicht rückgängig zu machen)
+        #[arg(long)]
+        permanent: bool,
+    },
+    /// Letzte Dateioperation rückgängig machen
+    Undo,
+    /// Papierkorb anzeigen und verwalten
+    Trash {
+        #[command(subcommand)]
+        action: Option<TrashAction>,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum OnConflict {
+    /// Abbrechen
+    Fail,
+    /// Auslassen
+    Skip,
+    /// Beide behalten („Name (2)“)
+    KeepBoth,
+    /// Altes Ziel in den Papierkorb und ersetzen
+    Replace,
+}
+
+impl From<OnConflict> for Conflict {
+    fn from(c: OnConflict) -> Self {
+        match c {
+            OnConflict::Fail => Conflict::Fail,
+            OnConflict::Skip => Conflict::Skip,
+            OnConflict::KeepBoth => Conflict::KeepBoth,
+            OnConflict::Replace => Conflict::Replace,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum TrashAction {
+    /// Einträge anzeigen (Standard)
+    List,
+    /// Eintrag wiederherstellen (Nummer aus `trash list` oder Kennung)
+    Restore {
+        entry: String,
+        /// Bei belegtem Ziel freien Namen wählen
+        #[arg(long)]
+        keep_both: bool,
+    },
+    /// Eintrag endgültig löschen
+    Purge { entry: String },
+    /// Papierkorb leeren (endgültig)
+    Empty,
 }
 
 #[derive(Subcommand)]
@@ -287,6 +363,41 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Index { action: IndexAction::Add { path } } => Request::IndexAdd { path: absolute(&path)? },
         Commands::Index { action: IndexAction::Remove { id } } => Request::IndexRemove { id },
         Commands::Index { action: IndexAction::Rescan } => Request::IndexRescan,
+        Commands::Cp { mut paths, on_conflict } => {
+            let dest = absolute(&paths.pop().unwrap_or_default())?;
+            let sources = paths.iter().map(|p| absolute(p)).collect::<Result<Vec<_>>>()?;
+            Request::FileOp { op: FileOp::Copy { sources, dest, conflict: on_conflict.into() }, wait: true }
+        }
+        Commands::Mv { mut paths, on_conflict } => {
+            let dest = absolute(&paths.pop().unwrap_or_default())?;
+            let sources = paths.iter().map(|p| absolute(p)).collect::<Result<Vec<_>>>()?;
+            Request::FileOp { op: FileOp::Move { sources, dest, conflict: on_conflict.into() }, wait: true }
+        }
+        Commands::Rename { path, new_name } => {
+            Request::FileOp { op: FileOp::Rename { path: absolute(&path)?, new_name }, wait: true }
+        }
+        Commands::Mkdir { path } => {
+            let path = absolute(&path)?;
+            let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+                anyhow::bail!("Ungültiger Ordnerpfad");
+            };
+            let op = FileOp::Mkdir { parent: parent.to_path_buf(), name: name.to_string_lossy().into_owned() };
+            Request::FileOp { op, wait: true }
+        }
+        Commands::Rm { paths, permanent } => {
+            let paths = paths.iter().map(|p| absolute(p)).collect::<Result<Vec<_>>>()?;
+            let op = if permanent { FileOp::Delete { paths } } else { FileOp::Trash { paths } };
+            Request::FileOp { op, wait: true }
+        }
+        Commands::Undo => Request::Undo,
+        Commands::Trash { action: None | Some(TrashAction::List) } => Request::TrashList,
+        Commands::Trash { action: Some(TrashAction::Restore { entry, keep_both }) } => {
+            Request::TrashRestore { id: trash_id(&config.socket_path, &entry).await?, keep_both }
+        }
+        Commands::Trash { action: Some(TrashAction::Purge { entry }) } => {
+            Request::TrashPurge { id: trash_id(&config.socket_path, &entry).await? }
+        }
+        Commands::Trash { action: Some(TrashAction::Empty) } => Request::TrashEmpty,
         Commands::Watch => return watch(&config.socket_path).await,
     };
 
@@ -381,7 +492,31 @@ fn describe_event(e: &Event) -> String {
             format!("📌 Pins: {queued} zu laden, {removed} entfernt, {conflicts} Konflikte")
         }
         Event::GrantsChanged { node_id } => format!("🔐 Rechte von Gerät {} geändert", short(node_id, 10)),
+        Event::FileOpProgress { job, done_files, total_files, done_bytes, total_bytes } => format!(
+            "⏳ Auftrag {job}: {done_files}/{total_files} Dateien, {} von {}",
+            human_size(*done_bytes),
+            human_size(*total_bytes)
+        ),
+        Event::FileOpFinished { job, ok, message } => {
+            format!("{} Auftrag {job}: {message}", if *ok { "✅" } else { "❌" })
+        }
+        Event::ApprovalRequested { id, node_id, summary } => {
+            format!("🛑 Gerät {} möchte: {summary} – bestätigen mit: space-daemon ops approve {id}", short(node_id, 10))
+        }
         Event::Lagged { missed } => format!("⚠️  {missed} Ereignisse verpasst"),
+    }
+}
+
+/// Papierkorb-Eintrag: Nummer aus `trash list` (1 = neuester) oder volle Kennung.
+async fn trash_id(socket: &Path, entry: &str) -> Result<String> {
+    let Ok(n) = entry.parse::<usize>() else { return Ok(entry.to_string()) };
+    match send_request(socket, &Request::TrashList).await? {
+        Response::Trash { entries } => entries
+            .get(n.wrapping_sub(1))
+            .map(|e| e.id.clone())
+            .with_context(|| format!("Kein Eintrag Nummer {n} im Papierkorb")),
+        Response::Error { message, .. } => anyhow::bail!(message),
+        _ => anyhow::bail!("Unerwartete Antwort des Daemons"),
     }
 }
 
@@ -543,6 +678,37 @@ fn print_response(res: Response) -> ExitCode {
                 println!("{:>4}  {}  ({state})", r.id, r.path);
             }
             println!("{watched_dirs} Ordner werden live beobachtet.");
+        }
+        Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
+        Response::FileOpDone { outcome, .. } => {
+            for d in &outcome.done {
+                if d.from == d.to {
+                    println!("✅ {}", d.to.display());
+                } else {
+                    println!("✅ {} → {}", d.from.display(), d.to.display());
+                }
+            }
+            if !outcome.trashed.is_empty() {
+                println!(
+                    "🗑️  {} Eintrag/Einträge im Papierkorb (rückgängig: space-daemon undo)",
+                    outcome.trashed.len()
+                );
+            }
+            for p in &outcome.deleted {
+                println!("❌ endgültig gelöscht: {}", p.display());
+            }
+            if outcome.done.is_empty() && outcome.trashed.is_empty() && outcome.deleted.is_empty() {
+                println!("Nichts zu tun.");
+            }
+        }
+        Response::Trash { entries } => {
+            if entries.is_empty() {
+                println!("Der Papierkorb ist leer.");
+            }
+            for (i, e) in entries.iter().enumerate() {
+                let size = if e.is_dir { "Ordner".to_string() } else { human_size(e.size) };
+                println!("{:>4}  {:>10}  {}  {}", i + 1, size, e.deleted_at.replace('T', " "), e.original_path);
+            }
         }
         Response::Error { message, .. } => {
             eprintln!("❌ {message}");

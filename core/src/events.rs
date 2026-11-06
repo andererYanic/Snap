@@ -63,6 +63,26 @@ pub enum Event {
     GrantsChanged {
         node_id: String,
     },
+    /// Fortschritt einer Dateioperation (höchstens 4× pro Sekunde).
+    FileOpProgress {
+        job: u64,
+        done_files: u64,
+        total_files: u64,
+        done_bytes: u64,
+        total_bytes: u64,
+    },
+    /// Dateioperation beendet (erfolgreich, fehlgeschlagen oder abgebrochen).
+    FileOpFinished {
+        job: u64,
+        ok: bool,
+        message: String,
+    },
+    /// Ein Gerät hat mehr Änderungen angefragt als erlaubt – wartet auf Bestätigung.
+    ApprovalRequested {
+        id: i64,
+        node_id: String,
+        summary: String,
+    },
     /// Der Abonnent hat Ereignisse verpasst und sollte seinen Zustand neu laden.
     Lagged {
         missed: u64,
