@@ -53,6 +53,13 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `search <begriff> [--ext jpg,png] [--dirs\|--files] [--hidden]` | Dateien und Ordner auf diesem Gerät finden (Teilwort, ohne Groß-/Kleinschreibung) |
 | `ls [ordner] [-a]` | Ordnerinhalt live anzeigen (Ordner zuerst) |
 | `index list` / `index add <ordner>` / `index remove <id>` / `index rescan` | Orte der lokalen Suche verwalten |
+| `cp <quelle>… <ziel>` / `mv <quelle>… <ziel>` `[--on-conflict fail\|skip\|keep-both\|replace]` | Kopieren/Verschieben (nie stillschweigend überschreiben; „ersetzen“ legt das alte Ziel in den Papierkorb) |
+| `rename <pfad> <name>` / `mkdir <pfad>` | Umbenennen, Ordner anlegen |
+| `rm <pfad>… [--permanent]` | In den Papierkorb (freedesktop) – mit `--permanent` endgültig |
+| `undo` | Letzte Dateioperation rückgängig machen (auch Änderungen anderer Geräte) |
+| `trash` / `trash restore <nr>` / `trash purge <nr>` / `trash empty` | Papierkorb |
+| `remote <gerät> rename\|mv\|cp\|mkdir\|rm Freigabe/pfad …` | Dateien in Freigaben eines gekoppelten Geräts bearbeiten |
+| `ops` / `ops approve <nr>` / `ops reject <nr>` | Vom Massenschutz angehaltene Änderungen anderer Geräte |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
 | `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
@@ -151,6 +158,26 @@ core/src
 - Der Index bleibt **auf dem Gerät**. Gekoppelte Geräte können weder suchen noch Ordner lesen.
 - Ein entferntes Laufwerk wird übersprungen; sein Index bleibt erhalten. Ein vom Nutzer entfernter
   Ort kommt auch bei automatischer Erkennung nicht zurück.
+
+### Dateioperationen & Papierkorb
+
+- Kopieren, verschieben, umbenennen, Ordner anlegen, Papierkorb – als Aufträge mit Fortschritt
+  (Ereignis-Stream) und Abbruch; die Suche ist danach sofort aktuell.
+- **Nie stillschweigend überschreiben** (`renameat2` mit `RENAME_NOREPLACE`); Kopien entstehen
+  unter temporärem Namen, ein Abbruch hinterlässt nichts Halbes; Symlinks werden als Symlinks
+  kopiert; Verschieben auf ein anderes Laufwerk = kopieren, prüfen, dann löschen.
+- **Papierkorb nach freedesktop-Standard**: dieselben Einträge wie im Dateimanager des Desktops;
+  auf anderen Laufwerken `.Trash-<uid>` auf dem Laufwerk selbst.
+- **Rückgängig** für die letzten 20 Schritte (im Speicher; endgültiges Löschen ausgenommen).
+
+### Dateien auf anderen Geräten bearbeiten
+
+- `remote PC mv Fotos/2024/a.jpg Fotos/Urlaub` – nur innerhalb von Freigaben und nur mit den
+  passenden, ordnergebundenen Rechten: `files.write` (umbenennen, verschieben, anlegen),
+  `files.read` + `files.write` (kopieren), `files.delete` (Papierkorb), `files.purge` (endgültig).
+- **Gelöschtes landet im Papierkorb des Zielgeräts** und lässt sich dort mit `undo` zurückholen.
+- **Massenschutz:** Verändert ein Gerät mehr als `ops_hourly_limit` Dateien pro Stunde (Standard
+  100), wird die Anfrage angehalten, bis sie am Zielgerät bestätigt wird (`ops approve`).
 
 ### Live-Verbindungen
 

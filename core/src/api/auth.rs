@@ -28,17 +28,20 @@ pub enum Capability {
     PinRequest,
     /// Dateien in einem Ordner löschen (immer über den Papierkorb).
     FilesDelete,
+    /// Dateien in einem Ordner endgültig löschen (ohne Papierkorb) – nie Standard.
+    FilesPurge,
     /// Fernverwaltung (Einstellungen, Kopplungen) – für Geräte noch gesperrt.
     Admin,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 6] = [
+    pub const ALL: [Capability; 7] = [
         Capability::CatalogRead,
         Capability::FilesRead,
         Capability::FilesWrite,
         Capability::PinRequest,
         Capability::FilesDelete,
+        Capability::FilesPurge,
         Capability::Admin,
     ];
 
@@ -49,6 +52,7 @@ impl Capability {
             Capability::FilesWrite => "files.write",
             Capability::PinRequest => "pin.request",
             Capability::FilesDelete => "files.delete",
+            Capability::FilesPurge => "files.purge",
             Capability::Admin => "admin",
         }
     }
@@ -63,7 +67,10 @@ impl Capability {
 
     /// Rechte, die nur innerhalb eines Ordners gelten.
     pub fn needs_folder(&self) -> bool {
-        matches!(self, Capability::FilesRead | Capability::FilesWrite | Capability::FilesDelete)
+        matches!(
+            self,
+            Capability::FilesRead | Capability::FilesWrite | Capability::FilesDelete | Capability::FilesPurge
+        )
     }
 }
 
@@ -112,7 +119,19 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::IndexRoots
         | Request::IndexAdd { .. }
         | Request::IndexRemove { .. }
-        | Request::IndexRescan => Capability::Admin,
+        | Request::IndexRescan
+        // Lokale Dateioperationen (Geräte nutzen das eigene Protokoll snap/ops/1).
+        | Request::FileOp { .. }
+        | Request::FileOpCancel { .. }
+        | Request::Undo
+        | Request::TrashList
+        | Request::TrashRestore { .. }
+        | Request::TrashPurge { .. }
+        | Request::TrashEmpty
+        | Request::RemoteOp { .. }
+        | Request::OpsPending
+        | Request::OpsApprove { .. }
+        | Request::OpsReject { .. } => Capability::Admin,
     }
 }
 
@@ -264,7 +283,13 @@ mod tests {
     fn pairing_grants_only_catalog_read() {
         let (_d, db, shared, _p) = setup();
         check(&db, &[], Capability::CatalogRead, None).unwrap();
-        for cap in [Capability::FilesRead, Capability::FilesWrite, Capability::PinRequest, Capability::FilesDelete] {
+        for cap in [
+            Capability::FilesRead,
+            Capability::FilesWrite,
+            Capability::PinRequest,
+            Capability::FilesDelete,
+            Capability::FilesPurge,
+        ] {
             let e = check(&db, &[], cap, Some(&shared.join("a.txt"))).unwrap_err();
             assert_eq!(code_of(&e), ErrorCode::PermissionDenied, "{cap:?}");
         }

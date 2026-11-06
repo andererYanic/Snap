@@ -58,3 +58,17 @@ path = "fuzz_targets/search_query.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "trashinfo"
+path = "fuzz_targets/trashinfo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ops_request"
+path = "fuzz_targets/ops_request.rs"
+test = false
+doc = false
+bench = false

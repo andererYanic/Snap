@@ -47,6 +47,20 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   Symlinks werden erfasst, aber nicht verfolgt. Suchbegriffe gehen nur als Parameter in die
   Datenbank; FTS5-Syntax wird neutralisiert (Fuzz-Ziel `search_query`). Zu große Antworten werden
   als Fehler gemeldet, statt die Verbindung abzubrechen.
+- **Dateioperationen:** nie stillschweigend überschreiben (`RENAME_NOREPLACE`, „ersetzen“ nur
+  über den Papierkorb); Symlinks werden weder beim Kopieren noch beim Löschen verfolgt;
+  `.trashinfo` gilt als fremde Eingabe (strenger Parser, nur absolute Ziele ohne `..`, Fuzz-Ziel
+  `trashinfo`).
+- **Fernoperationen (`snap/ops/1`):** nicht gekoppelte Gegenstellen werden vor dem Lesen
+  getrennt; nur relative Pfade innerhalb einer Freigabe, Symlinks auf dem Weg werden abgelehnt,
+  Ziele zusätzlich kanonisiert geprüft; jede Operation läuft durch die zentrale Rechteprüfung
+  mit ordnergebundenen Rechten und landet im Audit-Log. Löschen nur in den Papierkorb,
+  endgültig nur mit `files.purge`. **Massenschutz** gegen kompromittierte Geräte: mehr als
+  `ops_hourly_limit` Dateien pro Stunde → Bestätigung am Zielgerät (höchstens 100 offene Anfragen
+  je Gerät). Frames ≤ 64 KiB, strikte Typen, Zeitlimits, ≤ 4 gleichzeitige Operationen
+  (Fuzz-Ziel `ops_request`). Restrisiko: Ein Prozess *desselben Benutzers* auf dem Zielgerät
+  könnte zwischen Prüfung und Ausführung einen Symlink austauschen (TOCTOU) – lokale Prozesse
+  desselben Benutzers liegen außerhalb des Bedrohungsmodells.
 - **Eingaben von außen:** Größenlimits (IPC 1 MiB, Ledger-Seite 1000 Einträge / 8 MiB,
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.

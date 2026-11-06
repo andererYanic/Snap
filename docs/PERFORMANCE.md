@@ -174,3 +174,36 @@ bedeutet keinen Treffer.
   früher der periodische Abgleich.
 - Sortieren nach Größe oder Datum im Explorer braucht `stat` für alle Einträge (bei Bedarf
   parallelisieren).
+
+## Review 8 – Dateioperationen & Fernoperationen (2026-11-06)
+
+Messung (`file_ops`, Release): Ordner mit 2 000 kleinen Dateien in 20 Unterordnern.
+
+| Messung | Wert | Anmerkung |
+|---|---|---|
+| Verschieben eines Ordners (gleiches Laufwerk) | 3–5 µs/Datei (6–8 ms gesamt) | ein `rename` + Zählung für den Fortschritt |
+| Kopieren | 35–415 µs/Datei | bestimmt vom Anlegen neuer Dateien auf der Platte (auf dieser VM stark schwankend) |
+| In den Papierkorb, 1 000 Dateien | 176–417 µs/Datei | ebenso (eine `.trashinfo` je Eintrag) |
+| Papierkorb auflisten, 1 000 Einträge | 8–13 ms | |
+| Rückgängig: 1 000 Einträge wiederherstellen | 419 → **20 µs/Eintrag** | Schnellweg für den Home-Papierkorb |
+| Fernoperation (Umbenennen) inkl. neuer QUIC-Verbindung | 3,0–3,3 ms (loopback) | |
+
+**Maßnahmen:**
+
+- **Wiederherstellen** las für jeden Eintrag `/proc/self/mounts`, um den zuständigen Papierkorb zu
+  finden. Jetzt wird zuerst der Home-Papierkorb geprüft (der häufigste Fall).
+- **Kein `fsync` je `.trashinfo`.** Die Spezifikation verlangt es nicht. Nach einem Absturz
+  bleibt im ungünstigsten Fall eine verwaiste `.trashinfo`, die übersprungen wird.
+- **Große Dateien** (ab 64 MiB) werden blockweise kopiert, mit Fortschritt und Abbruch
+  innerhalb der Datei. Kleine Dateien gehen über `std::fs::copy` (`copy_file_range`, auf
+  btrfs/XFS auch Reflink).
+- Die Suche wird nach jeder Operation sofort für die betroffenen Ordner aktualisiert
+  (0,15 ms je Ordner, siehe Review 7), statt auf den Watcher (1 s) zu warten.
+
+**Offen:**
+
+- Jede Fernoperation baut eine eigene QUIC-Verbindung auf. Über das Internet kostet das 1–2
+  Round-Trips mehr. Die Verbindung könnte wiederverwendet werden, wie bei Downloads.
+- Der Massenschutz zählt die Dateien betroffener Ordner per Verzeichnisdurchlauf. Bei sehr
+  großen Ordnern kostet das Zeit, bevor die Operation beginnt; der Index könnte das schneller
+  liefern.

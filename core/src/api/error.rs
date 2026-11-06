@@ -26,6 +26,10 @@ pub enum ErrorCode {
     VersionMismatch,
     /// Zeitlimit abgelaufen.
     Timeout,
+    /// Vom Nutzer abgebrochen.
+    Cancelled,
+    /// Operation wartet auf Bestätigung am Zielgerät (Massenschutz).
+    NeedsApproval,
     /// Unerwarteter interner Fehler.
     Internal,
 }

@@ -168,6 +168,16 @@ mod permissions {
             Request::IndexAdd { path: "/".into() },
             Request::IndexRemove { id: 1 },
             Request::IndexRescan,
+            Request::FileOp {
+                op: space_core::fileops::jobs::FileOp::Trash { paths: vec!["/tmp/x".into()] },
+                wait: true,
+            },
+            Request::FileOpCancel { job: 1 },
+            Request::Undo,
+            Request::TrashList,
+            Request::TrashRestore { id: "x".into(), keep_both: true },
+            Request::TrashPurge { id: "x".into() },
+            Request::TrashEmpty,
         ]
     }
 

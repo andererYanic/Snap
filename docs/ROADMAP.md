@@ -37,6 +37,9 @@ Abstriche bei der Sicherheit.
 | 2026-11-06 | Explorer liest jeden Ordner **live**; indexiert (für die Suche) werden Home und angeschlossene Laufwerke automatisch, mit Standard-Ausschlüssen (Caches, `node_modules`, Papierkorb …); weitere Orte hinzufügbar | Dateimanager-Ersatz ohne Einrichtungsaufwand. |
 | 2026-11-06 | Der lokale Index bleibt **auf dem Gerät** (nicht an gekoppelte Geräte repliziert) | Gekoppelte Geräte sehen weiter nur Freigaben, nicht die gesamte Ordnerstruktur. |
 | 2026-11-06 | Löschen über den **System-Papierkorb** (Freedesktop), Rückfallordner auf Laufwerken ohne eigenen | Zusammenspiel mit anderen Programmen und Wiederherstellung. |
+| 2026-11-06 | **Dateioperationen lokal und über Geräte in einem Schritt** (2b): kopieren, verschieben, umbenennen, Ordner anlegen, Papierkorb, Rückgängig; gekoppelte Geräte nur innerhalb von Freigaben und nur mit ordnergebundenen Rechten | Drive-Erlebnis: Ordnung halten von jedem Gerät aus. |
+| 2026-11-06 | **Fernlöschen landet im Papierkorb**; endgültiges Löschen nur mit dem eigenen Recht `files.purge` (nie Standard) | Ein kompromittiertes Gerät kann nichts unwiederbringlich zerstören, ohne dass es ausdrücklich erlaubt wurde. |
+| 2026-11-06 | **Massenschutz**: Mehr als 100 verändernde Fernoperationen (Dateien) pro Gerät und Stunde werden angehalten, bis sie am Zielgerät bestätigt werden (`ops_hourly_limit`) | Schutz vor Ransomware-artigem Verhalten eines kompromittierten Geräts. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
 
 ## Sicherheitsprinzipien
@@ -59,7 +62,7 @@ Abstriche bei der Sicherheit.
 | **0a** | Core härten (PR #1), Pairing & Ledger-Gossip (PR #2) | ✅ |
 | **0b** | **API-Schicht**: Fehlercodes, API-Version, Ereignis-Stream, seitenweiser Katalog, Rechte pro Gerät mit Audit-Log, Modulaufteilung | ✅ |
 | **1 – Drive-Kern** (1a Shares + Rechte ✅ PR #4 · 1b Live ✅ PR #6 · 1c Pinning ✅ PR #7) | Ordner freigeben und beobachten (Watcher), relative Pfade im Ledger, **Smart-Pinning mit mehreren Quellen** (Server springt ein), kein doppelter Speicher (`TryReference`), Anzeige der Kopien, **Live-Verbindungen** zwischen gekoppelten Geräten | offen |
-| **2 – Explorer-Kern** (2a Index & Suche ✅ PR #8) | Index des lokalen Dateisystems, FTS5-Suche, Ordner live lesen, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
+| **2 – Explorer-Kern** (2a Index & Suche ✅ PR #8 · 2b Dateioperationen ✅ PR #9) | Index des lokalen Dateisystems, FTS5-Suche, Ordner live lesen, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
 | **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |
 | **5 – Medien & Teilen** | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | offen |

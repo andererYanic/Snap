@@ -228,6 +228,55 @@ pub enum Request {
     },
     /// Alle Orte sofort abgleichen.
     IndexRescan,
+    /// Dateioperation ausführen. `wait = false`: sofort `FileOpStarted`, Fortschritt und Ende
+    /// als Ereignisse; `wait = true`: Antwort erst nach Abschluss.
+    FileOp {
+        op: crate::fileops::jobs::FileOp,
+        #[serde(default)]
+        wait: bool,
+    },
+    /// Laufende Dateioperation abbrechen.
+    FileOpCancel {
+        job: u64,
+    },
+    /// Letzte Dateioperation rückgängig machen.
+    Undo,
+    TrashList,
+    /// Eintrag wiederherstellen; `keep_both`: bei belegtem Ziel freien Namen wählen.
+    TrashRestore {
+        id: String,
+        #[serde(default)]
+        keep_both: bool,
+    },
+    /// Eintrag endgültig löschen.
+    TrashPurge {
+        id: String,
+    },
+    /// Papierkorb leeren (endgültig).
+    TrashEmpty,
+    /// Dateioperation auf einem gekoppelten Gerät ausführen (in dessen Freigaben).
+    RemoteOp {
+        device: String,
+        op: crate::remote_ops::RemoteOp,
+    },
+    /// Angehaltene Fernoperationen anderer Geräte (Massenschutz).
+    OpsPending,
+    OpsApprove {
+        id: i64,
+    },
+    OpsReject {
+        id: i64,
+    },
+}
+
+/// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalInfo {
+    pub id: i64,
+    pub node_id: String,
+    pub device_name: Option<String>,
+    pub summary: String,
+    pub created_at: i64,
 }
 
 /// Ein Eintrag beim Lesen eines Ordners.
@@ -353,6 +402,19 @@ pub enum Response {
         entries: Vec<DirEntryInfo>,
         /// Gesamtzahl (nach Filter „versteckt“), für die Seitenanzeige.
         total: u64,
+    },
+    FileOpStarted {
+        job: u64,
+    },
+    Approvals {
+        items: Vec<ApprovalInfo>,
+    },
+    FileOpDone {
+        job: u64,
+        outcome: crate::fileops::jobs::Outcome,
+    },
+    Trash {
+        entries: Vec<crate::fileops::trash::TrashEntry>,
     },
     IndexRoots {
         roots: Vec<crate::index::IndexRoot>,

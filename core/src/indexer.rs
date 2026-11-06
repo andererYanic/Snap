@@ -87,6 +87,29 @@ impl IndexService {
         }
     }
 
+    /// Liest die Ordner sofort neu ein (blockierend) und beobachtet neu entstandene Ordner.
+    /// Genutzt vom Watcher und nach eigenen Dateioperationen (Suche sofort aktuell).
+    pub fn refresh_dirs(&self, dirs: impl IntoIterator<Item = PathBuf>) {
+        let roots: Vec<(i64, PathBuf)> = match self.index.roots() {
+            Ok(r) => r.into_iter().filter(|r| r.enabled).map(|r| (r.id, PathBuf::from(r.path))).collect(),
+            Err(_) => return,
+        };
+        let mut new_dirs = Vec::new();
+        for d in dirs {
+            // Längster passender Ort (Orte können ineinander liegen).
+            let Some((id, root)) =
+                roots.iter().filter(|(_, r)| d.starts_with(r)).max_by_key(|(_, r)| r.as_os_str().len())
+            else {
+                continue;
+            };
+            match self.index.refresh(*id, root, &d, false) {
+                Ok(st) => new_dirs.extend(st.new_dirs),
+                Err(e) => tracing::debug!("Suchindex für {} nicht aktualisiert: {e:#}", d.display()),
+            }
+        }
+        self.watch_dirs(&new_dirs);
+    }
+
     fn warn_limit(&self, what: &str) {
         if !self.limit_warned.swap(true, Ordering::Relaxed) {
             tracing::warn!(
@@ -264,27 +287,7 @@ async fn run_event_loop(svc: Arc<IndexService>, mut rx: tokio::sync::mpsc::Unbou
             continue;
         }
         let s = svc.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            let roots: Vec<(i64, PathBuf)> = match s.index.roots() {
-                Ok(r) => r.into_iter().filter(|r| r.enabled).map(|r| (r.id, PathBuf::from(r.path))).collect(),
-                Err(_) => return,
-            };
-            let mut new_dirs = Vec::new();
-            for d in dirs {
-                // Längster passender Ort (Orte können ineinander liegen).
-                let Some((id, root)) =
-                    roots.iter().filter(|(_, r)| d.starts_with(r)).max_by_key(|(_, r)| r.as_os_str().len())
-                else {
-                    continue;
-                };
-                match s.index.refresh(*id, root, &d, false) {
-                    Ok(st) => new_dirs.extend(st.new_dirs),
-                    Err(e) => tracing::debug!("Suchindex für {} nicht aktualisiert: {e:#}", d.display()),
-                }
-            }
-            s.watch_dirs(&new_dirs);
-        })
-        .await;
+        let _ = tokio::task::spawn_blocking(move || s.refresh_dirs(dirs)).await;
     }
 }
 

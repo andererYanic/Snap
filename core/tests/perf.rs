@@ -491,3 +491,97 @@ fn local_index_million() {
         worst.as_secs_f64() * 1e3
     );
 }
+
+#[test]
+#[ignore]
+fn file_ops() {
+    use space_core::fileops::jobs::{FileJobs, FileOp};
+    use space_core::fileops::ops::{Conflict, Progress};
+    use space_core::fileops::trash::Trash;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("r");
+    const N: usize = 2000;
+    for d in 0..20 {
+        let p = root.join(format!("quelle/o{d:02}"));
+        std::fs::create_dir_all(&p).unwrap();
+        for f in 0..N / 20 {
+            std::fs::write(p.join(format!("f{f:03}.txt")), b"inhalt").unwrap();
+        }
+    }
+    std::fs::create_dir_all(root.join("ziel")).unwrap();
+    let jobs = FileJobs::new(Trash::new(dir.path().join("Trash")));
+    let p = Progress::default();
+
+    let t = Instant::now();
+    jobs.run(
+        &FileOp::Copy { sources: vec![root.join("quelle")], dest: root.join("ziel"), conflict: Conflict::Fail },
+        &p,
+    )
+    .unwrap();
+    report("fileops: Ordner kopieren (Dateien)", N, t.elapsed());
+    let t = Instant::now();
+    jobs.run(
+        &FileOp::Move { sources: vec![root.join("ziel/quelle")], dest: root.clone(), conflict: Conflict::KeepBoth },
+        &p,
+    )
+    .unwrap();
+    report("fileops: Ordner verschieben, gleiches Laufwerk", N, t.elapsed());
+    // 1000 Einzeldateien in den Papierkorb, auflisten, alles rückgängig
+    let files: Vec<_> = (0..10)
+        .flat_map(|d| (0..100).map(move |f| (d, f)))
+        .map(|(d, f)| root.join(format!("quelle/o{d:02}/f{f:03}.txt")))
+        .collect();
+    let t = Instant::now();
+    jobs.run(&FileOp::Trash { paths: files.clone() }, &p).unwrap();
+    report("fileops: Dateien in den Papierkorb", files.len(), t.elapsed());
+    let t = Instant::now();
+    let n = jobs.trash.list().len();
+    report("fileops: Papierkorb auflisten (Einträge)", n, t.elapsed());
+    let t = Instant::now();
+    jobs.undo().unwrap();
+    report("fileops: Rückgängig (wiederherstellen)", files.len(), t.elapsed());
+    assert!(files.iter().all(|f| f.exists()));
+
+    // Fernoperation: Umlaufzeit über QUIC (loopback)
+    use space_core::ipc::{Request, Response};
+    use space_core::remote_ops::RemoteOp;
+    use space_core::{Config, Daemon};
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let port = || std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mk = |n: &str| {
+            let mut c = Config::portable(&dir.path().join(n));
+            c.use_relay = false;
+            c.bind_port = Some(port());
+            c.device_name = n.into();
+            c.live_connections = false;
+            c
+        };
+        let pc = Daemon::start_loopback(mk("PC")).await.unwrap();
+        let phone = Daemon::start_loopback(mk("Handy")).await.unwrap();
+        let code = match pc.request(Request::PairInvite).await {
+            Response::PairInvite { code, .. } => code,
+            other => panic!("{other:?}"),
+        };
+        assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
+        let share = std::fs::canonicalize(root.join("quelle")).unwrap();
+        pc.request(Request::ShareAdd { path: share.clone(), name: Some("Q".into()), devices: None }).await;
+        pc.request(Request::PairGrant {
+            device: "Handy".into(),
+            capability: "files.write".into(),
+            folder: Some(share.clone()),
+        })
+        .await;
+        let n = 50;
+        let t = Instant::now();
+        for i in 0..n {
+            let (from, to) = if i % 2 == 0 { ("o00/f000.txt", "x.txt") } else { ("o00/x.txt", "f000.txt") };
+            let op = RemoteOp::Rename { share: "Q".into(), path: from.into(), new_name: to.into() };
+            let res = phone.request(Request::RemoteOp { device: "PC".into(), op }).await;
+            assert!(matches!(res, Response::Success { .. }), "{res:?}");
+        }
+        report("remote: Umbenennen (Verbindung je Auftrag)", n, t.elapsed());
+        pc.shutdown().await;
+        phone.shutdown().await;
+    });
+}

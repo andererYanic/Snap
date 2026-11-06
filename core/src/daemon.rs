@@ -51,6 +51,19 @@ pub struct DaemonInner {
     pub(crate) pin_notify: Arc<Notify>,
     /// Lokale Suche (`None` = in der Konfiguration abgeschaltet).
     pub(crate) index: Option<Arc<crate::indexer::IndexService>>,
+    /// Dateioperationen (Aufträge, Rückgängig, Papierkorb).
+    pub(crate) files: Arc<crate::fileops::jobs::FileJobs>,
+    /// Stundenfenster und Parallelität für Fernoperationen.
+    pub(crate) remote_ops: crate::remote_ops::RemoteOpsState,
+}
+
+impl DaemonInner {
+    /// Liest geänderte Ordner sofort in den Suchindex ein (ohne auf den Watcher zu warten).
+    pub(crate) async fn refresh_index(&self, dirs: Vec<PathBuf>) {
+        if let (Some(svc), false) = (self.index.clone(), dirs.is_empty()) {
+            let _ = tokio::task::spawn_blocking(move || svc.refresh_dirs(dirs)).await;
+        }
+    }
 }
 
 impl DaemonInner {
@@ -161,6 +174,7 @@ impl Daemon {
         let mut ledger_slot: Option<Arc<LedgerCtx>> = None;
         let mut pairing_slot: Option<Arc<PairingCtx>> = None;
         let mut live_slot: Option<Arc<crate::live::LiveManager>> = None;
+        let ops_slot: Arc<std::sync::OnceLock<std::sync::Weak<DaemonInner>>> = Arc::default();
         let network = P2pNetwork::start(
             NetworkOptions {
                 blob_store_path: config.blob_store_path(),
@@ -194,6 +208,7 @@ impl Daemon {
                     .accept(LEDGER_ALPN, LedgerProtocol { ctx: ledger })
                     .accept(PAIR_ALPN, PairingProtocol { ctx: pairing })
                     .accept(crate::live::LIVE_ALPN, crate::live::LiveProtocol { mgr: live })
+                    .accept(crate::remote_ops::OPS_ALPN, crate::remote_ops::OpsProtocol { inner: ops_slot.clone() })
             },
         )
         .await?;
@@ -213,6 +228,7 @@ impl Daemon {
             None
         };
 
+        let config_trash_dir = config.trash_dir.clone();
         let inner = Arc::new(DaemonInner {
             config,
             network,
@@ -226,8 +242,11 @@ impl Daemon {
             scan_locks: Mutex::new(std::collections::HashMap::new()),
             live,
             pin_notify: Arc::new(Notify::new()),
+            files: Arc::new(crate::fileops::jobs::FileJobs::new(crate::fileops::trash::Trash::new(config_trash_dir))),
             index,
+            remote_ops: Default::default(),
         });
+        let _ = ops_slot.set(Arc::downgrade(&inner));
         if inner.config.live_connections {
             inner.live.start();
         }
