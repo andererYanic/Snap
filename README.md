@@ -244,6 +244,11 @@ core/src
   Wiederherstellungsschlüssel.
 - Ziele: externe Platte/USB, Cloudflare R2 (`--to r2`, gleicher Zugang wie die Freigabelinks).
   Format: `docs/BACKUP_FORMAT.md`.
+- **Automatisch:** stündlich (`settings set backup_interval_minutes …`, 0 = aus). Ist die Platte
+  nicht angesteckt, wird der Lauf beim nächsten Mal nachgeholt.
+- **Aufbewahrung:** je Stunde, Tag und Monat der neueste Stand – standardmäßig 24 Stunden, 30 Tage,
+  12 Monate (`backup_keep_hourly`, `backup_keep_daily`, `backup_keep_monthly`). Stände der letzten
+  Stunde und der neueste Stand bleiben immer. Nicht mehr benötigte Daten werden danach gelöscht.
 
 ### Speicheranalyse & Duplikate
 

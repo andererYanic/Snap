@@ -157,11 +157,21 @@ pub(crate) async fn run(inner: &Arc<DaemonInner>, id: &str) -> Result<SnapshotIn
     if !inner.backups.running.lock().unwrap_or_else(|e| e.into_inner()).insert(row.id.clone()) {
         api_bail!(AlreadyExists, "Diese Sicherung läuft bereits.");
     }
+    let mut pruned = (0, 0);
     let result = async {
         let repo = open_repo(inner, &row)?;
         let mut known = engine::Known::load(key_dir(inner).join(format!("{}.known", row.id)));
         let progress = engine::BackupProgress::default();
-        engine::backup(&repo, &mut known, &sources, &progress).await
+        let res = engine::backup(&repo, &mut known, &sources, &progress).await;
+        // Auch nach Fehlern merken, was hochgeladen wurde (sonst blieben Reste unentdeckt).
+        let _ = known.flush();
+        let snap = res?;
+        // Alte Stände nach den Regeln ausdünnen (Fehler hier lassen die Sicherung gültig).
+        match engine::forget_and_prune(&repo, &mut known, inner.settings.backup_retention()).await {
+            Ok(p) => pruned = p,
+            Err(e) => tracing::warn!("Ausdünnen der Sicherung {} fehlgeschlagen: {e:#}", &row.id[..8]),
+        }
+        anyhow::Ok(snap)
     }
     .await;
     inner.backups.running.lock().unwrap_or_else(|e| e.into_inner()).remove(&row.id);
@@ -173,7 +183,12 @@ pub(crate) async fn run(inner: &Arc<DaemonInner>, id: &str) -> Result<SnapshotIn
         id: row.id.clone(),
         ok: result.is_ok(),
         message: match &result {
-            Ok(s) => format!("{} Dateien, {} Bytes neu", s.files, s.new_bytes),
+            Ok(s) => format!(
+                "{} Dateien, {} Bytes neu{}",
+                s.files,
+                s.new_bytes,
+                if pruned.0 > 0 { format!(", {} alte Stände entfernt", pruned.0) } else { String::new() }
+            ),
             Err(e) => format!("{e:#}"),
         },
     });
@@ -223,5 +238,33 @@ pub(crate) fn remove(inner: &DaemonInner, id: &str) -> Result<()> {
     inner.db.remove_backup_job(&row.id)?;
     let _ = std::fs::remove_file(key_dir(inner).join(format!("{}.key", row.id)));
     let _ = std::fs::remove_file(key_dir(inner).join(format!("{}.known", row.id)));
+    let _ = std::fs::remove_file(key_dir(inner).join(format!("{}.last", row.id)));
     Ok(())
+}
+
+/// Hintergrund: Sicherungen nach Zeitplan (Einstellung `backup_interval_minutes`).
+/// Nicht erreichbare Ziele (Laufwerk abgezogen) werden still übersprungen und später nachgeholt.
+pub(crate) async fn run_scheduler(inner: Arc<DaemonInner>) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        let Some(interval) = inner.settings.backup_interval() else { continue };
+        let now = crate::database::now_unix();
+        for row in inner.db.backup_jobs().unwrap_or_default() {
+            let has_sources = serde_json::from_str::<Vec<PathBuf>>(&row.sources).is_ok_and(|s| !s.is_empty());
+            let due = row.last_run.is_none_or(|t| now - t >= interval);
+            if !has_sources || !due {
+                continue;
+            }
+            let available = serde_json::from_str::<BackupTarget>(&row.target)
+                .ok()
+                .and_then(|t| Storage::open(&t, &row.id, s3_config(&inner)).ok())
+                .is_some_and(|s| s.available());
+            if !available {
+                continue;
+            }
+            if let Err(e) = run(&inner, &row.id).await {
+                tracing::warn!("Geplante Sicherung {} fehlgeschlagen: {e:#}", &row.id[..8]);
+            }
+        }
+    }
 }

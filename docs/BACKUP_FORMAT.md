@@ -31,6 +31,15 @@ Implementiert in `core/src/backup/` (Rust, `ring`). Eine Ablage ist ein Ordner
   zusätzlich die ID gegen den Inhalt geprüft.
 - **Stücke**: FastCDC mit Normalisierung (min 256 KiB, Ziel 1 MiB, max 4 MiB) und fester
   Gear-Tabelle. Einfügungen verschieben nur wenige Schnittpunkte.
+- **Unveränderte Dateien** (gleiche Größe und mtime wie im vorherigen Stand) werden nicht gelesen,
+  ihre Stückliste wird übernommen. Liegt die mtime weniger als 2 s vor dem Beginn des vorherigen Laufs, wird
+  trotzdem gelesen (grobe Zeitstempel könnten sonst eine Änderung direkt nach dem Lesen verbergen).
+- **Ausdünnen**: Erst wird der Katalog ohne die entfernten Stände geschrieben, dann werden Objekte
+  gelöscht, die kein verbliebener Stand mehr referenziert. Ein Abbruch lässt nur Reste zurück.
+- **Mehrere Geräte**: Ein Ziel wird jeweils von einem Gerät beschrieben (gleichzeitiges Sichern
+  zweier Geräte in dasselbe Ziel wird nicht unterstützt). Übernimmt ein anderes Gerät (`connect`),
+  erkennt das bisherige Gerät am neuesten Stand im Katalog, dass es nicht mehr der letzte Schreiber
+  war, und baut seinen lokalen Zwischenspeicher der vorhandenen Objekte neu auf.
 - **Reihenfolge**: Erst Daten und Bäume schreiben, dann das Laufwerk synchronisieren, dann den
   Katalog schreiben. Ein Abbruch hinterlässt höchstens unbenutzte Objekte, nie einen kaputten Stand.
 

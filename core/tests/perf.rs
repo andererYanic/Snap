@@ -983,6 +983,8 @@ fn backup_engine() {
         std::fs::create_dir_all(&usb).unwrap();
         let (repo, _, _) = Repo::init(&BackupTarget::Dir { path: usb }, None, "messung passwort").await.unwrap();
         let mut known = Known::load(dir.path().join("known"));
+        // Dateien älter als die Schutzfrist für grobe Zeitstempel (wie im Alltag)
+        std::thread::sleep(std::time::Duration::from_secs(3));
         let t = Instant::now();
         let p = BackupProgress::default();
         let s1 = backup(&repo, &mut known, std::slice::from_ref(&src), &p).await.unwrap();
