@@ -3791,7 +3791,10 @@ dependencies = [
  "lofty",
  "n0-future",
  "notify",
+ "reqwest",
+ "ring",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
  "space-core",
@@ -3800,6 +3803,7 @@ dependencies = [
  "toml",
  "tracing",
  "walkdir",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -3809,6 +3813,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "libc",
  "space-core",
  "tokio",
  "tracing-subscriber",

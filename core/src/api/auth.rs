@@ -147,7 +147,11 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::UploadRetry
         | Request::UploadRuleAdd { .. }
         | Request::UploadRuleList
-        | Request::UploadRuleRemove { .. } => Capability::Admin,
+        | Request::UploadRuleRemove { .. }
+        | Request::LinkSetup(_)
+        | Request::LinkCreate { .. }
+        | Request::LinkList
+        | Request::LinkRevoke { .. } => Capability::Admin,
     }
 }
 

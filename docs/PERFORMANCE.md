@@ -282,3 +282,28 @@ parallel hoch.
   doppelt auf der Platte. Ein Export per Referenz würde das vermeiden.
 - Vor jedem Versuch wird die Datei neu gehasht (bei großen Videos merklich). Hash, Größe und
   mtime ließen sich zwischenspeichern.
+
+## Review 12 – Freigabelinks (2026-11-06)
+
+Messung (`share_links`, Release; Speicher durch einen lokalen S3-Ersatz ersetzt, damit nur Snap
+gemessen wird).
+
+| Messung | Wert |
+|---|---|
+| Schlüssel mit Passwort ableiten (PBKDF2, 600 000 Runden) | 176 ms (im Browser je nach Gerät ~0,2–1 s) |
+| 64 MiB verschlüsseln (AES-256-GCM, ring) | 71 ms (≈ 950 MB/s) |
+| Link für 64 MiB erstellen (lesen, verschlüsseln, hochladen) | 106 ms (≈ 630 MB/s) |
+
+Die Verschlüsselung läuft gestreamt: Gelesen, verschlüsselt und hochgeladen wird in 64-KiB-Stücken
+mit höchstens 8 Stücken im Puffer. Dadurch braucht Snap unabhängig von der Dateigröße nur
+etwa 0,5 MiB zusätzlichen Speicher. In der Praxis begrenzt der Upload ins Internet.
+
+**Gefundener Fehler (Worker-Test):** Bei einer Download-Grenze wurden nach dem Start des letzten
+erlaubten Downloads dessen weitere Stücke abgelehnt; der Download wäre nie fertig geworden.
+Jetzt werden nur neue Downloads abgewiesen.
+
+**Offen:**
+
+- Dateien über 5 GB brauchen mehrteiliges Hochladen (S3 Multipart).
+- Browser ohne direktes Schreiben auf die Platte (Firefox, Safari) halten große Dateien im
+  Speicher. Ein Service Worker könnte das streamen.

@@ -323,6 +323,20 @@ pub enum Request {
     UploadRuleRemove {
         id: i64,
     },
+    /// Freigabelinks einrichten (Cloudflare R2 oder anderer S3-Speicher + Worker-Adresse).
+    LinkSetup(crate::links::LinkSettings),
+    /// Link für eine Datei erstellen (verschlüsselt hochladen). `days`/`max_downloads`/`password` optional.
+    LinkCreate {
+        path: PathBuf,
+        days: Option<u32>,
+        max_downloads: Option<u32>,
+        password: Option<String>,
+    },
+    LinkList,
+    /// Link widerrufen (ID-Präfix); löscht die verschlüsselte Kopie.
+    LinkRevoke {
+        id: String,
+    },
 }
 
 /// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
@@ -472,6 +486,12 @@ pub enum Response {
     },
     Uploads {
         items: Vec<crate::database::UploadRow>,
+    },
+    Link(crate::links::LinkInfo),
+    Links {
+        items: Vec<crate::links::LinkInfo>,
+        /// Worker-Adresse (`None` = noch nicht eingerichtet).
+        base_url: Option<String>,
     },
     UploadRules {
         rules: Vec<crate::database::UploadRule>,

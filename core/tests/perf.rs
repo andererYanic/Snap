@@ -832,3 +832,78 @@ fn upload() {
         phone.shutdown().await;
     });
 }
+
+#[test]
+#[ignore]
+fn share_links() {
+    use space_core::ipc::{Request, Response};
+    use space_core::links::crypto::{seal_all, LinkKeys};
+    use space_core::{Config, Daemon};
+    // Passwort-Ableitung (600 000 Runden PBKDF2) und reine Verschlüsselung
+    let t = Instant::now();
+    let keys = LinkKeys::derive(&[1; 32], "0123456789abcdef0123456789abcdef", Some("passwort123"));
+    println!("links: Schlüssel mit Passwort ableiten   {:>8.0} ms", t.elapsed().as_secs_f64() * 1e3);
+    let plain = vec![7u8; 64 * 1024 * 1024];
+    let t = Instant::now();
+    let enc = seal_all(&keys, &plain).unwrap();
+    let d = t.elapsed();
+    println!(
+        "links: 64 MiB verschlüsseln            {:>8.0} ms  {:>6.0} MB/s",
+        d.as_secs_f64() * 1e3,
+        67.1 / d.as_secs_f64()
+    );
+    drop(enc);
+    // Ende-zu-Ende: Link erstellen gegen einen lokalen S3-Ersatz (Netz/Platte des Speichers zählen nicht)
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        use http_body_util::BodyExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (tcp, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let svc = hyper::service::service_fn(|req: hyper::Request<hyper::body::Incoming>| async move {
+                        let _ = req.into_body().collect().await;
+                        Ok::<_, std::convert::Infallible>(hyper::Response::new(http_body_util::Full::new(
+                            bytes::Bytes::new(),
+                        )))
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(tcp), svc)
+                        .await;
+                });
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = Config::portable(&dir.path().join("snap"));
+        c.use_relay = false;
+        c.live_connections = false;
+        let d = Daemon::start_loopback(c).await.unwrap();
+        d.request(Request::LinkSetup(space_core::links::LinkSettings {
+            base_url: "http://localhost:8787".into(),
+            s3: space_core::links::s3::S3Config {
+                endpoint: format!("http://127.0.0.1:{port}"),
+                bucket: "b".into(),
+                region: "auto".into(),
+                access_key_id: "K".into(),
+                secret_access_key: "S".into(),
+            },
+        }))
+        .await;
+        let file = dir.path().join("video.mp4");
+        std::fs::write(&file, &plain).unwrap();
+        let t = Instant::now();
+        let res = d.request(Request::LinkCreate { path: file, days: None, max_downloads: None, password: None }).await;
+        assert!(matches!(res, Response::Link(_)), "{res:?}");
+        let el = t.elapsed();
+        println!(
+            "links: Link für 64 MiB erstellen        {:>8.0} ms  {:>6.0} MB/s",
+            el.as_secs_f64() * 1e3,
+            67.1 / el.as_secs_f64()
+        );
+        let (_, hwm) = rss_mib();
+        println!("links: RAM-Spitze Testprozess {hwm:.0} MiB (enthält 64 MiB Testdaten + Verschlüsselungstest)");
+        d.shutdown().await;
+    });
+}
