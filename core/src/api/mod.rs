@@ -135,6 +135,33 @@ pub(crate) async fn handle_request(
         }
         Request::SpaceUsage { path, limit } => explorer::space_usage(inner, path, limit).await,
         Request::Duplicates { path, min_size, limit } => explorer::duplicates(inner, path, min_size, limit).await,
+        Request::BackupCreate { target, sources, password } => {
+            crate::backup::create(inner, target, sources, password).await.map(Response::BackupCreated)
+        }
+        Request::BackupConnect { target, id, secret } => crate::backup::connect(inner, target, &id, secret)
+            .await
+            .map(|id| Response::Success { message: format!("Sicherung {} verbunden.", &id[..8]) }),
+        Request::BackupList => crate::backup::list(inner).map(|jobs| Response::Backups { jobs }),
+        Request::BackupSources { id, sources } => crate::backup::set_sources(inner, &id, sources)
+            .map(|_| Response::Success { message: "Quellordner gespeichert.".into() }),
+        Request::BackupRun { id } => crate::backup::run(inner, &id).await.map(Response::Snapshot),
+        Request::BackupSnapshots { id } => {
+            crate::backup::snapshots(inner, &id).await.map(|items| Response::Snapshots { items })
+        }
+        Request::BackupBrowse { id, snapshot, path } => {
+            crate::backup::browse(inner, &id, &snapshot, &path).await.map(|entries| Response::BackupEntries { entries })
+        }
+        Request::BackupRestore { id, snapshot, path, dest } => {
+            crate::backup::restore(inner, &id, &snapshot, &path, &dest)
+                .await
+                .map(|(path, files)| Response::Restored { path, files })
+        }
+        Request::BackupCheck { id, sample } => crate::backup::check(inner, &id, sample as usize).await.map(|(s, c)| {
+            Response::Success { message: format!("Sicherung in Ordnung: {s} Stände, {c} Stücke geprüft.") }
+        }),
+        Request::BackupRemove { id } => crate::backup::remove(inner, &id).map(|_| Response::Success {
+            message: "Sicherung von diesem Gerät entfernt (Daten am Ziel bleiben).".into(),
+        }),
         Request::LinkList => crate::links::list(inner).map(|(items, base_url)| Response::Links { items, base_url }),
         Request::LinkRevoke { id } => crate::links::revoke(inner, &id).await.map(Response::Link),
         Request::UploadRuleList => inner.db.upload_rules().map(|rules| Response::UploadRules { rules }),
@@ -254,6 +281,16 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::LinkRevoke { .. } => "link.revoke",
         Request::SpaceUsage { .. } => "space.usage",
         Request::Duplicates { .. } => "duplicates",
+        Request::BackupCreate { .. } => "backup.create",
+        Request::BackupConnect { .. } => "backup.connect",
+        Request::BackupList => "backup.list",
+        Request::BackupSources { .. } => "backup.sources",
+        Request::BackupRun { .. } => "backup.run",
+        Request::BackupSnapshots { .. } => "backup.snapshots",
+        Request::BackupBrowse { .. } => "backup.browse",
+        Request::BackupRestore { .. } => "backup.restore",
+        Request::BackupCheck { .. } => "backup.check",
+        Request::BackupRemove { .. } => "backup.remove",
         Request::RemoteThumbnail { .. } => "thumb.remote",
     })
 }

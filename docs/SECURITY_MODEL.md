@@ -94,6 +94,16 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   veränderten Seiten-Code ausliefern und Schlüssel abgreifen; dagegen hilft
   Zwei-Faktor-Anmeldung. Die Link-Geheimnisse liegen lokal in der Datenbank (privater
   Datenordner), damit Links später erneut angezeigt werden können.
+- **Sicherungen:** Ende-zu-Ende-verschlüsselt (AES-256-GCM je Objekt, Objektname als AAD; IDs per
+  HMAC-SHA256, damit das Ziel bekannte Dateien nicht erkennen kann); Hauptschlüssel verpackt mit
+  Passwort (PBKDF2-SHA256, 600 000 Runden) und Wiederherstellungsschlüssel. Geladene Objekte werden
+  gegen ihre ID geprüft; Manipulationen führen zu Fehlern statt falscher Daten (getestet).
+  Wiederherstellen überschreibt nie, folgt keinen Symlinks (`create_new`), übernimmt keine
+  setuid/setgid-Bits und verwirft ungültige oder doppelte Namen. Schlüsseldateien vom Ziel werden
+  streng geprüft (Fuzz-Ziel `backup_keyfile`), die Inhaltsaufteilung hat ein eigenes Fuzz-Ziel.
+  **Restrisiken:** Der Hauptschlüssel liegt auf dem sichernden Gerät (0600), damit Sicherungen
+  ohne Eingabe laufen. Wer das Gerät übernimmt, kann die Sicherungen lesen. Wer Schreibzugriff
+  auf das Ziel hat, kann Objekte löschen; Inhalte unbemerkt verändern kann er nicht.
 - **Einstellungen:** nur lokal änderbar (für Geräte `admin`, also gesperrt), Wertebereiche
   geprüft; manipulierte gespeicherte Werte werden beim Laden verworfen.
 - **Fernoperationen (`snap/ops/1`):** nicht gekoppelte Gegenstellen werden vor dem Lesen

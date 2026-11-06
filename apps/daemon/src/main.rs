@@ -209,6 +209,11 @@ enum Commands {
         #[arg(short, long, default_value_t = 50)]
         limit: u32,
     },
+    /// Sicherungen und Versionen (verschlüsselt, dedupliziert)
+    Backup {
+        #[command(subcommand)]
+        action: Option<BackupAction>,
+    },
     /// Grenzen anzeigen und sofort ändern (ohne Neustart)
     Settings {
         #[command(subcommand)]
@@ -309,6 +314,59 @@ fn read_secret(prompt: &str) -> Result<String> {
     }
     res?;
     Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Sicherungen anzeigen (Standard)
+    List,
+    /// Einrichten: --to <ordner auf externer Platte | r2> <quellordner>… (Passwort wird verdeckt abgefragt)
+    Create {
+        #[arg(long)]
+        to: String,
+        #[arg(required = true)]
+        sources: Vec<PathBuf>,
+    },
+    /// Bestehende Sicherung auf diesem Gerät verbinden (Passwort oder Wiederherstellungsschlüssel)
+    Connect {
+        #[arg(long)]
+        from: String,
+        /// Sicherungs-ID (32 Zeichen, steht im Ordnernamen snap-backup-…)
+        #[arg(long)]
+        id: String,
+    },
+    /// Quellordner festlegen
+    Sources { id: String, sources: Vec<PathBuf> },
+    /// Jetzt sichern
+    Run { id: String },
+    /// Gesicherte Stände
+    Snapshots { id: String },
+    /// Inhalt eines Ordners in einem Stand
+    Ls { id: String, snapshot: String, path: PathBuf },
+    /// Datei/Ordner wiederherstellen (nie überschreibend)
+    Restore {
+        id: String,
+        snapshot: String,
+        path: PathBuf,
+        #[arg(long, default_value = ".")]
+        to: PathBuf,
+    },
+    /// Prüfen (alle Bäume + Stichprobe; --all: alle Stücke)
+    Check {
+        id: String,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Von diesem Gerät entfernen (Daten am Ziel bleiben)
+    Remove { id: String },
+}
+
+fn backup_target(s: &str) -> Result<space_core::backup::repo::BackupTarget> {
+    use space_core::backup::repo::BackupTarget;
+    Ok(match s {
+        "r2" | "s3" => BackupTarget::S3,
+        p => BackupTarget::Dir { path: absolute(Path::new(p))? },
+    })
 }
 
 #[derive(Subcommand)]
@@ -732,6 +790,36 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             min_size: Some((min_mb.max(0.0) * 1e6) as u64),
             limit,
         },
+        Commands::Backup { action: None | Some(BackupAction::List) } => Request::BackupList,
+        Commands::Backup { action: Some(BackupAction::Create { to, sources }) } => {
+            eprintln!("Das Passwort schützt die Sicherung außerhalb dieses Geräts (mindestens 10 Zeichen).");
+            let a = read_secret("Passwort für die Sicherung: ")?;
+            let b = read_secret("Passwort wiederholen: ")?;
+            if a != b {
+                anyhow::bail!("Die Passwörter stimmen nicht überein.");
+            }
+            let sources = sources.iter().map(|p| absolute(p)).collect::<Result<Vec<_>>>()?;
+            Request::BackupCreate { target: backup_target(&to)?, sources, password: a }
+        }
+        Commands::Backup { action: Some(BackupAction::Connect { from, id }) } => {
+            let secret = read_secret("Passwort oder Wiederherstellungsschlüssel: ")?;
+            Request::BackupConnect { target: backup_target(&from)?, id, secret }
+        }
+        Commands::Backup { action: Some(BackupAction::Sources { id, sources }) } => {
+            Request::BackupSources { id, sources: sources.iter().map(|p| absolute(p)).collect::<Result<Vec<_>>>()? }
+        }
+        Commands::Backup { action: Some(BackupAction::Run { id }) } => Request::BackupRun { id },
+        Commands::Backup { action: Some(BackupAction::Snapshots { id }) } => Request::BackupSnapshots { id },
+        Commands::Backup { action: Some(BackupAction::Ls { id, snapshot, path }) } => {
+            Request::BackupBrowse { id, snapshot, path: absolute(&path)? }
+        }
+        Commands::Backup { action: Some(BackupAction::Restore { id, snapshot, path, to }) } => {
+            Request::BackupRestore { id, snapshot, path: absolute(&path)?, dest: absolute(&to)? }
+        }
+        Commands::Backup { action: Some(BackupAction::Check { id, all }) } => {
+            Request::BackupCheck { id, sample: if all { 0 } else { 200 } }
+        }
+        Commands::Backup { action: Some(BackupAction::Remove { id }) } => Request::BackupRemove { id },
         Commands::Settings { action: None | Some(SettingsAction::List) } => Request::Settings,
         Commands::Settings { action: Some(SettingsAction::Set { key, value }) } => {
             Request::SettingSet { key, value: Some(value) }
@@ -843,6 +931,9 @@ fn describe_event(e: &Event) -> String {
             format!("🛑 Gerät {} möchte: {summary} – bestätigen mit: space-daemon ops approve {id}", short(node_id, 10))
         }
         Event::UploadChanged { id, state, message } => format!("⬆️  Upload {id}: {state} {message}"),
+        Event::BackupFinished { id, ok, message } => {
+            format!("{} Sicherung {}: {message}", if *ok { "✅" } else { "❌" }, short(id, 8))
+        }
         Event::DuplicateScanProgress { done_bytes, total_bytes } => {
             format!("🔍 Duplikatsuche: {} von {}", human_size(*done_bytes), human_size(*total_bytes))
         }
@@ -1025,6 +1116,71 @@ fn print_response(res: Response) -> ExitCode {
         }
         Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
         Response::StreamUrl(s) => println!("{}", s.url),
+        Response::BackupCreated(c) => {
+            println!("✅ Sicherung {} eingerichtet.", &c.id[..8]);
+            println!();
+            println!("   WIEDERHERSTELLUNGSSCHLÜSSEL (jetzt notieren oder ausdrucken – wird nie wieder angezeigt):");
+            println!();
+            println!("   {}", c.recovery_key);
+            println!();
+            println!(
+                "   Ohne Passwort UND ohne diesen Schlüssel ist die Sicherung auf einem neuen Gerät nicht lesbar."
+            );
+            println!("   Erste Sicherung jetzt: space-daemon backup run {}", &c.id[..8]);
+        }
+        Response::Backups { jobs } => {
+            if jobs.is_empty() {
+                println!("Keine Sicherungen. Einrichten: space-daemon backup create --to /media/…/Platte ~/Dokumente");
+            }
+            for j in &jobs {
+                let target = match &j.target {
+                    space_core::backup::repo::BackupTarget::Dir { path } => path.display().to_string(),
+                    space_core::backup::repo::BackupTarget::S3 => "Cloudflare R2".into(),
+                };
+                let state = if j.running {
+                    "läuft …".to_string()
+                } else if let Some(e) = &j.last_error {
+                    format!("❌ {e}")
+                } else if let Some(t) = j.last_ok {
+                    format!("✅ zuletzt {}", fmt_time(t))
+                } else {
+                    "noch nie".into()
+                };
+                println!("{}  → {target}  ({state})", &j.id[..8]);
+                for s in &j.sources {
+                    println!("     {}", s.display());
+                }
+            }
+        }
+        Response::Snapshot(s) => println!(
+            "✅ Stand {} gesichert: {} Dateien, {} insgesamt, {} neu gespeichert",
+            &s.id[..8],
+            s.files,
+            human_size(s.bytes),
+            human_size(s.new_bytes)
+        ),
+        Response::Snapshots { items } => {
+            for s in items.iter().rev() {
+                println!(
+                    "{}  {}  {:>7} Dateien  {:>10}  (+{})",
+                    &s.id[..8],
+                    fmt_time(s.time),
+                    s.files,
+                    human_size(s.bytes),
+                    human_size(s.new_bytes)
+                );
+            }
+        }
+        Response::BackupEntries { entries } => {
+            for e in &entries {
+                let icon = if e.is_dir { "📁" } else { "📄" };
+                let size = if e.is_dir { String::new() } else { human_size(e.size) };
+                println!("{icon} {size:>10}  {}", e.name);
+            }
+        }
+        Response::Restored { path, files } => {
+            println!("✅ {files} Datei(en) wiederhergestellt nach {}", path.display())
+        }
         Response::SpaceUsage(u) => {
             println!("📊 {}  –  {} in {} Dateien", u.path, human_size(u.total), u.files);
             let bar = |size: u64| {

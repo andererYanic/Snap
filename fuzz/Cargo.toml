@@ -87,3 +87,17 @@ path = "fuzz_targets/stream_range.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "backup_chunker"
+path = "fuzz_targets/backup_chunker.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "backup_keyfile"
+path = "fuzz_targets/backup_keyfile.rs"
+test = false
+doc = false
+bench = false

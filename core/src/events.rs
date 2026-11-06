@@ -89,6 +89,12 @@ pub enum Event {
         state: String,
         message: String,
     },
+    /// Eine Sicherung ist fertig (oder fehlgeschlagen).
+    BackupFinished {
+        id: String,
+        ok: bool,
+        message: String,
+    },
     /// Fortschritt der Duplikatsuche (höchstens 2× pro Sekunde).
     DuplicateScanProgress {
         done_bytes: u64,

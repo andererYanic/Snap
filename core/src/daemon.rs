@@ -68,6 +68,7 @@ pub struct DaemonInner {
     /// Weckt die Upload-Regeln (Watcher-Ereignis).
     pub(crate) rules_notify: Arc<Notify>,
     pub(crate) upload_watchers: Mutex<std::collections::HashMap<i64, notify::RecommendedWatcher>>,
+    pub(crate) backups: crate::backup::BackupService,
 }
 
 impl DaemonInner {
@@ -287,6 +288,7 @@ impl Daemon {
             upload_notify: Arc::new(Notify::new()),
             rules_notify: Arc::new(Notify::new()),
             upload_watchers: Mutex::new(std::collections::HashMap::new()),
+            backups: Default::default(),
         });
         let _ = ops_slot.set(Arc::downgrade(&inner));
         if inner.config.live_connections {

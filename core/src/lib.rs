@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod api;
 pub mod backoff;
+pub mod backup;
 pub mod config;
 pub mod daemon;
 pub mod database;

@@ -950,3 +950,83 @@ fn storage_analysis() {
     assert_eq!(r2.hashed_bytes, 0);
     assert_eq!(r.groups.len(), 250);
 }
+
+#[test]
+#[ignore]
+fn backup_engine() {
+    use space_core::backup::engine::{backup, restore, BackupProgress, Known};
+    use space_core::backup::repo::{BackupTarget, Repo};
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("quelle");
+        // 200 MB in großen Dateien + 5 000 kleine Dateien
+        std::fs::create_dir_all(src.join("klein")).unwrap();
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |n: usize| -> Vec<u8> {
+            (0..n)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x >> 24) as u8
+                })
+                .collect()
+        };
+        for i in 0..4 {
+            std::fs::write(src.join(format!("video{i}.mp4")), rnd(50_000_000)).unwrap();
+        }
+        for i in 0..5_000 {
+            std::fs::write(src.join(format!("klein/notiz{i}.txt")), rnd(2_000)).unwrap();
+        }
+        let usb = dir.path().join("usb");
+        std::fs::create_dir_all(&usb).unwrap();
+        let (repo, _, _) = Repo::init(&BackupTarget::Dir { path: usb }, None, "messung passwort").await.unwrap();
+        let mut known = Known::load(dir.path().join("known"));
+        let t = Instant::now();
+        let p = BackupProgress::default();
+        let s1 = backup(&repo, &mut known, std::slice::from_ref(&src), &p).await.unwrap();
+        let d = t.elapsed();
+        println!(
+            "backup: erster Lauf 210 MB, 5 004 Dateien  {:>8.0} ms  {:>6.0} MB/s",
+            d.as_secs_f64() * 1e3,
+            s1.bytes as f64 / 1e6 / d.as_secs_f64()
+        );
+        let t = Instant::now();
+        let p = BackupProgress::default();
+        let s2 = backup(&repo, &mut known, std::slice::from_ref(&src), &p).await.unwrap();
+        println!(
+            "backup: zweiter Lauf ohne Änderung        {:>8.0} ms  ({} B neu)",
+            t.elapsed().as_secs_f64() * 1e3,
+            s2.new_bytes
+        );
+        // 1 MB in der Mitte eines Videos ändern
+        {
+            use std::io::{Seek, Write};
+            let mut f = std::fs::OpenOptions::new().write(true).open(src.join("video1.mp4")).unwrap();
+            f.seek(std::io::SeekFrom::Start(20_000_000)).unwrap();
+            f.write_all(&rnd(1_000_000)).unwrap();
+        }
+        let t = Instant::now();
+        let p = BackupProgress::default();
+        let s3 = backup(&repo, &mut known, std::slice::from_ref(&src), &p).await.unwrap();
+        println!(
+            "backup: 1 MB in einem Video geändert      {:>8.0} ms  ({:.1} MB neu gespeichert)",
+            t.elapsed().as_secs_f64() * 1e3,
+            s3.new_bytes as f64 / 1e6
+        );
+        let out = dir.path().join("zurück");
+        std::fs::create_dir_all(&out).unwrap();
+        let cat = repo.load_catalog().await.unwrap();
+        let t = Instant::now();
+        restore(&repo, cat.snapshots.last().unwrap(), &src, &out).await.unwrap();
+        let d = t.elapsed();
+        println!(
+            "backup: alles wiederherstellen            {:>8.0} ms  {:>6.0} MB/s",
+            d.as_secs_f64() * 1e3,
+            s1.bytes as f64 / 1e6 / d.as_secs_f64()
+        );
+        let (_, hwm) = rss_mib();
+        println!("backup: RAM-Spitze Testprozess {hwm:.0} MiB");
+    });
+}
