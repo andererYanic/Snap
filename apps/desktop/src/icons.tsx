@@ -36,6 +36,9 @@ export const Icon: Record<string, (p: P) => JSX.Element> = {
   drive: ({ size }) => <svg {...s(size)}><rect x="1.5" y="5" width="13" height="6" rx="1.5" /><path d="M11.5 8h.5" /></svg>,
   bin: ({ size }) => <svg {...s(size)}><path d="M3 4.5h10M4.5 4.5l.7 9h5.6l.7-9M6.5 4.5V3h3v1.5" /></svg>,
   restore: ({ size }) => <svg {...s(size)}><path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5v3h3" /></svg>,
+  devices: ({ size }) => <svg {...s(size)}><rect x="1.5" y="3" width="9" height="7" rx="1" /><path d="M4 12.5h4" /><rect x="11" y="5" width="3.5" height="8" rx="1" /></svg>,
+  backup: ({ size }) => <svg {...s(size)}><path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8 0 3 3 0 0 1-.4 6M8 8v5.5M6 10l2-2 2 2" /></svg>,
+  settings: ({ size }) => <svg {...s(size)}><circle cx="8" cy="8" r="2" /><path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8 3.4 3.4" /></svg>,
   hidden: ({ size }) => <svg {...s(size)}><path d="M2 2l12 12M6.5 6.6A2 2 0 0 0 9.4 9.5M4.3 4.5C2.6 5.7 1.5 8 1.5 8s2.5 4.5 6.5 4.5c1.3 0 2.4-.4 3.3-1M7 3.6c.3 0 .7-.1 1-.1 4 0 6.5 4.5 6.5 4.5s-.5.9-1.3 1.9" /></svg>,
 };
 

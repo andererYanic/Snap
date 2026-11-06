@@ -4,11 +4,12 @@ import { api, baseName, errorText, onDaemonEvent, onDaemonStatus, type DaemonEve
 import { Icon } from "./icons";
 import Explorer from "./Explorer";
 import Photos from "./Photos";
+import { Backups, Devices, SettingsPage } from "./Pages";
 
 /** Ein Tab: Ordner (mit Verlauf), Suche, Fotos oder Papierkorb. */
 export interface Tab {
   id: number;
-  kind: "folder" | "photos" | "trash";
+  kind: "folder" | "photos" | "trash" | "devices" | "backups" | "settings";
   path: string;
   history: string[];
   index: number;
@@ -30,6 +31,9 @@ export const newTab = (kind: Tab["kind"], path: string): Tab => ({ id: nextId++,
 function tabTitle(t: Tab, home: string): string {
   if (t.kind === "photos") return "Fotos";
   if (t.kind === "trash") return "Papierkorb";
+  if (t.kind === "devices") return "Geräte";
+  if (t.kind === "backups") return "Sicherungen";
+  if (t.kind === "settings") return "Einstellungen";
   if (t.path === home) return "Persönlicher Ordner";
   return baseName(t.path);
 }
@@ -174,7 +178,10 @@ export default function App() {
               }}
               title={t.kind === "folder" ? t.path : undefined}
             >
-              {t.kind === "photos" ? <Icon.photos /> : t.kind === "trash" ? <Icon.bin /> : <Icon.home />}
+              {(() => {
+                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, folder: Icon.home }[t.kind];
+                return <I />;
+              })()}
               <span className="label">{tabTitle(t, home)}</span>
               <button
                 className="close"
@@ -196,6 +203,12 @@ export default function App() {
         <div className="main">
           {tab?.kind === "photos" ? (
             <Photos notify={notify} />
+          ) : tab?.kind === "devices" ? (
+            <Devices notify={notify} />
+          ) : tab?.kind === "backups" ? (
+            <Backups notify={notify} />
+          ) : tab?.kind === "settings" ? (
+            <SettingsPage notify={notify} />
           ) : tab ? (
             <Explorer
               key={tab.id}
@@ -211,7 +224,8 @@ export default function App() {
                 updateTab(tab.id, (t) => {
                   const index = Math.max(0, Math.min(t.history.length - 1, t.index + delta));
                   const path = t.history[index];
-                  return { ...t, index, path, kind: path === "trash:" ? "trash" : path === "photos:" ? "photos" : "folder" };
+                  const special = path.endsWith(":") ? (path.slice(0, -1) as Tab["kind"]) : "folder";
+                  return { ...t, index, path, kind: special };
                 })
               }
             />
@@ -259,10 +273,23 @@ function Sidebar({ places, tab, onGo }: { places: Place[]; tab?: Tab; onGo: (k: 
         <Icon.bin size={16} />
         <span>Papierkorb</span>
       </button>
+      <button className={`navitem${is("devices", "") ? " active" : ""}`} onClick={() => onGo("devices", "devices:")}>
+        <Icon.devices size={16} />
+        <span>Geräte</span>
+      </button>
+      <button className={`navitem${is("backups", "") ? " active" : ""}`} onClick={() => onGo("backups", "backups:")}>
+        <Icon.backup size={16} />
+        <span>Sicherungen</span>
+      </button>
       <h4>Dieser Computer</h4>
       <button className={`navitem${is("folder", "/") ? " active" : ""}`} onClick={() => onGo("folder", "/")}>
         <Icon.drive size={16} />
         <span>Dateisystem</span>
+      </button>
+      <div className="sidespacer" />
+      <button className={`navitem${is("settings", "") ? " active" : ""}`} onClick={() => onGo("settings", "settings:")}>
+        <Icon.settings size={16} />
+        <span>Einstellungen</span>
       </button>
     </nav>
   );

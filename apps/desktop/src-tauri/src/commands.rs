@@ -258,3 +258,178 @@ pub async fn places() -> UiResult<Value> {
     }
     Ok(Value::Array(out))
 }
+
+// ================================================================ 3b: Geräte, Sicherungen, Einstellungen
+
+fn short_text(s: &str, max: usize) -> String {
+    s.chars().filter(|c| !c.is_control()).take(max).collect()
+}
+
+#[tauri::command]
+pub async fn devices(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::PairList).await
+}
+
+#[tauri::command]
+pub async fn peers(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::Peers).await
+}
+
+/// Erzeugt einen Einladungscode (zeitlich begrenzt, einmalig) für ein neues Gerät.
+#[tauri::command]
+pub async fn pair_invite(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::PairInvite).await
+}
+
+/// Wartet, bis die Einladung angenommen wurde oder abläuft.
+#[tauri::command]
+pub async fn pair_invite_wait(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::PairInviteWait).await
+}
+
+/// Mit dem Code eines anderen Geräts koppeln. Der Nutzer hat den Code selbst eingegeben; die
+/// Kopplung gibt dem anderen Gerät noch keine Rechte (die werden einzeln gewährt).
+#[tauri::command]
+pub async fn pair_join(d: State<'_, Daemon>, code: String) -> UiResult<Value> {
+    if code.len() > 4096 {
+        return Err(UiError::new("InvalidInput", "Code zu lang."));
+    }
+    d.request(Request::PairJoin { code: code.trim().to_string() }).await
+}
+
+#[tauri::command]
+pub async fn pair_remove(app: AppHandle, d: State<'_, Daemon>, device: String, name: String) -> UiResult<Value> {
+    let text = format!(
+        "„{}“ entkoppeln? Das Gerät verliert alle Rechte und sieht deine Freigaben nicht mehr.",
+        short_text(&name, 80)
+    );
+    if !confirm(&app, "Gerät entkoppeln", text, "Entkoppeln").await {
+        return Err(cancelled());
+    }
+    d.request(Request::PairRemove { device }).await
+}
+
+/// Ein Recht gewähren – sicherheitsrelevant, daher immer mit nativer Bestätigung.
+#[tauri::command]
+pub async fn pair_grant(
+    app: AppHandle,
+    d: State<'_, Daemon>,
+    device: String,
+    name: String,
+    capability: String,
+    folder: Option<String>,
+) -> UiResult<Value> {
+    let folder = folder.map(|f| ui_path(&f)).transpose()?;
+    let scope = folder.as_ref().map(|f| format!(" für {}", short_text(&f.to_string_lossy(), 120))).unwrap_or_default();
+    let text = format!(
+        "„{}“ das Recht „{}“{scope} geben?\n\nGib Rechte nur Geräten, die dir gehören.",
+        short_text(&name, 80),
+        short_text(&capability, 40)
+    );
+    if !confirm(&app, "Recht gewähren", text, "Gewähren").await {
+        return Err(cancelled());
+    }
+    d.request(Request::PairGrant { device, capability, folder }).await
+}
+
+/// Ein Recht entziehen (schränkt nur ein – ohne Rückfrage).
+#[tauri::command]
+pub async fn pair_revoke(
+    d: State<'_, Daemon>,
+    device: String,
+    capability: String,
+    folder: Option<String>,
+) -> UiResult<Value> {
+    let folder = folder.map(|f| ui_path(&f)).transpose()?;
+    d.request(Request::PairRevoke { device, capability, folder }).await
+}
+
+/// Ausstehende Fernoperationen anderer Geräte.
+#[tauri::command]
+pub async fn ops_pending(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::OpsPending).await
+}
+
+#[tauri::command]
+pub async fn ops_approve(app: AppHandle, d: State<'_, Daemon>, id: i64, summary: String) -> UiResult<Value> {
+    let text = format!("Diese Änderung eines anderen Geräts zulassen?\n\n{}", short_text(&summary, 300));
+    if !confirm(&app, "Fernzugriff zulassen", text, "Zulassen").await {
+        return Err(cancelled());
+    }
+    d.request(Request::OpsApprove { id }).await
+}
+
+#[tauri::command]
+pub async fn ops_reject(d: State<'_, Daemon>, id: i64) -> UiResult<Value> {
+    d.request(Request::OpsReject { id }).await
+}
+
+#[tauri::command]
+pub async fn backups(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::BackupList).await
+}
+
+/// Neue Sicherung. Ziel: Ordner (z. B. externe Platte) oder `r2`.
+#[tauri::command]
+pub async fn backup_create(
+    d: State<'_, Daemon>,
+    target: Option<String>,
+    sources: Vec<String>,
+    password: String,
+) -> UiResult<Value> {
+    let target = match target {
+        Some(p) => space_core::backup::repo::BackupTarget::Dir { path: ui_path(&p)? },
+        None => space_core::backup::repo::BackupTarget::S3,
+    };
+    d.request(Request::BackupCreate { target, sources: paths(sources)?, password }).await
+}
+
+#[tauri::command]
+pub async fn backup_run(d: State<'_, Daemon>, id: String) -> UiResult<Value> {
+    d.request(Request::BackupRun { id }).await
+}
+
+#[tauri::command]
+pub async fn backup_snapshots(d: State<'_, Daemon>, id: String) -> UiResult<Value> {
+    d.request(Request::BackupSnapshots { id }).await
+}
+
+#[tauri::command]
+pub async fn backup_browse(d: State<'_, Daemon>, id: String, snapshot: String, path: String) -> UiResult<Value> {
+    d.request(Request::BackupBrowse { id, snapshot, path: ui_path(&path)? }).await
+}
+
+/// Wiederherstellen schreibt nur neue Dateien (nie überschreiben) – ohne Rückfrage.
+#[tauri::command]
+pub async fn backup_restore(
+    d: State<'_, Daemon>,
+    id: String,
+    snapshot: String,
+    path: String,
+    dest: String,
+) -> UiResult<Value> {
+    d.request(Request::BackupRestore { id, snapshot, path: ui_path(&path)?, dest: ui_path(&dest)? }).await
+}
+
+#[tauri::command]
+pub async fn backup_remove(app: AppHandle, d: State<'_, Daemon>, id: String) -> UiResult<Value> {
+    let text = "Diese Sicherung aus Snap entfernen? Die gesicherten Daten am Ziel bleiben erhalten und lassen sich mit Passwort oder Wiederherstellungsschlüssel wieder verbinden.".to_string();
+    if !confirm(&app, "Sicherung entfernen", text, "Entfernen").await {
+        return Err(cancelled());
+    }
+    d.request(Request::BackupRemove { id }).await
+}
+
+#[tauri::command]
+pub async fn settings(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::Settings).await
+}
+
+/// Grenze ändern (`None` = Standard). Der Daemon prüft Bereich und Einheit.
+#[tauri::command]
+pub async fn setting_set(d: State<'_, Daemon>, key: String, value: Option<i64>) -> UiResult<Value> {
+    if key.len() > 64 {
+        return Err(UiError::new("InvalidInput", "Ungültige Einstellung."));
+    }
+    d.request(Request::SettingSet { key, value }).await
+}

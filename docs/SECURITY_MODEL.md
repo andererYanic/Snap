@@ -131,8 +131,9 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   3. Tauri-Rechte minimal: Ereignisse und Fensterleiste; keine Datei-, Shell- oder Dialogrechte.
   4. Keine allgemeine Durchreiche zum Daemon. Es gibt nur typisierte Befehle mit Eingabeprüfung
      (absolute Pfade ohne `..`, Längen, Mengen).
-  5. Folgenreiches (endgültig löschen, Papierkorb leeren, ausführbare oder riskante Dateien öffnen)
-     bestätigt ein **nativer** Dialog des Rust-Teils.
+  5. Folgenreiches bestätigt ein **nativer** Dialog des Rust-Teils: endgültig löschen, Papierkorb
+     leeren, ausführbare oder riskante Dateien öffnen, Rechte gewähren, entkoppeln,
+     Fernänderungen zulassen, Sicherungen entfernen.
 - Selbst ein gelungenes XSS kann daher höchstens rückgängig machbare Aktionen auslösen
   (Papierkorb, Verschieben, Umbenennen) und keine Daten nach außen senden.
 - **Vorschaubild-Protokoll `thumb:`:** nur lesend, nur JPEG aus dem Cache des Dienstes.

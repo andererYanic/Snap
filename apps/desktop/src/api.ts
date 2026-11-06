@@ -172,3 +172,48 @@ export function extOf(name: string): string {
 }
 export const isImage = (name: string) => IMAGE.includes(extOf(name));
 export const isVideo = (name: string) => VIDEO.includes(extOf(name));
+
+// ---------------------------------------------------------------- 3b: Geräte, Sicherungen, Einstellungen
+
+export interface Grant { capability: string; folder: string | null; granted_at: number }
+export interface Device { node_id: string; name: string; paired_at: number; last_sync_at: number | null; grants: Grant[] }
+export interface Peer { node_id: string; status: string; last_seen: number | null }
+export interface Approval { id: number; node_id: string; summary?: string; [k: string]: unknown }
+export interface BackupJob {
+  id: string;
+  target: { kind: "Dir"; path: string } | { kind: "S3" };
+  sources: string[];
+  last_run: number | null;
+  last_ok: number | null;
+  last_error: string | null;
+  last_snapshot: string | null;
+  running: boolean;
+}
+export interface Snapshot { id: string; time: number; host: string; files: number; bytes: number; new_bytes: number; sources: { path: string; tree: string }[] }
+export interface Setting { key: string; value: number; default: number; overridden: boolean; unit: string; min: number; max: number; help: string }
+
+export const api3 = {
+  devices: () => invoke<{ devices: Device[] }>("devices"),
+  peers: () => invoke<{ peers: Peer[] }>("peers"),
+  pairInvite: () => invoke<{ code: string; expires_at: number }>("pair_invite"),
+  pairInviteWait: () => invoke<{ device: Device }>("pair_invite_wait"),
+  pairJoin: (code: string) => invoke<{ device: Device }>("pair_join", { code }),
+  pairRemove: (device: string, name: string) => invoke<unknown>("pair_remove", { device, name }),
+  pairGrant: (device: string, name: string, capability: string, folder: string | null) =>
+    invoke<unknown>("pair_grant", { device, name, capability, folder }),
+  pairRevoke: (device: string, capability: string, folder: string | null) =>
+    invoke<unknown>("pair_revoke", { device, capability, folder }),
+  opsPending: () => invoke<{ items: Approval[] }>("ops_pending"),
+  opsApprove: (id: number, summary: string) => invoke<unknown>("ops_approve", { id, summary }),
+  opsReject: (id: number) => invoke<unknown>("ops_reject", { id }),
+  backups: () => invoke<{ jobs: BackupJob[] }>("backups"),
+  backupCreate: (target: string | null, sources: string[], password: string) =>
+    invoke<{ id: string; recovery_key: string }>("backup_create", { target, sources, password }),
+  backupRun: (id: string) => invoke<Snapshot>("backup_run", { id }),
+  backupSnapshots: (id: string) => invoke<{ items: Snapshot[] }>("backup_snapshots", { id }),
+  backupRestore: (id: string, snapshot: string, path: string, dest: string) =>
+    invoke<{ path: string; files: number }>("backup_restore", { id, snapshot, path, dest }),
+  backupRemove: (id: string) => invoke<unknown>("backup_remove", { id }),
+  settings: () => invoke<{ items: Setting[] }>("settings"),
+  settingSet: (key: string, value: number | null) => invoke<unknown>("setting_set", { key, value }),
+};
