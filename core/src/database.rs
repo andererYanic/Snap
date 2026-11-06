@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -433,6 +433,22 @@ impl DatabaseManager {
                     state    TEXT    NOT NULL  -- 'pending' | 'ok' | 'conflict'
                 );
                 CREATE INDEX IF NOT EXISTS idx_pinned_pin ON pinned_files(pin_id);
+                ",
+            )?;
+        }
+        if version < 6 {
+            // Migration -> 6: Bestätigungen für Fernoperationen (Massenschutz).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS op_approvals (
+                    id         INTEGER PRIMARY KEY,
+                    node_id    TEXT    NOT NULL,
+                    op         TEXT    NOT NULL,  -- JSON der Fernoperation
+                    summary    TEXT    NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    state      TEXT    NOT NULL   -- 'pending' | 'approved' | 'rejected'
+                );
+                CREATE INDEX IF NOT EXISTS idx_approvals_state ON op_approvals(state, created_at);
                 ",
             )?;
         }
@@ -1491,6 +1507,57 @@ impl DatabaseManager {
             .collect())
     }
 
+    /// Legt eine wartende Fernoperation an (Massenschutz). Gibt die Nummer zurück.
+    pub fn add_approval(&self, node_id: &str, op_json: &str, summary: &str) -> Result<i64> {
+        let conn = self.conn();
+        // Höchstens 100 offene Anfragen je Gerät (ein Angreifer soll die Tabelle nicht füllen).
+        let open: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM op_approvals WHERE node_id = ?1 AND state = 'pending'",
+            params![node_id],
+            |r| r.get(0),
+        )?;
+        if open >= 100 {
+            bail!("Zu viele unbestätigte Anfragen dieses Geräts");
+        }
+        conn.execute(
+            "INSERT INTO op_approvals (node_id, op, summary, created_at, state) VALUES (?1, ?2, ?3, ?4, 'pending')",
+            params![node_id, op_json, summary, now_unix()],
+        )?;
+        let id = conn.last_insert_rowid();
+        drop(conn);
+        self.emit(Event::ApprovalRequested { id, node_id: node_id.to_string(), summary: summary.to_string() });
+        Ok(id)
+    }
+
+    /// Offene Bestätigungen (neueste zuerst): (id, node_id, summary, created_at).
+    pub fn pending_approvals(&self) -> Result<Vec<(i64, String, String, i64)>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, node_id, summary, created_at FROM op_approvals WHERE state = 'pending' ORDER BY id DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Entscheidet über eine offene Bestätigung. Gibt (node_id, op_json) zurück, wenn sie offen war.
+    pub fn decide_approval(&self, id: i64, approve: bool) -> Result<Option<(String, String)>> {
+        let conn = self.conn();
+        let row: Option<(String, String)> = conn
+            .query_row("SELECT node_id, op FROM op_approvals WHERE id = ?1 AND state = 'pending'", params![id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?;
+        if row.is_some() {
+            conn.execute(
+                "UPDATE op_approvals SET state = ?2 WHERE id = ?1",
+                params![id, if approve { "approved" } else { "rejected" }],
+            )?;
+        }
+        Ok(row)
+    }
+
     /// Entkoppelt ein Gerät und entfernt seine Ledger-Einträge und Adress-Hinweise.
     pub fn remove_device(&self, node_id: &str) -> Result<bool> {
         let mut conn = self.conn();
@@ -1499,6 +1566,10 @@ impl DatabaseManager {
         tx.execute("DELETE FROM ledger_entries WHERE origin = ?1", params![node_id])?;
         tx.execute("DELETE FROM peer_addrs WHERE node_id = ?1", params![node_id])?;
         tx.execute("DELETE FROM device_grants WHERE node_id = ?1", params![node_id])?;
+        tx.execute(
+            "UPDATE op_approvals SET state = 'rejected' WHERE node_id = ?1 AND state = 'pending'",
+            params![node_id],
+        )?;
         tx.commit()?;
         if removed {
             self.emit(Event::DeviceRemoved { node_id: node_id.to_string() });

@@ -104,6 +104,10 @@ pub(crate) async fn handle_request(
         Request::TrashRestore { id, keep_both } => fileops::trash_restore(inner, id, keep_both).await,
         Request::TrashPurge { id } => fileops::trash_purge(inner, id).await,
         Request::TrashEmpty => fileops::trash_empty(inner).await,
+        Request::RemoteOp { device, op } => crate::remote_ops::send(inner, &device, op).await,
+        Request::OpsPending => fileops::ops_pending(inner),
+        Request::OpsApprove { id } => crate::remote_ops::approve(inner, id).await,
+        Request::OpsReject { id } => crate::remote_ops::reject(inner, id),
         Request::Subscribe => Ok(Response::error(
             error::ErrorCode::InvalidInput,
             "Ereignisse gibt es nur über eine Socket-Verbindung oder Daemon::subscribe()",
@@ -171,5 +175,9 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::TrashRestore { .. } => "trash.restore",
         Request::TrashPurge { .. } => "trash.purge",
         Request::TrashEmpty => "trash.empty",
+        Request::RemoteOp { .. } => "remote.op",
+        Request::OpsPending => "ops.pending",
+        Request::OpsApprove { .. } => "ops.approve",
+        Request::OpsReject { .. } => "ops.reject",
     })
 }

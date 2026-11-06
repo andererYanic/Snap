@@ -6,6 +6,7 @@ use space_core::fileops::jobs::FileOp;
 use space_core::fileops::ops::Conflict;
 use space_core::index::NodeKind;
 use space_core::ipc::{read_frame, write_frame, Envelope, PinInfo, Request, Response, ScanResult, SyncResult};
+use space_core::remote_ops::RemoteOp;
 use space_core::{Config, Daemon, FileRecord};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -157,6 +158,108 @@ enum Commands {
         #[command(subcommand)]
         action: Option<TrashAction>,
     },
+    /// Dateien in Freigaben eines gekoppelten Geräts bearbeiten (Pfade: Freigabe/pfad)
+    Remote {
+        /// Gerätename oder Node-ID-Präfix
+        device: String,
+        #[command(subcommand)]
+        action: RemoteAction,
+    },
+    /// Angehaltene Änderungen anderer Geräte (Massenschutz) bestätigen oder ablehnen
+    Ops {
+        #[command(subcommand)]
+        action: Option<OpsAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteAction {
+    /// Umbenennen: rename Freigabe/pfad neuer-name
+    Rename { path: String, new_name: String },
+    /// Verschieben innerhalb einer Freigabe: mv Freigabe/a… Freigabe/zielordner
+    Mv {
+        #[arg(required = true, num_args = 2..)]
+        paths: Vec<String>,
+        #[arg(long, value_enum, default_value_t = OnConflict::Fail)]
+        on_conflict: OnConflict,
+    },
+    /// Kopieren innerhalb einer Freigabe
+    Cp {
+        #[arg(required = true, num_args = 2..)]
+        paths: Vec<String>,
+        #[arg(long, value_enum, default_value_t = OnConflict::Fail)]
+        on_conflict: OnConflict,
+    },
+    /// Ordner anlegen: mkdir Freigabe/pfad/neu
+    Mkdir { path: String },
+    /// In den Papierkorb des Geräts (mit --permanent endgültig, braucht files.purge)
+    Rm {
+        #[arg(required = true)]
+        paths: Vec<String>,
+        #[arg(long)]
+        permanent: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum OpsAction {
+    /// Offene Anfragen anzeigen (Standard)
+    Pending,
+    /// Anfrage ausführen
+    Approve { id: i64 },
+    /// Anfrage verwerfen
+    Reject { id: i64 },
+}
+
+/// "Fotos/2024/a.jpg" → ("Fotos", "2024/a.jpg"); "Fotos" → ("Fotos", "").
+fn split_share(p: &str) -> (String, String) {
+    let p = p.trim_matches('/');
+    match p.split_once('/') {
+        Some((s, r)) => (s.to_string(), r.to_string()),
+        None => (p.to_string(), String::new()),
+    }
+}
+
+/// Alle Pfade müssen in derselben Freigabe liegen.
+fn same_share(paths: &[String]) -> Result<(String, Vec<String>)> {
+    let parts: Vec<(String, String)> = paths.iter().map(|p| split_share(p)).collect();
+    let share = parts.first().map(|p| p.0.clone()).unwrap_or_default();
+    if parts.iter().any(|p| p.0 != share) {
+        anyhow::bail!("Alle Pfade müssen in derselben Freigabe liegen.");
+    }
+    Ok((share, parts.into_iter().map(|p| p.1).collect()))
+}
+
+fn remote_op(action: RemoteAction) -> Result<RemoteOp> {
+    Ok(match action {
+        RemoteAction::Rename { path, new_name } => {
+            let (share, path) = split_share(&path);
+            RemoteOp::Rename { share, path, new_name }
+        }
+        RemoteAction::Mv { paths, on_conflict } => {
+            let (share, mut rels) = same_share(&paths)?;
+            let dest_dir = rels.pop().unwrap_or_default();
+            RemoteOp::Move { share, paths: rels, dest_dir, conflict: on_conflict.into() }
+        }
+        RemoteAction::Cp { paths, on_conflict } => {
+            let (share, mut rels) = same_share(&paths)?;
+            let dest_dir = rels.pop().unwrap_or_default();
+            RemoteOp::Copy { share, paths: rels, dest_dir, conflict: on_conflict.into() }
+        }
+        RemoteAction::Mkdir { path } => {
+            let (share, rel) = split_share(&path);
+            let (parent, name) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
+            RemoteOp::Mkdir { share, parent: parent.to_string(), name: name.to_string() }
+        }
+        RemoteAction::Rm { paths, permanent } => {
+            let (share, paths) = same_share(&paths)?;
+            if permanent {
+                RemoteOp::Purge { share, paths }
+            } else {
+                RemoteOp::Trash { share, paths }
+            }
+        }
+    })
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -398,6 +501,10 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Request::TrashPurge { id: trash_id(&config.socket_path, &entry).await? }
         }
         Commands::Trash { action: Some(TrashAction::Empty) } => Request::TrashEmpty,
+        Commands::Remote { device, action } => Request::RemoteOp { device, op: remote_op(action)? },
+        Commands::Ops { action: None | Some(OpsAction::Pending) } => Request::OpsPending,
+        Commands::Ops { action: Some(OpsAction::Approve { id }) } => Request::OpsApprove { id },
+        Commands::Ops { action: Some(OpsAction::Reject { id }) } => Request::OpsReject { id },
         Commands::Watch => return watch(&config.socket_path).await,
     };
 
@@ -680,6 +787,18 @@ fn print_response(res: Response) -> ExitCode {
             println!("{watched_dirs} Ordner werden live beobachtet.");
         }
         Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
+        Response::Approvals { items } => {
+            if items.is_empty() {
+                println!("Keine angehaltenen Anfragen.");
+            }
+            for a in &items {
+                let who = a.device_name.clone().unwrap_or_else(|| short(&a.node_id, 10).to_string());
+                println!("{:>4}  {}  {who}: {}", a.id, fmt_time(a.created_at), a.summary);
+            }
+            if !items.is_empty() {
+                println!("Bestätigen: space-daemon ops approve <nr> · Ablehnen: space-daemon ops reject <nr>");
+            }
+        }
         Response::FileOpDone { outcome, .. } => {
             for d in &outcome.done {
                 if d.from == d.to {

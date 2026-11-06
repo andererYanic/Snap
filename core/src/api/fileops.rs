@@ -97,3 +97,20 @@ pub(crate) async fn trash_empty(inner: &Arc<DaemonInner>) -> Result<Response> {
     let n = tokio::task::spawn_blocking(move || files.trash.empty()).await??;
     Ok(Response::Success { message: format!("Papierkorb geleert ({n} Einträge).") })
 }
+
+pub(crate) fn ops_pending(inner: &DaemonInner) -> Result<Response> {
+    let devices = inner.db.list_devices()?;
+    let items = inner
+        .db
+        .pending_approvals()?
+        .into_iter()
+        .map(|(id, node_id, summary, created_at)| crate::ipc::ApprovalInfo {
+            id,
+            device_name: devices.iter().find(|d| d.node_id == node_id).map(|d| d.name.clone()),
+            node_id,
+            summary,
+            created_at,
+        })
+        .collect();
+    Ok(Response::Approvals { items })
+}

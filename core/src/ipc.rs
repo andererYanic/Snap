@@ -254,6 +254,29 @@ pub enum Request {
     },
     /// Papierkorb leeren (endgültig).
     TrashEmpty,
+    /// Dateioperation auf einem gekoppelten Gerät ausführen (in dessen Freigaben).
+    RemoteOp {
+        device: String,
+        op: crate::remote_ops::RemoteOp,
+    },
+    /// Angehaltene Fernoperationen anderer Geräte (Massenschutz).
+    OpsPending,
+    OpsApprove {
+        id: i64,
+    },
+    OpsReject {
+        id: i64,
+    },
+}
+
+/// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalInfo {
+    pub id: i64,
+    pub node_id: String,
+    pub device_name: Option<String>,
+    pub summary: String,
+    pub created_at: i64,
 }
 
 /// Ein Eintrag beim Lesen eines Ordners.
@@ -382,6 +405,9 @@ pub enum Response {
     },
     FileOpStarted {
         job: u64,
+    },
+    Approvals {
+        items: Vec<ApprovalInfo>,
     },
     FileOpDone {
         job: u64,
