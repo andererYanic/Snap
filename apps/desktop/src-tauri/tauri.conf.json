@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Snap",
+  "version": "0.1.0",
+  "identifier": "de.snap.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Snap",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 720,
+        "minHeight": 480,
+        "decorations": false,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob: thumb: http://thumb.localhost",
+        "media-src": "'self' http://127.0.0.1:*",
+        "connect-src": "ipc: http://ipc.localhost",
+        "font-src": "'self'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-src": "'none'"
+      },
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage"],
+    "category": "Utility",
+    "shortDescription": "Privater Datei-Explorer und P2P-Speicher",
+    "license": "GPL-3.0-only",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"]
+  }
+}

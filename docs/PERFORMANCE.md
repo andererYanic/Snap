@@ -387,3 +387,24 @@ Messung `photo_timeline` (Release): 1 Mio. Index-Einträge, davon 375 000 Bilder
 - **Offen:** Die Prüfung im Hintergrund (211 ms bei 1 Mio. Einträgen) läuft nach jeder
   Indexänderung (gebündelt, 5 s). Eine Warteschlange geänderter Knoten aus dem Indexer würde sie
   auf die Änderungen beschränken.
+
+## Review 17 – Desktop-App, Brücke zum Dienst (3a, 2026-11-06)
+
+Messung `apps/desktop/src-tauri` → `bridge::tests::perf_bridge_roundtrip` (Release-App gegen
+Release-Daemon, Ordner mit 2 000 Dateien):
+
+| Messung | Ergebnis |
+|---|---|
+| Ordnerseite mit 1 000 Einträgen (Daemon liest live, Socket, JSON, Umwandlung) | **3,1 ms** |
+| Gleiche Messung gegen Debug-Daemon (nur zum Vergleich) | 10,5 ms |
+| Oberfläche (JS + CSS, gzip) | 82 KB + 3 KB |
+
+- Große Ordner werden seitenweise geladen (je 1 000). Die erste Seite erscheint sofort, der Rest
+  wird angehängt. Ein Generationszähler verwirft Seiten, wenn inzwischen woanders hin navigiert
+  wurde.
+- Vorschaubilder lädt die Web-Ansicht träge (`loading="lazy"`) über das `thumb:`-Protokoll. Der
+  Daemon liefert sie aus seinem Cache (Review 9). Die Antwort trägt `Cache-Control`, damit die
+  Web-Ansicht sie nicht erneut anfragt.
+- **Offen:** Jede Ordnerseite liest den Ordner im Daemon neu ein. Bei sehr großen Ordnern
+  (> 10 000 Einträge) wäre ein Cursor im Daemon günstiger. Eine virtualisierte Liste in der
+  Oberfläche folgt, sobald Ordner dieser Größe im Alltag auffallen.
