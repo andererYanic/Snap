@@ -35,6 +35,8 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Ledger:** jeder Eintrag vom Ursprungsgerät signiert; strenge Prüfung relativer Pfade;
   ungültige Einträge werden einzeln verworfen.
 - **Freigaben:** Symlinks werden nie verfolgt; keine absoluten Pfade im Ledger.
+- **Live-Verbindungen:** nur Hinweise (keine Daten), nur mit `catalog.read` in beide Richtungen,
+  Frames ≤ 4 KiB, ≤ 50 Nachrichten/s, strikte Nachrichtentypen; Entzug trennt sofort.
 - **Eingaben von außen:** Größenlimits (IPC 1 MiB, Ledger-Seite 1000 Einträge / 8 MiB,
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.
@@ -52,5 +54,6 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 
 ## Prüfung
 
+- Fuzz-Ziele: Einladungscodes, Ledger-Einträge, IPC-Frames, Pfade/Namen, Live-Nachrichten.
 - Angriffstests für jede Netzwerkschnittstelle (`core/tests/`), Rechte-Matrix für jede Anfrageart.
 - CI: Tests, Clippy, `cargo audit`, `cargo deny`, Fuzzing (Kurzlauf je PR, 20 min nächtlich).

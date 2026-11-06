@@ -46,6 +46,7 @@ pub struct DaemonInner {
     pub(crate) watchers: Mutex<std::collections::HashMap<i64, notify::RecommendedWatcher>>,
     /// Pro Freigabe höchstens ein Scan gleichzeitig.
     pub(crate) scan_locks: Mutex<std::collections::HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
+    pub(crate) live: Arc<crate::live::LiveManager>,
 }
 
 impl DaemonInner {
@@ -155,6 +156,7 @@ impl Daemon {
         let pairing_state = Arc::new(PairingState::default());
         let mut ledger_slot: Option<Arc<LedgerCtx>> = None;
         let mut pairing_slot: Option<Arc<PairingCtx>> = None;
+        let mut live_slot: Option<Arc<crate::live::LiveManager>> = None;
         let network = P2pNetwork::start(
             NetworkOptions {
                 blob_store_path: config.blob_store_path(),
@@ -179,16 +181,21 @@ impl Daemon {
                     device_name: config.device_name.clone(),
                     state: pairing_state.clone(),
                 });
+                let live =
+                    crate::live::LiveManager::new(ledger.clone(), Duration::from_secs(config.connect_timeout_secs));
                 ledger_slot = Some(ledger.clone());
                 pairing_slot = Some(pairing.clone());
+                live_slot = Some(live.clone());
                 builder
                     .accept(LEDGER_ALPN, LedgerProtocol { ctx: ledger })
                     .accept(PAIR_ALPN, PairingProtocol { ctx: pairing })
+                    .accept(crate::live::LIVE_ALPN, crate::live::LiveProtocol { mgr: live })
             },
         )
         .await?;
         let ledger = ledger_slot.context("Ledger-Protokoll nicht initialisiert")?;
         let pairing = pairing_slot.context("Pairing-Protokoll nicht initialisiert")?;
+        let live = live_slot.context("Live-Protokoll nicht initialisiert")?;
 
         let listener = UnixListener::bind(&config.socket_path)
             .with_context(|| format!("IPC-Socket {} nicht anlegbar", config.socket_path.display()))?;
@@ -205,7 +212,11 @@ impl Daemon {
             sync_lock: Arc::new(tokio::sync::Mutex::new(())),
             watchers: Mutex::new(std::collections::HashMap::new()),
             scan_locks: Mutex::new(std::collections::HashMap::new()),
+            live,
         });
+        if inner.config.live_connections {
+            inner.live.start();
+        }
         backfill_ledger(&inner)?;
         let daemon = Self { inner: inner.clone(), tasks: Arc::new(Mutex::new(Vec::new())) };
 
@@ -238,6 +249,11 @@ impl Daemon {
         handle_request(&self.inner, caller, req).await
     }
 
+    /// Anzahl aktuell live verbundener Geräte.
+    pub fn live_peers(&self) -> usize {
+        self.inner.live.connected_count()
+    }
+
     /// Ereignisse abonnieren (eingebettete Nutzung, z. B. Mobile per FFI).
     pub fn subscribe(&self) -> crate::events::Subscription {
         self.inner.db.events().subscribe()
@@ -249,6 +265,7 @@ impl Daemon {
     }
 
     pub async fn shutdown(&self) {
+        self.inner.live.shutdown();
         self.inner.watchers.lock().unwrap().clear();
         let tasks: Vec<_> = std::mem::take(&mut *self.tasks.lock().unwrap());
         for t in tasks {

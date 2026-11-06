@@ -91,6 +91,7 @@ core/src
   worker.rs      Offline-Warteschlange
   sync.rs        Ledger-Abgleich (auf Anfrage, Hintergrund, periodisch)
   shares.rs      Ordner-Freigaben: Scanner, Watcher, Import per Referenz
+  live.rs        Live-Verbindungen (snap/live/1): Hinweise, Status, Wiederverbindung
   pairing.rs     Einmal-Codes, Pairing-Protokoll (snap/pair/1)
   ledger.rs      signierte Dateilisten, Abgleich per Versionsvektor (snap/ledger/1)
   database.rs    SQLite: files, pending_pins, peer_status, devices, ledger_entries, peer_addrs
@@ -119,6 +120,18 @@ core/src
 - **Symlinks werden nie verfolgt**; temporäre und Systemdateien werden ignoriert.
 - Im Ledger stehen Freigabe-Name und Pfad **relativ** zur Freigabe – nie absolute Pfade.
 - Andere Geräte laden per `download Fotos/2024/strand.jpg`.
+
+### Live-Verbindungen
+
+- Gekoppelte Geräte halten eine stehende Verbindung (`snap/live/1`). Änderungen erscheinen nach
+  ~0,3 s auf den anderen Geräten, der Online-Status sofort; kommt ein Gerät zurück, starten
+  wartende Downloads sofort.
+- Über die Leitung gehen **nur Hinweise** („mein Ledger-Stand ist N“) – die Daten holt der
+  Empfänger per signiertem Abgleich. Nur Geräte mit `catalog.read` (in beide Richtungen geprüft).
+- Schutz: Frames ≤ 4 KiB, ≤ 50 Nachrichten/s, unbekannte Nachrichten trennen, Lebenszeichen alle
+  20 s, Wiederverbindung mit Backoff (2 s – 5 min, Zufallsstreuung).
+- Abschaltbar mit `live_connections = false` (dann nur Abgleich bei Nutzung/periodisch).
+  Hinweis: Relais/Netzbeobachter sehen, wann deine Geräte online sind.
 
 ### Pairing & Ledger-Gossip
 

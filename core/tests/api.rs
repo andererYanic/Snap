@@ -119,8 +119,11 @@ async fn subscribe_streams_live_events_across_devices() {
         Response::Queued { .. } => {}
         other => panic!("{other:?}"),
     }
-    let st = wait_event(&mut sub, |e| matches!(e, Event::PeerStatusChanged { .. })).await;
-    assert_eq!(st, Event::PeerStatusChanged { node_id: a.node_id(), status: "offline".into() });
+    // (Vorher kann „online“ durch die Live-Verbindung gekommen sein.)
+    let a_id = a.node_id();
+    let st =
+        wait_event(&mut sub, |e| matches!(e, Event::PeerStatusChanged { status, .. } if status == "offline")).await;
+    assert_eq!(st, Event::PeerStatusChanged { node_id: a_id, status: "offline".into() });
     wait_event(&mut sub, |e| matches!(e, Event::JobQueued { .. })).await;
 
     // Client schließt -> Daemon beendet das Abo sauber und bleibt bedienbar

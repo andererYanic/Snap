@@ -90,3 +90,20 @@ Datenbank-Übernahme in Stapeln à 500 in einer Transaktion.
 
 **Offen:** Pro Datei werden Temp-Tag und Tag einzeln gesetzt (~170 µs/Datei bei kleinen
 Dateien) – bei sehr vielen kleinen Dateien ließe sich das bündeln (Batch-API von iroh-blobs).
+
+## Review 5 – Live-Verbindungen (2026-11-05)
+
+| Messung | Wert | Anmerkung |
+|---|---|---|
+| Änderung auf A → in B's Katalog | **~330 ms** | 300 ms Bündelung (fasst Scan-Stapel zusammen) + ~30 ms Abgleich |
+| Gerät fährt herunter → „offline“ beim anderen | **sofort** (µs) | sauberes QUIC-Schließen; bei Abbruch ohne Schließen spätestens 60 s |
+| Gerät wieder da → wartender Download fertig | **0,1–0,4 s** | Live-Verbindung weckt die Warteschlange sofort (vorher bis zum Backoff, bis 1 h) |
+| Ruhelast pro gekoppeltem Gerät | 1 Frame / 20 s | Lebenszeichen; Hinweise nur bei Änderungen |
+| Verbindungen pro Gerätepaar | genau 1 | Duplikate deterministisch aufgelöst |
+
+**Gefundener Fehler:** Nach Entzug von `catalog.read` baute die *eigene* Seite die Live-Verbindung
+wieder auf und hätte weiter Ledger-Hinweise an das Gerät ohne Recht geschickt. Jetzt gilt die
+Rechteprüfung auch für ausgehende Verbindungen.
+
+**Offen:** Die Bündelung (300 ms) könnte für Einzeländerungen kürzer sein (adaptiv); der Abgleich
+selbst öffnet noch eine eigene Ledger-Verbindung statt die Live-Verbindung mitzunutzen.

@@ -42,6 +42,8 @@ pub struct ConfigFile {
     pub device_name: Option<String>,
     /// Intervall für den automatischen Ledger-Abgleich in Stunden (±30 % Zufall). 0 = aus.
     pub sync_interval_hours: Option<f64>,
+    /// Stehende Verbindungen zu gekoppelten Geräten („immer live“). Standard: true.
+    pub live_connections: Option<bool>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -57,6 +59,7 @@ pub struct Config {
     pub device_name: String,
     /// 0.0 = periodischer Abgleich deaktiviert.
     pub sync_interval_hours: f64,
+    pub live_connections: bool,
 }
 
 impl Config {
@@ -144,6 +147,7 @@ impl Config {
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(hostname),
             sync_interval_hours: file.sync_interval_hours.unwrap_or(6.0).max(0.0),
+            live_connections: file.live_connections.unwrap_or(true),
         })
     }
 
@@ -159,6 +163,7 @@ impl Config {
             use_relay: true,
             device_name: "Testgerät".to_string(),
             sync_interval_hours: 0.0,
+            live_connections: true,
         }
     }
 }
@@ -224,6 +229,10 @@ const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration
 # Zusätzlich wird bei Nutzung (list, sync) und bei Kontakt mit einem Gerät abgeglichen.
 # 0 = nur bei Nutzung/Kontakt.
 # sync_interval_hours = 6
+
+# Stehende Verbindungen zu gekoppelten Geräten: Änderungen und Online-Status sofort.
+# Hinweis: Relais/Netzbeobachter sehen dadurch, wann deine Geräte online sind.
+# live_connections = true
 "#;
 
 #[cfg(test)]
