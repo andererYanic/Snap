@@ -147,7 +147,9 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 ## Bewusst nicht abgedeckt
 
 - **Metadaten gegenüber Relais/Netz:** Wer wann mit wem verbunden ist, ist sichtbar
-  (besonders im Modus „immer live“). Abhilfe: eigenes Relais, `use_relay = false` im LAN.
+  (besonders im Modus „immer live“). Abhilfe: eigenes Relais (`relay_urls`, Docker-Vorlage in
+  `gateway/relay/` mit Allowlist der eigenen Node-IDs), `use_relay = false` im LAN. Eigene Relais
+  müssen `https://` verwenden und dürfen keine Zugangsdaten in der Adresse enthalten.
 - **Kompromittiertes gekoppeltes Gerät:** kann alles, was ihm gewährt wurde, und seine eigenen
   Ledger-Einträge fälschen – nicht die anderer Geräte.
 - **Kompromittierter lokaler Benutzer / root:** hat vollen Zugriff auf Daten und Schlüssel.

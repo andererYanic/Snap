@@ -210,6 +210,8 @@ impl Daemon {
                 connect_timeout: Duration::from_secs(config.connect_timeout_secs),
                 bind_port: config.bind_port,
                 use_relay: config.use_relay,
+                relay_urls: config.relay_urls.clone(),
+                relay_fallback_n0: config.relay_fallback_n0,
                 loopback_only,
             },
             access,

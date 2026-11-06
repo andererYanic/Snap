@@ -2,6 +2,7 @@
 name = "space-core"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-only"
 publish = false
 rust-version = "1.91"
 

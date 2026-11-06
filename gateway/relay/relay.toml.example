@@ -1,0 +1,36 @@
+# Konfiguration des eigenen Relais. Kopieren nach relay.toml und anpassen.
+
+# HTTP (Weiterleitung/Captive-Portal); öffentlich auf Port 80
+http_bind_addr = "[::]:8080"
+
+# Adressermittlung über QUIC (hilft beim direkten Verbindungsaufbau, braucht TLS)
+enable_quic_addr_discovery = true
+
+# Kennzahlen nicht nach außen anbieten
+enable_metrics = false
+
+[tls]
+https_bind_addr = "[::]:8443"
+quic_bind_addr = "[::]:7842"
+# Zertifikat automatisch von Let's Encrypt (Port 443 muss von außen erreichbar sein)
+cert_mode = "LetsEncrypt"
+hostname = "relay.example.org"
+contact = "admin@example.org"
+cert_dir = "/data/certs"
+
+# Nur eigene Geräte dürfen das Relais nutzen (Node-ID: `space-daemon info`).
+# Ohne diese Liste könnte jeder Iroh-Nutzer Bandbreite über den Server leiten.
+[access]
+allowlist = [
+    # "Node-ID des ersten Geräts",
+    # "Node-ID des zweiten Geräts",
+]
+
+# Schutz vor Überlastung
+[limits]
+accept_conn_limit = 20.0
+accept_conn_burst = 100
+
+[limits.client.rx]
+bytes_per_second = 10_000_000
+max_burst_bytes = 50_000_000
