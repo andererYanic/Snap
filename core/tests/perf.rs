@@ -907,3 +907,46 @@ fn share_links() {
         d.shutdown().await;
     });
 }
+
+#[test]
+#[ignore]
+fn storage_analysis() {
+    use space_core::analysis::{duplicates, space_usage};
+    use space_core::index::LocalIndex;
+    let dir = tempfile::tempdir().unwrap();
+    let idx = LocalIndex::open(&dir.path().join("index.db"), vec![]).unwrap();
+    let syn = idx.add_root(std::path::Path::new("/synthetisch")).unwrap();
+    idx.insert_synthetic(syn, 10_000, 100).unwrap();
+    let t = Instant::now();
+    let u = space_usage(&idx, std::path::Path::new("/synthetisch"), 30).unwrap();
+    report("analyse: Speicher über 1,1 Mio. Einträge", 1, t.elapsed());
+    assert_eq!(u.files, 1_000_000);
+    let t = Instant::now();
+    space_usage(&idx, std::path::Path::new("/synthetisch/Gruppe 7"), 30).unwrap();
+    report("analyse: Speicher eines Unterordners (10 000)", 1, t.elapsed());
+
+    // Duplikate: 1 000 echte Dateien à 256 KB, davon 250 Paare
+    let real = dir.path().join("echt");
+    std::fs::create_dir_all(&real).unwrap();
+    for i in 0..1000u32 {
+        let content: Vec<u8> = (0..256 * 1024u32).map(|j| ((j ^ (i / 4 * 7919)) % 251) as u8).collect();
+        std::fs::write(real.join(format!("f{i:04}.bin")), content).unwrap();
+    }
+    let root = idx.add_root(&real).unwrap();
+    idx.rebuild_root(root, &real).unwrap();
+    let t = Instant::now();
+    let r = duplicates(&idx, Some(&real), 1, 10_000, |_, _| {}).unwrap();
+    let d = t.elapsed();
+    report("analyse: Duplikate, erster Lauf (Dateien)", 1000, d);
+    println!(
+        "analyse: {} Gruppen, {:.0} MB gelesen, {:.0} MB/s",
+        r.groups.len(),
+        r.hashed_bytes as f64 / 1e6,
+        r.hashed_bytes as f64 / 1e6 / d.as_secs_f64()
+    );
+    let t = Instant::now();
+    let r2 = duplicates(&idx, Some(&real), 1, 10_000, |_, _| {}).unwrap();
+    report("analyse: Duplikate, zweiter Lauf (Cache)", 1000, t.elapsed());
+    assert_eq!(r2.hashed_bytes, 0);
+    assert_eq!(r.groups.len(), 250);
+}

@@ -151,7 +151,9 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::LinkSetup(_)
         | Request::LinkCreate { .. }
         | Request::LinkList
-        | Request::LinkRevoke { .. } => Capability::Admin,
+        | Request::LinkRevoke { .. }
+        | Request::SpaceUsage { .. }
+        | Request::Duplicates { .. } => Capability::Admin,
     }
 }
 

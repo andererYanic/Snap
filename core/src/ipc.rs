@@ -337,6 +337,19 @@ pub enum Request {
     LinkRevoke {
         id: String,
     },
+    /// Speicheranalyse eines indexierten Ordners (Unterordner, Dateitypen, größte Dateien).
+    SpaceUsage {
+        path: PathBuf,
+        #[serde(default)]
+        limit: u32,
+    },
+    /// Doppelte Dateien finden (`path = None`: alle indexierten Orte). Nur lesend.
+    Duplicates {
+        path: Option<PathBuf>,
+        min_size: Option<u64>,
+        #[serde(default)]
+        limit: u32,
+    },
 }
 
 /// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
@@ -488,6 +501,8 @@ pub enum Response {
         items: Vec<crate::database::UploadRow>,
     },
     Link(crate::links::LinkInfo),
+    SpaceUsage(crate::analysis::SpaceUsage),
+    Duplicates(crate::analysis::DuplicateReport),
     Links {
         items: Vec<crate::links::LinkInfo>,
         /// Worker-Adresse (`None` = noch nicht eingerichtet).

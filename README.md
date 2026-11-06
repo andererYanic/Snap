@@ -68,6 +68,8 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `upload rule-add <ordner> <gerät>:<Freigabe[/ordner]>` / `upload rule-list` / `upload rule-remove <nr>` | Kamera-Upload: Ordner automatisch hochladen |
 | `links create <datei> [--days N] [--max-downloads N] [--password]` / `links` / `links revoke <id>` | Freigabelinks für Personen ohne Snap (Ende-zu-Ende-verschlüsselt über die eigene Domain) |
 | `links setup --url … --endpoint … --bucket … --key-id …` | Freigabelinks einrichten (Cloudflare Worker + R2, siehe `gateway/cloudflare/README.md`) |
+| `usage [ordner]` | Speicheranalyse: Unterordner nach Größe, Anteile nach Typ, größte Dateien |
+| `dupes [ordner] [--min-mb N]` | Doppelte Dateien finden (nur anzeigen; zeigt auch Kopien auf anderen Geräten) |
 | `settings` / `settings set <name> <wert>` / `settings reset <name>` | Grenzen sofort ändern (ohne Neustart) |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
@@ -226,6 +228,15 @@ core/src
   (`settings set link_default_days …`), unbegrenzt oft; Widerruf löscht die Kopie sofort.
 - Einrichtung (einmalig, kostenloser Bereich von Cloudflare): `gateway/cloudflare/README.md`.
   Format: `docs/LINK_FORMAT.md`.
+
+### Speicheranalyse & Duplikate
+
+- `usage ~` zeigt, was wie viel Platz belegt: Unterordner mit Balken, Anteile (Videos, Bilder,
+  Musik, Dokumente, Archive …) und die größten Dateien. Grundlage ist der Index, nicht ein neuer
+  Scan; 1 Mio. Dateien dauern etwa 0,6 s.
+- `dupes` findet inhaltsgleiche Dateien in drei Stufen: gleiche Größe, gleicher Anfang, gleicher
+  BLAKE3-Hash. Hashes werden zwischengespeichert, ein zweiter Lauf liest nichts neu. Angezeigt wird
+  auch, auf welchen gekoppelten Geräten derselbe Inhalt liegt. Gelöscht wird nichts automatisch.
 
 ### Einstellungen zur Laufzeit
 

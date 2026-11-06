@@ -174,3 +174,40 @@ async fn index_can_be_disabled() {
     assert!(!tmp.path().join("data/index.db").exists());
     d.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn space_usage_and_duplicates_via_daemon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(home.join("Filme")).unwrap();
+    std::fs::create_dir_all(home.join("Alt")).unwrap();
+    let video = vec![9u8; 2_000_000];
+    std::fs::write(home.join("Filme/a.mkv"), &video).unwrap();
+    std::fs::write(home.join("Alt/a-kopie.mkv"), &video).unwrap();
+    std::fs::write(home.join("klein.txt"), b"x").unwrap();
+    let d = start(&tmp.path().join("snap")).await;
+    d.request(Request::IndexAdd { path: home.clone() }).await;
+    wait_search(&d, "kopie", |h| h.len() == 1).await;
+
+    match d.request(Request::SpaceUsage { path: home.clone(), limit: 10 }).await {
+        Response::SpaceUsage(u) => {
+            assert_eq!(u.total, 4_000_001);
+            assert_eq!(u.by_type[0].category, "Videos");
+            assert_eq!(u.children.len(), 3);
+        }
+        other => panic!("{other:?}"),
+    }
+    match d.request(Request::Duplicates { path: None, min_size: None, limit: 10 }).await {
+        Response::Duplicates(r) => {
+            assert_eq!(r.groups.len(), 1);
+            assert_eq!(r.wasted, 2_000_000);
+            assert!(r.groups[0].other_devices.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    let rel = Request::SpaceUsage { path: "relativ".into(), limit: 10 };
+    assert_eq!(code(&d.request(rel).await), Some(ErrorCode::InvalidInput));
+    let outside = Request::SpaceUsage { path: tmp.path().join("woanders"), limit: 10 };
+    assert_eq!(code(&d.request(outside).await), Some(ErrorCode::NotFound));
+    d.shutdown().await;
+}

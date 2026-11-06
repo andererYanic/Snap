@@ -133,6 +133,8 @@ pub(crate) async fn handle_request(
         Request::LinkCreate { path, days, max_downloads, password } => {
             crate::links::create(inner, &path, days, max_downloads, password).await.map(Response::Link)
         }
+        Request::SpaceUsage { path, limit } => explorer::space_usage(inner, path, limit).await,
+        Request::Duplicates { path, min_size, limit } => explorer::duplicates(inner, path, min_size, limit).await,
         Request::LinkList => crate::links::list(inner).map(|(items, base_url)| Response::Links { items, base_url }),
         Request::LinkRevoke { id } => crate::links::revoke(inner, &id).await.map(Response::Link),
         Request::UploadRuleList => inner.db.upload_rules().map(|rules| Response::UploadRules { rules }),
@@ -250,6 +252,8 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::LinkCreate { .. } => "link.create",
         Request::LinkList => "link.list",
         Request::LinkRevoke { .. } => "link.revoke",
+        Request::SpaceUsage { .. } => "space.usage",
+        Request::Duplicates { .. } => "duplicates",
         Request::RemoteThumbnail { .. } => "thumb.remote",
     })
 }
