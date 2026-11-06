@@ -238,6 +238,7 @@ pub(crate) fn remove(inner: &DaemonInner, id: &str) -> Result<()> {
     inner.db.remove_backup_job(&row.id)?;
     let _ = std::fs::remove_file(key_dir(inner).join(format!("{}.key", row.id)));
     let _ = std::fs::remove_file(key_dir(inner).join(format!("{}.known", row.id)));
+    let _ = std::fs::remove_file(key_dir(inner).join(format!("{}.last", row.id)));
     Ok(())
 }
 

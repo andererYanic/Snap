@@ -38,12 +38,39 @@ pub struct Known {
     path: PathBuf,
     pub(crate) set: HashSet<String>,
     added: Vec<String>,
+    /// Neuester Stand, den dieses Gerät geschrieben hat (Datei `<pfad>.last`).
+    last: Option<String>,
 }
 
 impl Known {
     pub fn load(path: PathBuf) -> Self {
         let set = std::fs::read_to_string(&path).map(|s| s.lines().map(str::to_string).collect()).unwrap_or_default();
-        Self { path, set, added: Vec::new() }
+        let last = std::fs::read_to_string(path.with_extension("last")).ok().map(|s| s.trim().to_string());
+        Self { path, set, added: Vec::new(), last }
+    }
+    /// Verwirft den Zwischenspeicher, wenn ein anderes Gerät seit unserem letzten Lauf in das Ziel
+    /// geschrieben hat (dessen Ausdünnen könnte Objekte gelöscht haben, die wir für vorhanden halten).
+    pub fn sync_with(&mut self, catalog: &Catalog) -> Result<()> {
+        let newest = catalog.snapshots.last().map(|s| s.id.as_str());
+        if self.last.as_deref() != newest && !self.set.is_empty() {
+            self.replace(HashSet::new())?;
+        }
+        Ok(())
+    }
+    /// Merkt sich den gerade geschriebenen Stand (nach dem Katalog).
+    pub fn set_last(&mut self, id: &str) -> Result<()> {
+        let p = self.path.with_extension("last");
+        let tmp = self.path.with_extension("last.tmp");
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, id.as_bytes()))?;
+        std::fs::rename(&tmp, p)?;
+        self.last = Some(id.to_string());
+        Ok(())
     }
     pub fn is_empty(&self) -> bool {
         self.set.is_empty()
@@ -134,6 +161,7 @@ pub async fn backup(
     // Zeitpunkt des Beginns: Grundlage für den Schutz vor groben Zeitstempeln im nächsten Lauf.
     let started = crate::database::now_unix();
     let mut catalog = repo.load_catalog().await?;
+    known.sync_with(&catalog)?;
     if known.is_empty() && !catalog.snapshots.is_empty() {
         // Neues Gerät oder verlorener Zwischenspeicher: aus den Ständen wiederaufbauen.
         for id in referenced(repo, &catalog).await? {
@@ -171,6 +199,7 @@ pub async fn backup(
     catalog.snapshots.push(info.clone());
     repo.save_catalog(&catalog).await?;
     known.flush()?;
+    known.set_last(&info.id)?;
     Ok(info)
 }
 
@@ -344,6 +373,7 @@ pub fn select_keep(snapshots: &[SnapshotInfo], r: Retention) -> HashSet<String> 
 /// Gibt (entfernte Stände, gelöschte Objekte) zurück.
 pub async fn forget_and_prune(repo: &Repo, known: &mut Known, r: Retention) -> Result<(usize, usize)> {
     let mut catalog = repo.load_catalog().await?;
+    known.sync_with(&catalog)?;
     if known.is_empty() && !catalog.snapshots.is_empty() {
         for id in referenced(repo, &catalog).await? {
             known.insert(id);
@@ -679,6 +709,37 @@ mod tests {
         // Gleiche Sekunde: der später angehängte gilt als neuester
         let same = [snap("erst", base), snap("dann", base)];
         assert_eq!(select_keep(&same, Retention { hourly: 0, daily: 0, monthly: 0 }), HashSet::from(["dann".into()]));
+    }
+
+    /// Zwei Geräte nacheinander am selben Ziel: Das Ausdünnen des einen darf beim anderen keine
+    /// Lücken hinterlassen (veralteter Bekannt-Zwischenspeicher).
+    #[tokio::test]
+    async fn handover_between_devices_rebuilds_known() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("q");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("x.txt"), b"inhalt x").unwrap();
+        let usb = tmp.path().join("usb");
+        std::fs::create_dir_all(&usb).unwrap();
+        let (repo, _, _) = Repo::init(&BackupTarget::Dir { path: usb.clone() }, None, "langes passwort").await.unwrap();
+        let none = Retention { hourly: 0, daily: 0, monthly: 0 };
+        let mut a = Known::load(tmp.path().join("a.known"));
+        let mut b = Known::load(tmp.path().join("b.known"));
+        backup(&repo, &mut a, std::slice::from_ref(&src), &BackupProgress::default()).await.unwrap();
+        // Gerät B übernimmt: x.txt ist weg, alter Stand wird ausgedünnt → Stück von x.txt gelöscht
+        std::fs::remove_file(src.join("x.txt")).unwrap();
+        backup(&repo, &mut b, std::slice::from_ref(&src), &BackupProgress::default()).await.unwrap();
+        let (forgotten, _) = forget_and_prune(&repo, &mut b, none).await.unwrap();
+        assert_eq!(forgotten, 1);
+        // Gerät A sichert x.txt erneut: muss das Stück wieder hochladen, nicht nur verweisen
+        std::fs::write(src.join("x.txt"), b"inhalt x").unwrap();
+        let s = backup(&repo, &mut a, std::slice::from_ref(&src), &BackupProgress::default()).await.unwrap();
+        assert!(s.new_bytes > 0, "Zwischenspeicher wurde verworfen");
+        check(&repo, 0).await.unwrap();
+        // Ohne fremden Zwischenstand bleibt der Zwischenspeicher erhalten
+        let p = BackupProgress::default();
+        backup(&repo, &mut a, std::slice::from_ref(&src), &p).await.unwrap();
+        assert_eq!(p.new_bytes.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
