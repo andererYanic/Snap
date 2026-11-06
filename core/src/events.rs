@@ -83,6 +83,17 @@ pub enum Event {
         node_id: String,
         summary: String,
     },
+    /// Ein Upload-Auftrag hat seinen Zustand geändert ('pending' | 'done' | 'failed').
+    UploadChanged {
+        id: i64,
+        state: String,
+        message: String,
+    },
+    /// Eine Einstellung wurde zur Laufzeit geändert.
+    SettingChanged {
+        key: String,
+        value: i64,
+    },
     /// Der Abonnent hat Ereignisse verpasst und sollte seinen Zustand neu laden.
     Lagged {
         missed: u64,

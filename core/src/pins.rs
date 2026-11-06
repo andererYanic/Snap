@@ -107,7 +107,7 @@ fn reconcile_blocking(inner: &DaemonInner) -> Result<ReconcileStats> {
     let db = &inner.db;
     let root = inner.config.pin_dir.clone();
     std::fs::create_dir_all(&root)?;
-    let max = inner.config.pin_max_bytes;
+    let max = inner.settings.pin_max_bytes();
     let mut used = db.pinned_total_size()?;
     let mut stats = ReconcileStats::default();
 

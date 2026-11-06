@@ -732,3 +732,103 @@ fn streaming() {
         phone.shutdown().await;
     });
 }
+
+#[test]
+#[ignore]
+fn upload() {
+    use space_core::ipc::{Request, Response};
+    use space_core::{Config, Daemon};
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let mk = |n: &str| {
+            let mut c = Config::portable(&dir.path().join(n));
+            c.use_relay = false;
+            c.device_name = n.into();
+            c.live_connections = false;
+            c
+        };
+        let share = dir.path().join("Fotos");
+        std::fs::create_dir_all(&share).unwrap();
+        let pc = Daemon::start_loopback(mk("PC")).await.unwrap();
+        let phone = Daemon::start_loopback(mk("Handy")).await.unwrap();
+        let code = match pc.request(Request::PairInvite).await {
+            Response::PairInvite { code, .. } => code,
+            other => panic!("{other:?}"),
+        };
+        assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
+        pc.request(Request::ShareAdd { path: share.clone(), name: Some("Fotos".into()), devices: None }).await;
+        let share = std::fs::canonicalize(&share).unwrap();
+        pc.request(Request::PairGrant {
+            device: "Handy".into(),
+            capability: "files.write".into(),
+            folder: Some(share.clone()),
+        })
+        .await;
+        let wait_done = |n: usize| {
+            let phone = phone.clone();
+            async move {
+                let start = Instant::now();
+                loop {
+                    if let Response::Uploads { items } = phone.request(Request::UploadList).await {
+                        if items.iter().filter(|u| u.state == "done").count() >= n {
+                            return;
+                        }
+                        assert!(!items.iter().any(|u| u.state == "failed"), "{items:?}");
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    if start.elapsed() > Duration::from_secs(120) {
+                        if let Response::Uploads { items } = phone.request(Request::UploadList).await {
+                            let done = items.iter().filter(|u| u.state == "done").count();
+                            println!("HÄNGT: {done} fertig");
+                            for u in items.iter().rev().filter(|u| u.state != "done").take(2) {
+                                println!("HÄNGT: {u:?}");
+                            }
+                        }
+                        panic!("Zeitüberschreitung");
+                    }
+                }
+            }
+        };
+        // Ein großes Video
+        let video = dir.path().join("video.mp4");
+        let data: Vec<u8> = (0..64 * 1024 * 1024u32).map(|i| (i.wrapping_mul(2654435761) >> 11) as u8).collect();
+        std::fs::write(&video, &data).unwrap();
+        let t = Instant::now();
+        phone
+            .request(Request::Upload { device: "PC".into(), share: "Fotos".into(), dest_dir: "".into(), path: video })
+            .await;
+        wait_done(1).await;
+        let d = t.elapsed();
+        println!(
+            "upload: 64 MiB Video                {:>8.0} ms  {:>6.1} MB/s",
+            d.as_secs_f64() * 1e3,
+            64.0 * 1.048576 / d.as_secs_f64()
+        );
+        // 100 Fotos à 3 MB
+        let photos: Vec<_> = (0..100)
+            .map(|i| {
+                let p = dir.path().join(format!("IMG_{i:04}.jpg"));
+                std::fs::write(&p, vec![i as u8; 3_000_000]).unwrap();
+                p
+            })
+            .collect();
+        let t = Instant::now();
+        for p in &photos {
+            phone
+                .request(Request::Upload {
+                    device: "PC".into(),
+                    share: "Fotos".into(),
+                    dest_dir: "".into(),
+                    path: p.clone(),
+                })
+                .await;
+        }
+        wait_done(101).await;
+        let d = t.elapsed();
+        report("upload: Fotos à 3 MB (je Datei)", photos.len(), d);
+        println!("upload: Fotos gesamt {:>6.1} MB/s", 300.0 / d.as_secs_f64());
+        pc.shutdown().await;
+        phone.shutdown().await;
+    });
+}

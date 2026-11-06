@@ -181,6 +181,62 @@ enum Commands {
     Meta { path: PathBuf },
     /// Lokale Abspiel-Adresse für eine Datei (auch von anderen Geräten), z. B. `mpv $(space-daemon stream Film.mkv)`
     Stream { target: String },
+    /// Hochladen auf ein gekoppeltes Gerät: upload <datei> <gerät>:<Freigabe[/ordner]>, upload list …
+    Upload {
+        #[command(subcommand)]
+        action: UploadAction,
+    },
+    /// Grenzen anzeigen und sofort ändern (ohne Neustart)
+    Settings {
+        #[command(subcommand)]
+        action: Option<SettingsAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum UploadAction {
+    /// Datei(en) hochladen: send <datei>… <gerät>:<Freigabe[/ordner]>
+    Send {
+        #[arg(required = true, num_args = 2..)]
+        args: Vec<String>,
+    },
+    /// Warteschlange mit Status
+    List,
+    /// Auftrag entfernen
+    Cancel {
+        id: i64,
+    },
+    /// Wartende/fehlgeschlagene sofort erneut versuchen
+    Retry,
+    /// Ordner automatisch hochladen (Kamera-Upload): rule-add <ordner> <gerät>:<Freigabe[/ordner]>
+    RuleAdd {
+        folder: PathBuf,
+        target: String,
+    },
+    RuleList,
+    RuleRemove {
+        id: i64,
+    },
+}
+
+/// "PC:Fotos/Handy" → ("PC", "Fotos", "Handy")
+fn parse_upload_target(t: &str) -> Result<(String, String, String)> {
+    let (dev, rest) = t.split_once(':').context("Ziel bitte als <gerät>:<Freigabe[/ordner]> angeben")?;
+    let (share, dir) = split_share(rest);
+    if dev.is_empty() || share.is_empty() {
+        anyhow::bail!("Ziel bitte als <gerät>:<Freigabe[/ordner]> angeben");
+    }
+    Ok((dev.to_string(), share, dir))
+}
+
+#[derive(Subcommand)]
+enum SettingsAction {
+    /// Alle Einstellungen mit Wert, Standard und Bereich (Standard)
+    List,
+    /// Wert setzen, z. B. `settings set upload_daily_gb 50`
+    Set { key: String, value: i64 },
+    /// Zurück zum Standard aus config.toml
+    Reset { key: String },
 }
 
 #[derive(Subcommand)]
@@ -534,6 +590,36 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         },
         Commands::Meta { path } => Request::Metadata { path: absolute(&path)? },
         Commands::Stream { target } => Request::StreamUrl { target },
+        Commands::Upload { action: UploadAction::Send { mut args } } => {
+            let (device, share, dest_dir) = parse_upload_target(&args.pop().unwrap_or_default())?;
+            for f in &args {
+                let req = Request::Upload {
+                    device: device.clone(),
+                    share: share.clone(),
+                    dest_dir: dest_dir.clone(),
+                    path: absolute(Path::new(f))?,
+                };
+                if let r @ Response::Error { .. } = send_request(&config.socket_path, &req).await? {
+                    return Ok(print_response(r));
+                }
+            }
+            println!("⏳ {} Datei(en) eingeplant – Status: space-daemon upload list", args.len());
+            return Ok(ExitCode::SUCCESS);
+        }
+        Commands::Upload { action: UploadAction::List } => Request::UploadList,
+        Commands::Upload { action: UploadAction::Cancel { id } } => Request::UploadCancel { id },
+        Commands::Upload { action: UploadAction::Retry } => Request::UploadRetry,
+        Commands::Upload { action: UploadAction::RuleAdd { folder, target } } => {
+            let (device, share, dest_dir) = parse_upload_target(&target)?;
+            Request::UploadRuleAdd { path: absolute(&folder)?, device, share, dest_dir }
+        }
+        Commands::Upload { action: UploadAction::RuleList } => Request::UploadRuleList,
+        Commands::Upload { action: UploadAction::RuleRemove { id } } => Request::UploadRuleRemove { id },
+        Commands::Settings { action: None | Some(SettingsAction::List) } => Request::Settings,
+        Commands::Settings { action: Some(SettingsAction::Set { key, value }) } => {
+            Request::SettingSet { key, value: Some(value) }
+        }
+        Commands::Settings { action: Some(SettingsAction::Reset { key }) } => Request::SettingSet { key, value: None },
         Commands::Watch => return watch(&config.socket_path).await,
     };
 
@@ -639,6 +725,8 @@ fn describe_event(e: &Event) -> String {
         Event::ApprovalRequested { id, node_id, summary } => {
             format!("🛑 Gerät {} möchte: {summary} – bestätigen mit: space-daemon ops approve {id}", short(node_id, 10))
         }
+        Event::UploadChanged { id, state, message } => format!("⬆️  Upload {id}: {state} {message}"),
+        Event::SettingChanged { key, value } => format!("⚙️  Einstellung {key} = {value}"),
         Event::Lagged { missed } => format!("⚠️  {missed} Ereignisse verpasst"),
     }
 }
@@ -817,6 +905,39 @@ fn print_response(res: Response) -> ExitCode {
         }
         Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
         Response::StreamUrl(s) => println!("{}", s.url),
+        Response::Uploads { items } => {
+            if items.is_empty() {
+                println!("Keine Uploads.");
+            }
+            for u in &items {
+                let icon = match u.state.as_str() {
+                    "done" => "✅",
+                    "failed" => "❌",
+                    _ => "⏳",
+                };
+                let target = format!("{}/{}", u.share, u.dest_dir);
+                println!("{icon} {:>4}  {} → {}", u.id, u.local_path, target.trim_end_matches('/'));
+                if let Some(e) = u.last_error.as_ref().filter(|_| u.state != "done") {
+                    println!("         {e} (Versuche: {})", u.attempts);
+                }
+            }
+        }
+        Response::UploadRules { rules } => {
+            if rules.is_empty() {
+                println!("Keine Regeln. Anlegen: space-daemon upload rule-add <ordner> <gerät>:<Freigabe>");
+            }
+            for r in &rules {
+                println!("{:>4}  {} → {}:{}/{}", r.id, r.local_dir, short(&r.device, 10), r.share, r.dest_dir);
+            }
+        }
+        Response::Settings { items } => {
+            for i in &items {
+                let mark = if i.overridden { format!("  (Standard {})", i.default) } else { String::new() };
+                println!("{:<20} {:>8} {:<15}{mark}", i.key, i.value, i.unit);
+                println!("{:<20} {}", "", i.help);
+            }
+            println!("Ändern: space-daemon settings set <name> <wert>  ·  zurücksetzen: settings reset <name>");
+        }
         Response::Thumbnail(t) => {
             println!("{}", t.path.display());
             println!("{} × {} px{}", t.width, t.height, if t.cached { " (aus dem Cache)" } else { "" });

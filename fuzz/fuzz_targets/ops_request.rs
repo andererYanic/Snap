@@ -3,7 +3,7 @@
 //! höchstens MAX_PATHS Einträge; die Auflösung bleibt immer in der Freigabe.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use space_core::remote_ops::{decode_request, resolve_in_share, RemoteOp, MAX_PATHS};
+use space_core::remote_ops::{decode_request, resolve_in_share, RemoteOp, MAX_IMPORT_BYTES, MAX_PATHS};
 use std::path::{Component, Path};
 
 fn check_rel(p: &str, allow_empty: bool) {
@@ -45,6 +45,13 @@ fuzz_target!(|data: &[u8]| {
         RemoteOp::Trash { paths, .. } | RemoteOp::Purge { paths, .. } => {
             assert!(!paths.is_empty() && paths.len() <= MAX_PATHS);
             paths.iter().for_each(|p| check_rel(p, false));
+        }
+        RemoteOp::Import { dest_dir, name, hash, size, .. } => {
+            check_rel(dest_dir, true);
+            check_name(name);
+            assert!(!name.starts_with('.'), "versteckter Name {name:?}");
+            assert!(hash.parse::<iroh_blobs::Hash>().is_ok());
+            assert!(*size <= MAX_IMPORT_BYTES);
         }
     }
 });

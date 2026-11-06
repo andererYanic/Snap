@@ -290,6 +290,39 @@ pub enum Request {
         #[serde(default)]
         size: crate::media::ThumbSize,
     },
+    /// Einstellungen (Grenzen) mit aktuellen Werten und Standardwerten.
+    Settings,
+    /// Einstellung ändern (`value = None`: zurück zum Standard aus config.toml). Gilt sofort.
+    SettingSet {
+        key: String,
+        value: Option<i64>,
+    },
+    /// Datei auf ein gekoppeltes Gerät hochladen (Warteschlange; wird nachgeholt, wenn es offline ist).
+    Upload {
+        device: String,
+        share: String,
+        #[serde(default)]
+        dest_dir: String,
+        path: PathBuf,
+    },
+    UploadList,
+    UploadCancel {
+        id: i64,
+    },
+    /// Wartende und fehlgeschlagene Uploads sofort erneut versuchen.
+    UploadRetry,
+    /// Ordner beobachten und neue Dateien automatisch hochladen (z. B. Kamera).
+    UploadRuleAdd {
+        path: PathBuf,
+        device: String,
+        share: String,
+        #[serde(default)]
+        dest_dir: String,
+    },
+    UploadRuleList,
+    UploadRuleRemove {
+        id: i64,
+    },
 }
 
 /// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
@@ -434,6 +467,15 @@ pub enum Response {
     },
     Thumbnail(crate::media::Thumbnail),
     StreamUrl(crate::stream::StreamInfo),
+    Settings {
+        items: Vec<crate::settings::SettingInfo>,
+    },
+    Uploads {
+        items: Vec<crate::database::UploadRow>,
+    },
+    UploadRules {
+        rules: Vec<crate::database::UploadRule>,
+    },
     Metadata(crate::media::MediaInfo),
     FileOpDone {
         job: u64,

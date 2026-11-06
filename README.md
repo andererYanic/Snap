@@ -64,6 +64,9 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `meta <datei>` | Metadaten: Art, Abmessungen, Aufnahmedatum, Kamera, Ort (GPS), Dauer, Titel/Interpret |
 | `stream <ziel>` | Lokale Abspiel-Adresse (auch für Dateien anderer Geräte), z. B. `mpv "$(space-daemon stream Filme/urlaub.mkv)"` |
 | `remote <gerät> thumb Freigabe/pfad [--large]` | Vorschaubild einer Datei auf einem anderen Gerät (braucht dort `files.read`) |
+| `upload send <datei>… <gerät>:<Freigabe[/ordner]>` / `upload list` / `upload retry` / `upload cancel <nr>` | Auf ein gekoppeltes Gerät hochladen (Warteschlange, wird nachgeholt) |
+| `upload rule-add <ordner> <gerät>:<Freigabe[/ordner]>` / `upload rule-list` / `upload rule-remove <nr>` | Kamera-Upload: Ordner automatisch hochladen |
+| `settings` / `settings set <name> <wert>` / `settings reset <name>` | Grenzen sofort ändern (ohne Neustart) |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
 | `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
@@ -199,6 +202,29 @@ core/src
   (`files.read` bzw. veröffentlicht).
 - Vorschaubilder fremder Freigaben: `remote PC thumb Fotos/2024/strand.jpg` – nur das kleine JPEG
   wird übertragen.
+
+### Hochladen & Kamera-Upload
+
+- `upload send IMG_0001.jpg PC:Fotos/Handy` – das Zielgerät holt die Datei selbst
+  (BLAKE3-geprüft); ist es aus, wird der Upload nachgeholt.
+- `upload rule-add ~/DCIM/Camera PC:Fotos/Handy` – neue Fotos werden automatisch hochgeladen
+  (Unterordner bleiben erhalten, keine Datei doppelt, halb geschriebene Dateien werden abgewartet).
+- Das Ziel braucht dafür `files.write` auf den Ordner (`pair grant Handy files.write --folder ~/Fotos`),
+  überschreibt nie („Name (2)“), legt keine versteckten Dateien an und setzt nie das Ausführungsrecht.
+- Grenzen je Gerät: 20 GB pro Tag, mindestens 5 GB bleiben frei.
+
+### Einstellungen zur Laufzeit
+
+```
+space-daemon settings                        # alle Grenzen mit Wert, Standard und Bereich
+space-daemon settings set upload_daily_gb 50 # sofort wirksam, bleibt nach Neustart erhalten
+space-daemon settings reset upload_daily_gb  # zurück zum Wert aus config.toml
+```
+
+Änderbar: `ops_hourly_limit` (Massenschutz), `upload_daily_gb`, `upload_reserve_gb`,
+`pin_max_gb`, `stream_cache_mb`, `thumb_cache_mb`. Rechte einzelner Geräte ändern sich ebenso
+sofort über `pair grant` / `pair revoke`. Gekoppelte Geräte können weder Einstellungen noch
+Rechte ändern.
 
 ### Dateien auf anderen Geräten bearbeiten
 
