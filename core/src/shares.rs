@@ -90,9 +90,10 @@ fn walk(
             Err(_) => continue, // gelöscht -> wird unten als Löschung erkannt
             _ => {}
         }
-        let walker = walkdir::WalkDir::new(start).follow_links(false).into_iter().filter_entry(|e| {
-            e.depth() == 0 || e.file_name().to_str().is_some_and(|n| !is_ignored(n))
-        });
+        let walker = walkdir::WalkDir::new(start)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| e.depth() == 0 || e.file_name().to_str().is_some_and(|n| !is_ignored(n)));
         for entry in walker {
             let Ok(entry) = entry else {
                 stats.skipped += 1;
@@ -125,17 +126,18 @@ fn walk(
         None => true,
         Some(p) => p.iter().any(|pre| pre.is_empty() || rel == pre || rel.starts_with(&format!("{pre}/"))),
     };
-    let deleted: Vec<i64> = known
-        .iter()
-        .filter(|(rel, _)| in_scope(rel) && !seen.contains(*rel))
-        .map(|(_, k)| k.id)
-        .collect();
+    let deleted: Vec<i64> =
+        known.iter().filter(|(rel, _)| in_scope(rel) && !seen.contains(*rel)).map(|(_, k)| k.id).collect();
     stats.deleted = deleted.len();
     (candidates, deleted, stats)
 }
 
 /// Scannt eine Freigabe (ganz oder nur bestimmte Unterordner) und übernimmt Änderungen.
-pub async fn scan_share(inner: &Arc<DaemonInner>, share: &ShareInfo, prefixes: Option<Vec<String>>) -> Result<ScanStats> {
+pub async fn scan_share(
+    inner: &Arc<DaemonInner>,
+    share: &ShareInfo,
+    prefixes: Option<Vec<String>>,
+) -> Result<ScanStats> {
     // Gleichzeitige Scans derselben Freigabe würden doppelt importieren und doppelte
     // Ledger-Versionen erzeugen – daher seriell.
     let lock = inner.scan_locks.lock().unwrap().entry(share.id).or_default().clone();
@@ -256,7 +258,9 @@ pub fn watch_share(inner: Arc<DaemonInner>, share: ShareInfo) -> Result<notify::
             // … dann bündeln, bis 2 s Ruhe herrschen (höchstens 10 s).
             let deadline = tokio::time::Instant::now() + DEBOUNCE_MAX;
             loop {
-                match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + DEBOUNCE_QUIET), rx.recv()).await {
+                match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + DEBOUNCE_QUIET), rx.recv())
+                    .await
+                {
                     Ok(Some(p)) => {
                         paths.insert(p);
                     }
@@ -279,7 +283,8 @@ fn affected_prefixes(root: &Path, paths: &HashSet<PathBuf>) -> Option<Vec<String
     let mut dirs: Vec<String> = Vec::new();
     for p in paths {
         // Existierender Ordner: ihn selbst scannen; sonst (Datei/gelöscht) den Elternordner.
-        let dir = if std::fs::symlink_metadata(p).map(|m| m.is_dir()).unwrap_or(false) { p.as_path() } else { p.parent()? };
+        let dir =
+            if std::fs::symlink_metadata(p).map(|m| m.is_dir()).unwrap_or(false) { p.as_path() } else { p.parent()? };
         if !dir.starts_with(root) {
             continue;
         }

@@ -34,7 +34,11 @@ fn signed_entries(key: &SecretKey, n: usize) -> Vec<LedgerEntry> {
 }
 
 fn report(name: &str, n: usize, d: Duration) {
-    println!("{name:<44} {n:>7} ops  {:>9.2} ms  {:>9.1} µs/op", d.as_secs_f64() * 1e3, d.as_secs_f64() * 1e6 / n as f64);
+    println!(
+        "{name:<44} {n:>7} ops  {:>9.2} ms  {:>9.1} µs/op",
+        d.as_secs_f64() * 1e3,
+        d.as_secs_f64() * 1e6 / n as f64
+    );
 }
 
 #[test]
@@ -68,8 +72,19 @@ fn db_hot_paths() {
     for i in 0..2000 {
         let (_, id) = db.upsert_file(&format!("/data/f{i}"), &hash(100_000 + i), &format!("f{i}"), 1, "t").unwrap();
         let k = own.clone();
-        db.record_own_entry(&origin, id, &hash(100_000 + i), &format!("f{i}"), 1, 0, false, "", "", &move |e: &LedgerEntry| e.sign(&k))
-            .unwrap();
+        db.record_own_entry(
+            &origin,
+            id,
+            &hash(100_000 + i),
+            &format!("f{i}"),
+            1,
+            0,
+            false,
+            "",
+            "",
+            &move |e: &LedgerEntry| e.sign(&k),
+        )
+        .unwrap();
     }
     report("publish (upsert + record_own_entry)", 2000, t.elapsed());
 

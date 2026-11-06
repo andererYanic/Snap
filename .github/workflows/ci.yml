@@ -1,0 +1,77 @@
+# Prüfungen für jeden Push und Pull Request.
+# Actions sind auf Commit-SHAs gepinnt (Schutz vor manipulierten Tags); der Kommentar nennt die Version.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Minimale Rechte: Workflows dürfen nur lesen.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: Format, Clippy, Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  supply-chain:
+    name: Abhängigkeiten (audit, deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
+        with:
+          tool: cargo-audit,cargo-deny
+      # Bekannte Sicherheitslücken (RustSec) – Funde lassen den Build scheitern
+      - run: cargo audit
+      # Lizenzen, Herkunft, gesperrte/unsichere Crates (deny.toml)
+      - run: cargo deny check
+
+  fuzz-smoke:
+    name: Fuzzing (Kurzlauf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
+        with:
+          tool: cargo-fuzz
+      # --target: die vorgebaute cargo-fuzz-Binärdatei ist für musl gebaut und würde sonst
+      # musl wählen (mit AddressSanitizer inkompatibel).
+      - name: Jedes Ziel 60 s
+        working-directory: fuzz
+        run: |
+          for t in $(cargo +nightly fuzz list); do
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=60 -rss_limit_mb=2048
+          done

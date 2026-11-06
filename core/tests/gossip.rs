@@ -98,7 +98,8 @@ async fn pair_sync_download_by_name_and_delete() {
     assert!(remote.iter().all(|f| !f.name.contains('/')), "keine Pfade im Ledger");
 
     // Download per Dateiname, echter Name im Standardordner
-    let path = match phone.request(Request::Download { target: "urlaub.jpg".into(), output: None, force: false }).await {
+    let path = match phone.request(Request::Download { target: "urlaub.jpg".into(), output: None, force: false }).await
+    {
         Response::Downloaded { path } => path,
         other => panic!("{other:?}"),
     };
@@ -205,10 +206,8 @@ async fn stranger_reads_ledger(target: &Daemon) -> (usize, String) {
             total = n;
         }
     }
-    let reason = tokio::time::timeout(Duration::from_secs(3), conn.closed())
-        .await
-        .map(|e| e.to_string())
-        .unwrap_or_default();
+    let reason =
+        tokio::time::timeout(Duration::from_secs(3), conn.closed()).await.map(|e| e.to_string()).unwrap_or_default();
     ep.close().await;
     (total, reason)
 }

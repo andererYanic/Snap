@@ -8,10 +8,10 @@
 //!    weil B das Token kennt. A erfährt B's Node-ID authentisch aus TLS.
 //! 3. Beide tragen sich gegenseitig in `devices` ein.
 
-use crate::database::{DatabaseManager, DeviceInfo};
-use crate::ipc::{read_frame_max, write_frame_max};
 use crate::api::error::{ApiError, ErrorCode};
 use crate::api_bail;
+use crate::database::{DatabaseManager, DeviceInfo};
+use crate::ipc::{read_frame_max, write_frame_max};
 use crate::ledger::sanitize_device_name;
 use crate::network::{direct_addrs, endpoint_addr};
 use anyhow::{Context, Result};
@@ -59,7 +59,10 @@ impl InviteCode {
     }
 
     pub fn decode(code: &str) -> Result<Self> {
-        let body = code.trim().strip_prefix(CODE_PREFIX).ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Kein gültiger Snap-Einladungscode"))?;
+        let body = code
+            .trim()
+            .strip_prefix(CODE_PREFIX)
+            .ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Kein gültiger Snap-Einladungscode"))?;
         let buf = data_encoding::BASE32_NOPAD
             .decode(body.to_ascii_uppercase().as_bytes())
             .ok()
@@ -68,7 +71,9 @@ impl InviteCode {
         if r.u8()? != CODE_VERSION {
             api_bail!(InvalidInput, "Einladungscode stammt von einer anderen Version");
         }
-        let node_id = PublicKey::from_bytes(&r.array::<32>()?).ok().ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Einladungscode ist beschädigt"))?;
+        let node_id = PublicKey::from_bytes(&r.array::<32>()?)
+            .ok()
+            .ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Einladungscode ist beschädigt"))?;
         let token = r.array::<32>()?;
         let expires_at = i64::from_be_bytes(r.array::<8>()?);
         let n = r.u8()? as usize;
@@ -208,7 +213,10 @@ pub struct PairingCtx {
 pub async fn join(ctx: &PairingCtx, code: &str, connect_timeout: Duration) -> Result<DeviceInfo> {
     let invite = InviteCode::decode(code)?;
     if crate::database::now_unix() > invite.expires_at {
-        api_bail!(InvalidInput, "Der Einladungscode ist abgelaufen – bitte auf dem anderen Gerät einen neuen erzeugen.");
+        api_bail!(
+            InvalidInput,
+            "Der Einladungscode ist abgelaufen – bitte auf dem anderen Gerät einen neuen erzeugen."
+        );
     }
     if invite.node_id == ctx.endpoint.id() {
         api_bail!(InvalidInput, "Das ist der Einladungscode dieses Geräts.");
@@ -251,10 +259,7 @@ pub async fn join(ctx: &PairingCtx, code: &str, connect_timeout: Duration) -> Re
 }
 
 fn device(db: &DatabaseManager, node_id: &str) -> Result<DeviceInfo> {
-    db.list_devices()?
-        .into_iter()
-        .find(|d| d.node_id == node_id)
-        .context("Gerät nach dem Koppeln nicht gefunden")
+    db.list_devices()?.into_iter().find(|d| d.node_id == node_id).context("Gerät nach dem Koppeln nicht gefunden")
 }
 
 /// Protokoll-Handler für eingehende Pairing-Anfragen.
@@ -288,10 +293,8 @@ impl PairingProtocol {
         let req: PairRequest = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME)).await??;
 
         let reject = |reason: &str| PairResponse { accepted: false, name: String::new(), reason: Some(reason.into()) };
-        let token: Option<[u8; 32]> = data_encoding::HEXLOWER
-            .decode(req.token.as_bytes())
-            .ok()
-            .and_then(|b| b.try_into().ok());
+        let token: Option<[u8; 32]> =
+            data_encoding::HEXLOWER.decode(req.token.as_bytes()).ok().and_then(|b| b.try_into().ok());
 
         let response = if req.version != PROTOCOL_VERSION {
             reject("Nicht unterstützte Protokollversion")
@@ -346,7 +349,10 @@ mod tests {
             let s = c.encode();
             assert!(s.starts_with("snap1-"));
             assert_eq!(InviteCode::decode(&s).unwrap(), c);
-            assert_eq!(InviteCode::decode(&format!("  {}\n", s.to_uppercase().replace("SNAP1-", "snap1-"))).unwrap(), c);
+            assert_eq!(
+                InviteCode::decode(&format!("  {}\n", s.to_uppercase().replace("SNAP1-", "snap1-"))).unwrap(),
+                c
+            );
         }
     }
 

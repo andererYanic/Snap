@@ -50,7 +50,9 @@ async fn sync_until(d: &Daemon, cond: impl Fn(&[RemoteFile]) -> bool) -> Vec<Rem
 }
 
 fn has(files: &[RemoteFile], path: &str) -> bool {
-    files.iter().any(|f| f.share.is_some() && format!("{}/{}", f.share.as_deref().unwrap(), f.rel_path.as_deref().unwrap()) == path)
+    files.iter().any(|f| {
+        f.share.is_some() && format!("{}/{}", f.share.as_deref().unwrap(), f.rel_path.as_deref().unwrap()) == path
+    })
 }
 
 async fn download(d: &Daemon, target: &str, out: PathBuf) -> Response {
@@ -154,7 +156,10 @@ async fn share_access_requires_files_read() {
     // Nur das Handy bekommt Zugriff
     add_share(&pc, &fotos, Some(vec!["Handy".into()])).await;
     let files = sync_until(&laptop, |f| has(f, "Fotos/privat.jpg")).await;
-    assert!(!files.iter().any(|f| f.name.contains("id_rsa") || f.name.starts_with("link-")), "Symlinks werden nicht geteilt");
+    assert!(
+        !files.iter().any(|f| f.name.contains("id_rsa") || f.name.starts_with("link-")),
+        "Symlinks werden nicht geteilt"
+    );
     let hash: Hash = files.iter().find(|f| f.name == "privat.jpg").unwrap().hash.parse().unwrap();
 
     // Laptop sieht die Liste (catalog.read), darf die Datei aber nicht laden
@@ -170,14 +175,22 @@ async fn share_access_requires_files_read() {
 
     // Handy darf
     sync_until(&phone, |f| has(f, "Fotos/privat.jpg")).await;
-    assert!(matches!(download(&phone, "Fotos/privat.jpg", tmp.path().join("p.jpg")).await, Response::Downloaded { .. }));
+    assert!(matches!(
+        download(&phone, "Fotos/privat.jpg", tmp.path().join("p.jpg")).await,
+        Response::Downloaded { .. }
+    ));
 
     // Recht entziehen -> Handy darf nicht mehr (neue Datei, damit nichts aus dem Cache kommt)
     std::fs::write(fotos.join("neu.jpg"), b"neu nach entzug").unwrap();
     sync_until(&phone, |f| has(f, "Fotos/neu.jpg")).await;
     let canon = std::fs::canonicalize(&fotos).unwrap();
     assert!(matches!(
-        pc.request(Request::PairRevoke { device: "Handy".into(), capability: "files.read".into(), folder: Some(canon) }).await,
+        pc.request(Request::PairRevoke {
+            device: "Handy".into(),
+            capability: "files.read".into(),
+            folder: Some(canon)
+        })
+        .await,
         Response::Success { .. }
     ));
     match download(&phone, "Fotos/neu.jpg", tmp.path().join("n.jpg")).await {

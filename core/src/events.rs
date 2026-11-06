@@ -18,21 +18,49 @@ pub enum Event {
     /// Eigene Freigaben haben sich geändert (veröffentlicht, gelöscht, endgültig entfernt).
     LocalCatalogChanged,
     /// Dateilisten anderer Geräte haben sich geändert.
-    RemoteCatalogChanged { new_entries: usize },
+    RemoteCatalogChanged {
+        new_entries: usize,
+    },
     /// Ein Peer ist erreichbar geworden oder nicht mehr erreichbar.
-    PeerStatusChanged { node_id: String, status: String },
-    JobQueued { job_id: i64 },
-    JobCompleted { job_id: i64 },
-    JobFailed { job_id: i64, error: String },
-    JobRemoved { job_id: i64 },
-    DevicePaired { node_id: String, name: String },
-    DeviceRemoved { node_id: String },
+    PeerStatusChanged {
+        node_id: String,
+        status: String,
+    },
+    JobQueued {
+        job_id: i64,
+    },
+    JobCompleted {
+        job_id: i64,
+    },
+    JobFailed {
+        job_id: i64,
+        error: String,
+    },
+    JobRemoved {
+        job_id: i64,
+    },
+    DevicePaired {
+        node_id: String,
+        name: String,
+    },
+    DeviceRemoved {
+        node_id: String,
+    },
     /// Eine Ordner-Freigabe wurde (neu) gescannt.
-    ShareScanned { name: String, changed: usize, deleted: usize, total: usize },
+    ShareScanned {
+        name: String,
+        changed: usize,
+        deleted: usize,
+        total: usize,
+    },
     /// Rechte eines Geräts wurden geändert.
-    GrantsChanged { node_id: String },
+    GrantsChanged {
+        node_id: String,
+    },
     /// Der Abonnent hat Ereignisse verpasst und sollte seinen Zustand neu laden.
-    Lagged { missed: u64 },
+    Lagged {
+        missed: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -89,7 +117,8 @@ mod tests {
 
     #[test]
     fn events_serialize_with_type_tag() {
-        let json = serde_json::to_string(&Event::PeerStatusChanged { node_id: "a".into(), status: "online".into() }).unwrap();
+        let json =
+            serde_json::to_string(&Event::PeerStatusChanged { node_id: "a".into(), status: "online".into() }).unwrap();
         assert_eq!(json, r#"{"type":"PeerStatusChanged","node_id":"a","status":"online"}"#);
     }
 }

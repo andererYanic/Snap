@@ -1,16 +1,16 @@
 //! Downloads: Ziel auflösen, laden, atomar ablegen.
 
+use crate::api::files::resolve_unique_hash;
+use crate::api_bail;
+use crate::daemon::*;
 use crate::database::{NewJob, RemoteFile};
 use crate::ipc::Response;
 use crate::network::{endpoint_addr, FetchError};
 use anyhow::{bail, Context, Result};
+use iroh::EndpointId;
 use iroh_blobs::{ticket::BlobTicket, BlobFormat, Hash};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use iroh::EndpointId;
-use crate::api::files::resolve_unique_hash;
-use crate::api_bail;
-use crate::daemon::*;
 
 // ----------------------------------------------------------------------
 // Download
@@ -36,17 +36,17 @@ pub(crate) fn resolve_download_target(inner: &DaemonInner, target: &str) -> Resu
             api_bail!(InvalidInput, "Sammlungen (HashSeq) werden noch nicht unterstützt.");
         }
         let hash_hex = ticket.hash().to_string();
-        let known_name = db
-            .find_by_hash_prefix(&hash_hex)
-            .ok()
-            .and_then(|m| m.into_iter().next())
-            .map(|f| f.file_name)
-            .or_else(|| {
-                db.find_remote_by_hash_prefix(&hash_hex, &self_id).ok().and_then(|m| m.into_iter().next()).map(|f| f.name)
-            });
-        let default_name = known_name
-            .map(|n| sanitize_file_name(&n))
-            .unwrap_or_else(|| format!("snap-{}", &hash_hex[..12]));
+        let known_name =
+            db.find_by_hash_prefix(&hash_hex).ok().and_then(|m| m.into_iter().next()).map(|f| f.file_name).or_else(
+                || {
+                    db.find_remote_by_hash_prefix(&hash_hex, &self_id)
+                        .ok()
+                        .and_then(|m| m.into_iter().next())
+                        .map(|f| f.name)
+                },
+            );
+        let default_name =
+            known_name.map(|n| sanitize_file_name(&n)).unwrap_or_else(|| format!("snap-{}", &hash_hex[..12]));
         return Ok(DownloadTarget { ticket, default_name });
     }
 
@@ -94,10 +94,8 @@ pub(crate) fn resolve_download_target(inner: &DaemonInner, target: &str) -> Resu
 pub(crate) fn remote_target(inner: &DaemonInner, matches: Vec<RemoteFile>, query: &str) -> Result<DownloadTarget> {
     let distinct: HashSet<&str> = matches.iter().map(|f| f.hash.as_str()).collect();
     if distinct.len() > 1 {
-        let list: Vec<String> = matches
-            .iter()
-            .map(|f| format!("  {}  {}  ({})", &f.hash[..16], f.name, device_label(f)))
-            .collect();
+        let list: Vec<String> =
+            matches.iter().map(|f| format!("  {}  {}  ({})", &f.hash[..16], f.name, device_label(f))).collect();
         api_bail!(Ambiguous, "'{query}' ist mehrdeutig – bitte den Hash angeben:\n{}", list.join("\n"));
     }
     let peers = inner.db.list_peers().unwrap_or_default();
@@ -121,12 +119,8 @@ pub(crate) fn device_label(f: &RemoteFile) -> String {
 }
 
 /// Entfernt Pfadbestandteile aus einem Dateinamen (Schutz vor `../`-Tricks).
-pub(crate) fn sanitize_file_name(name: &str) -> String {
-    let base = Path::new(name)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .trim_start_matches('.');
+pub fn sanitize_file_name(name: &str) -> String {
+    let base = Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("").trim_start_matches('.');
     if base.is_empty() {
         "unbenannt".to_string()
     } else {
@@ -216,14 +210,9 @@ pub(crate) async fn finalize_output(
     force: bool,
 ) -> Result<PathBuf> {
     let dir = output.parent().context("Zielpfad hat keinen Ordner")?.to_path_buf();
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .with_context(|| format!("Zielordner {} nicht anlegbar", dir.display()))?;
-    let file_name = output
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("Ungültiger Dateiname im Zielpfad")?
-        .to_string();
+    tokio::fs::create_dir_all(&dir).await.with_context(|| format!("Zielordner {} nicht anlegbar", dir.display()))?;
+    let file_name =
+        output.file_name().and_then(|n| n.to_str()).context("Ungültiger Dateiname im Zielpfad")?.to_string();
 
     let tmp = dir.join(format!(".{file_name}.{:08x}.snap-part", fastrand::u32(..)));
     if let Err(e) = inner.network.export(hash, &tmp).await {
@@ -249,7 +238,11 @@ pub(crate) async fn place_file(tmp: &Path, output: &Path, explicit: bool, force:
             Ok(()) => return Ok(candidate),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if explicit {
-                    api_bail!(AlreadyExists, "Ziel existiert bereits: {} (mit --force überschreiben)", output.display());
+                    api_bail!(
+                        AlreadyExists,
+                        "Ziel existiert bereits: {} (mit --force überschreiben)",
+                        output.display()
+                    );
                 }
             }
             Err(e) => {
@@ -327,4 +320,3 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"neu");
     }
 }
-

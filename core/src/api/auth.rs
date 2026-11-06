@@ -54,13 +54,11 @@ impl Capability {
     }
 
     pub fn parse(s: &str) -> Result<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|c| c.as_str() == s.trim())
-            .ok_or_else(|| {
-                let all: Vec<&str> = Self::ALL.iter().map(|c| c.as_str()).collect();
-                ApiError::new(ErrorCode::InvalidInput, format!("Unbekanntes Recht '{s}'. Möglich: {}", all.join(", "))).into()
-            })
+        Self::ALL.into_iter().find(|c| c.as_str() == s.trim()).ok_or_else(|| {
+            let all: Vec<&str> = Self::ALL.iter().map(|c| c.as_str()).collect();
+            ApiError::new(ErrorCode::InvalidInput, format!("Unbekanntes Recht '{s}'. Möglich: {}", all.join(", ")))
+                .into()
+        })
     }
 
     /// Rechte, die nur innerhalb eines Ordners gelten.
@@ -133,7 +131,13 @@ pub fn authorize(
     decision
 }
 
-fn decide(db: &DatabaseManager, protected: &[PathBuf], node_id: &str, cap: Capability, path: Option<&Path>) -> Result<()> {
+fn decide(
+    db: &DatabaseManager,
+    protected: &[PathBuf],
+    node_id: &str,
+    cap: Capability,
+    path: Option<&Path>,
+) -> Result<()> {
     if cap == Capability::Admin {
         api_bail!(PermissionDenied, "Fernverwaltung ist für gekoppelte Geräte nicht freigegeben");
     }
@@ -151,10 +155,7 @@ fn decide(db: &DatabaseManager, protected: &[PathBuf], node_id: &str, cap: Capab
     if is_protected(&target, protected) {
         api_bail!(PermissionDenied, "Zugriff auf geschützten Pfad verweigert");
     }
-    let inside = folders
-        .iter()
-        .filter(|f| !f.is_empty())
-        .any(|f| target.starts_with(Path::new(f)));
+    let inside = folders.iter().filter(|f| !f.is_empty()).any(|f| target.starts_with(Path::new(f)));
     if !inside {
         api_bail!(PermissionDenied, "Pfad liegt außerhalb der freigegebenen Ordner");
     }

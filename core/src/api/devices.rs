@@ -1,9 +1,9 @@
 //! Pairing-Operationen.
 
-use crate::ipc::Response;
-use anyhow::Result;
 use crate::api_bail;
 use crate::daemon::*;
+use crate::ipc::Response;
+use anyhow::Result;
 
 pub(crate) async fn pair_invite(inner: &DaemonInner) -> Result<Response> {
     // Direkte Adressen nur ohne Relais in den Code aufnehmen (sonst kein IP-Leak nötig).
@@ -30,7 +30,6 @@ pub(crate) fn pair_remove(inner: &DaemonInner, query: &str) -> Result<Response> 
     }
 }
 
-
 fn find_one(inner: &DaemonInner, query: &str) -> Result<crate::database::DeviceInfo> {
     let found = inner.db.find_devices(query)?;
     match found.len() {
@@ -49,7 +48,12 @@ pub(crate) fn pair_list(inner: &DaemonInner) -> Result<Response> {
     Ok(Response::Devices { devices })
 }
 
-pub(crate) fn pair_grant(inner: &DaemonInner, device: &str, capability: &str, folder: Option<std::path::PathBuf>) -> Result<Response> {
+pub(crate) fn pair_grant(
+    inner: &DaemonInner,
+    device: &str,
+    capability: &str,
+    folder: Option<std::path::PathBuf>,
+) -> Result<Response> {
     use super::auth::{validate_grant_folder, Capability};
     let cap = Capability::parse(capability)?;
     if cap == Capability::Admin {
@@ -74,7 +78,12 @@ pub(crate) fn pair_grant(inner: &DaemonInner, device: &str, capability: &str, fo
     })
 }
 
-pub(crate) fn pair_revoke(inner: &DaemonInner, device: &str, capability: &str, folder: Option<std::path::PathBuf>) -> Result<Response> {
+pub(crate) fn pair_revoke(
+    inner: &DaemonInner,
+    device: &str,
+    capability: &str,
+    folder: Option<std::path::PathBuf>,
+) -> Result<Response> {
     let cap = super::auth::Capability::parse(capability)?;
     let d = find_one(inner, device)?;
     let folder = folder.map(|f| std::fs::canonicalize(&f).unwrap_or(f).to_string_lossy().into_owned());

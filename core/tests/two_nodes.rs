@@ -179,10 +179,7 @@ async fn offline_peer_is_queued_and_retried() {
         other => panic!("erwartet Queued, bekam {other:?}"),
     };
     // Doppelter Auftrag wird erkannt
-    assert!(matches!(
-        download(&b, &ticket, Some(out.clone())).await,
-        Response::Queued { already_queued: true, .. }
-    ));
+    assert!(matches!(download(&b, &ticket, Some(out.clone())).await, Response::Queued { already_queued: true, .. }));
     match b.request(Request::Peers).await {
         Response::Peers { peers } => {
             assert_eq!(peers.len(), 1);

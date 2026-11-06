@@ -1,12 +1,12 @@
 //! Ledger-Abgleich mit gekoppelten Geräten: auf Anfrage, im Hintergrund und periodisch.
 
+use crate::daemon::*;
 use crate::database::{now_unix, DatabaseManager};
 use crate::ipc::SyncResult;
 use crate::ledger::{LedgerCtx, SyncError};
+use iroh::EndpointId;
 use std::sync::Arc;
 use std::time::Duration;
-use iroh::EndpointId;
-use crate::daemon::*;
 
 /// Gleicht mit allen gekoppelten Geräten parallel ab.
 pub(crate) async fn sync_all(inner: &DaemonInner) -> Vec<SyncResult> {
@@ -35,7 +35,13 @@ pub(crate) async fn sync_all(inner: &DaemonInner) -> Vec<SyncResult> {
     results
 }
 
-pub(crate) async fn sync_one(ctx: &LedgerCtx, db: &DatabaseManager, node_id: String, name: String, timeout: Duration) -> SyncResult {
+pub(crate) async fn sync_one(
+    ctx: &LedgerCtx,
+    db: &DatabaseManager,
+    node_id: String,
+    name: String,
+    timeout: Duration,
+) -> SyncResult {
     let mut result = SyncResult { node_id: node_id.clone(), name, ok: false, new_entries: 0, error: None };
     let peer: EndpointId = match node_id.parse() {
         Ok(p) => p,
@@ -77,12 +83,8 @@ pub(crate) fn spawn_sync_all(inner: &DaemonInner) {
         let now = now_unix();
         let mut set = tokio::task::JoinSet::new();
         for d in db.list_devices().unwrap_or_default() {
-            let in_backoff = db
-                .get_peer(&d.node_id)
-                .ok()
-                .flatten()
-                .and_then(|p| p.next_retry_at)
-                .is_some_and(|t| t > now);
+            let in_backoff =
+                db.get_peer(&d.node_id).ok().flatten().and_then(|p| p.next_retry_at).is_some_and(|t| t > now);
             if in_backoff {
                 continue;
             }
@@ -129,4 +131,3 @@ pub(crate) async fn run_periodic_sync(inner: Arc<DaemonInner>) {
         tracing::info!("Periodischer Abgleich: {ok}/{} Gerät(e) erreicht", results.len());
     }
 }
-

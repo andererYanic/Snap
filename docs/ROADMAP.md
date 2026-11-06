@@ -65,9 +65,9 @@ Abstriche bei der Sicherheit.
 
 - [ ] **Git-Historie bereinigen**: Der erste Upload enthält `space.db`, `space_ledger.db` und Testdateien (Tickets sind wertlos, trotzdem entfernen) – neues Repository oder `git filter-repo`.
 - [ ] **Lizenz** festlegen (z. B. Apache-2.0 oder MIT/Apache dual).
-- [ ] **`SECURITY.md`** mit vertraulichem Meldeweg; **Bedrohungsmodell** (`docs/SECURITY_MODEL.md`).
-- [ ] **CI** (GitHub Actions): `cargo test`, `cargo clippy -- -D warnings`, `cargo audit` (RustSec), `cargo deny` (Lizenzen, doppelte/unsichere Abhängigkeiten).
-- [ ] **Fuzzing** aller Parser für fremde Eingaben: Einladungscodes, Ledger-Einträge/-Seiten, IPC-Frames, Pfadprüfung, Tickets.
+- [x] **`SECURITY.md`** mit vertraulichem Meldeweg; **Bedrohungsmodell** (`docs/SECURITY_MODEL.md`) – vor Veröffentlichung aktualisieren.
+- [x] **CI** (GitHub Actions, auf Commit-SHAs gepinnt): `fmt`, `clippy -D warnings`, `cargo test`, `cargo audit`, `cargo deny`.
+- [x] **Fuzzing** (`fuzz/`): Einladungscodes, Ledger-Einträge, IPC-Frames, Pfad-/Namensprüfung – Kurzlauf je PR, 20 min nächtlich. Neue Parser bekommen ein Ziel.
 - [ ] **Sichere Standardwerte** für fremde Umgebungen prüfen: Mehrbenutzer-Rechner, Betrieb als root/Docker, fehlendes `$XDG_RUNTIME_DIR`, Netzwerk-Dateisysteme.
 - [ ] **`unsafe`-Audit** (derzeit nur `libc::geteuid`) und Abhängigkeits-Review.
 - [ ] **Signierte Releases**, reproduzierbare Builds, SBOM.

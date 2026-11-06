@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use space_core::database::{AuditEntry, DeviceInfo, ShareInfo, JobState, PeerInfo, PendingJob, RemoteFile};
+use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile, ShareInfo};
 use space_core::events::Event;
 use space_core::ipc::{read_frame, write_frame, Envelope, Request, Response, ScanResult, SyncResult};
 use space_core::{Config, Daemon, FileRecord};
@@ -9,11 +9,7 @@ use std::process::ExitCode;
 use tokio::net::UnixStream;
 
 #[derive(Parser)]
-#[command(
-    name = "space-daemon",
-    about = "P2P Virtual Distributed File System – Daemon & CLI",
-    version
-)]
+#[command(name = "space-daemon", about = "P2P Virtual Distributed File System – Daemon & CLI", version)]
 struct Cli {
     /// Pfad zur Konfigurationsdatei (Standard: ~/.config/snap/config.toml oder $SPACE_CONFIG)
     #[arg(long, global = true, value_name = "DATEI")]
@@ -171,10 +167,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             eprintln!("📥 Lade herunter …");
             Request::Download { target, output, force }
         }
-        Commands::Delete { hash, path } => Request::Delete {
-            hash,
-            path: path.map(|p| absolute(&p)).transpose()?,
-        },
+        Commands::Delete { hash, path } => Request::Delete { hash, path: path.map(|p| absolute(&p)).transpose()? },
         Commands::List => Request::List,
         Commands::Sync => {
             eprintln!("🔄 Gleiche mit gekoppelten Geräten ab …");
@@ -283,7 +276,9 @@ async fn watch(socket: &Path) -> Result<ExitCode> {
 fn describe_event(e: &Event) -> String {
     match e {
         Event::LocalCatalogChanged => "📁 Eigene Freigaben geändert".into(),
-        Event::RemoteCatalogChanged { new_entries } => format!("🔄 Dateilisten anderer Geräte geändert ({new_entries} neu)"),
+        Event::RemoteCatalogChanged { new_entries } => {
+            format!("🔄 Dateilisten anderer Geräte geändert ({new_entries} neu)")
+        }
         Event::PeerStatusChanged { node_id, status } => {
             let icon = if status == "online" { "🟢" } else { "🔴" };
             format!("{icon} Peer {} ist {status}", short(node_id, 10))
@@ -335,9 +330,7 @@ async fn connect(socket: &Path) -> Result<UnixStream> {
 async fn send_request(socket: &Path, req: &Request) -> Result<Response> {
     let mut stream = connect(socket).await?;
     write_frame(&mut stream, &Envelope::new(req.clone())).await?;
-    read_frame(&mut stream)
-        .await
-        .context("Keine gültige Antwort vom Daemon (wurde die Verbindung abgelehnt?)")
+    read_frame(&mut stream).await.context("Keine gültige Antwort vom Daemon (wurde die Verbindung abgelehnt?)")
 }
 
 fn print_response(res: Response) -> ExitCode {
@@ -393,7 +386,13 @@ fn print_response(res: Response) -> ExitCode {
         Response::BrowsePage { items, total, .. } => {
             for i in &items {
                 let wo = i.origin_name.clone().or_else(|| i.origin.as_deref().map(|o| short(o, 10).to_string()));
-                println!("{:<14} {:>10}  {}  ({})", short(&i.hash, 12), human_size(i.size), i.name, wo.unwrap_or_else(|| "dieses Gerät".into()));
+                println!(
+                    "{:<14} {:>10}  {}  ({})",
+                    short(&i.hash, 12),
+                    human_size(i.size),
+                    i.name,
+                    wo.unwrap_or_else(|| "dieses Gerät".into())
+                );
             }
             println!("{} von {total}", items.len());
         }
@@ -432,12 +431,7 @@ fn print_catalog(
         println!("   (noch nichts freigegeben – space-daemon publish <datei>)");
     } else {
         for f in local {
-            println!(
-                "   {:<14} {:>10}  {}",
-                short(&f.blake3_hash, 12),
-                human_size(f.file_size),
-                f.path
-            );
+            println!("   {:<14} {:>10}  {}", short(&f.blake3_hash, 12), human_size(f.file_size), f.path);
         }
     }
 
@@ -486,7 +480,9 @@ fn print_catalog(
     } else {
         println!("\nNoch keine Geräte gekoppelt: space-daemon pair invite");
     }
-    println!("Herunterladen: space-daemon download <name|hash> · 🟢 erreichbar 🔴 zuletzt nicht erreichbar ⚪ unbekannt");
+    println!(
+        "Herunterladen: space-daemon download <name|hash> · 🟢 erreichbar 🔴 zuletzt nicht erreichbar ⚪ unbekannt"
+    );
 }
 
 fn print_sync(results: &[SyncResult]) {
@@ -594,7 +590,9 @@ fn print_scanned(results: &[ScanResult]) {
 
 fn print_audit(entries: &[AuditEntry]) {
     if entries.is_empty() {
-        println!("Keine Einträge. (Protokolliert werden Zugriffe gekoppelter Geräte außer dem normalen Listenabgleich.)");
+        println!(
+            "Keine Einträge. (Protokolliert werden Zugriffe gekoppelter Geräte außer dem normalen Listenabgleich.)"
+        );
         return;
     }
     for e in entries {
@@ -611,11 +609,7 @@ fn short(s: &str, n: usize) -> &str {
 
 fn fmt_time(ts: i64) -> String {
     use chrono::{Local, TimeZone};
-    Local
-        .timestamp_opt(ts, 0)
-        .single()
-        .map(|t| t.format("%d.%m.%Y %H:%M").to_string())
-        .unwrap_or_else(|| "?".into())
+    Local.timestamp_opt(ts, 0).single().map(|t| t.format("%d.%m.%Y %H:%M").to_string()).unwrap_or_else(|| "?".into())
 }
 
 fn human_size(bytes: u64) -> String {

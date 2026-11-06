@@ -26,8 +26,7 @@ pub fn ensure_private_dir(dir: &Path) -> Result<()> {
             .with_context(|| format!("Verzeichnis {} nicht anlegbar", dir.display()))?;
     }
 
-    let meta = fs::symlink_metadata(dir)
-        .with_context(|| format!("Verzeichnis {} nicht lesbar", dir.display()))?;
+    let meta = fs::symlink_metadata(dir).with_context(|| format!("Verzeichnis {} nicht lesbar", dir.display()))?;
     if meta.file_type().is_symlink() {
         bail!("{} ist ein symbolischer Link – aus Sicherheitsgründen nicht erlaubt", dir.display());
     }
@@ -42,11 +41,7 @@ pub fn ensure_private_dir(dir: &Path) -> Result<()> {
         );
     }
     if meta.mode() & 0o077 != 0 {
-        tracing::warn!(
-            "Rechte von {} waren zu offen ({:o}) – setze 0700",
-            dir.display(),
-            meta.mode() & 0o777
-        );
+        tracing::warn!("Rechte von {} waren zu offen ({:o}) – setze 0700", dir.display(), meta.mode() & 0o777);
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
@@ -72,9 +67,10 @@ pub fn load_or_create_secret_key(path: &Path) -> Result<SecretKey> {
             }
             let mut bytes = Vec::with_capacity(32);
             file.take(33).read_to_end(&mut bytes)?;
-            let bytes: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
-                anyhow::anyhow!("Schlüsseldatei {} ist beschädigt (erwartet 32 Byte)", path.display())
-            })?;
+            let bytes: [u8; 32] = bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Schlüsseldatei {} ist beschädigt (erwartet 32 Byte)", path.display()))?;
             Ok(SecretKey::from_bytes(&bytes))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -123,8 +119,15 @@ mod tests {
     fn corrupt_key_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("secret.key");
-        OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path).unwrap()
-            .write_all(b"short").unwrap();
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap()
+            .write_all(b"short")
+            .unwrap();
         assert!(load_or_create_secret_key(&path).is_err());
     }
 

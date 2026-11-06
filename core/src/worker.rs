@@ -1,5 +1,7 @@
 //! Offline-Warteschlange: Hybrid-Worker (Notify + Backoff pro Peer).
 
+use crate::api::transfer::finalize_output;
+use crate::daemon::*;
 use crate::database::{now_unix, PendingJob};
 use crate::network::FetchError;
 use anyhow::Result;
@@ -8,8 +10,6 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::api::transfer::finalize_output;
-use crate::daemon::*;
 
 // ----------------------------------------------------------------------
 // Offline-Warteschlange (Hybrid: Notify + Backoff pro Peer)
@@ -72,7 +72,11 @@ pub(crate) async fn process_due_jobs(inner: &DaemonInner) -> bool {
     processed
 }
 
-pub(crate) async fn process_job(inner: &DaemonInner, job: &PendingJob, unreachable: &mut HashSet<String>) -> Result<()> {
+pub(crate) async fn process_job(
+    inner: &DaemonInner,
+    job: &PendingJob,
+    unreachable: &mut HashSet<String>,
+) -> Result<()> {
     let ticket: BlobTicket = match job.ticket.parse() {
         Ok(t) => t,
         Err(e) => {
@@ -121,4 +125,3 @@ pub(crate) async fn process_job(inner: &DaemonInner, job: &PendingJob, unreachab
 pub(crate) fn short(s: &str) -> &str {
     &s[..s.len().min(10)]
 }
-

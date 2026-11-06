@@ -60,10 +60,7 @@ macro_rules! api_bail {
 
 /// Ermittelt den Code eines Fehlers (sucht auch durch `.context()`-Ketten).
 pub fn code_of(e: &anyhow::Error) -> ErrorCode {
-    e.chain()
-        .find_map(|c| c.downcast_ref::<ApiError>())
-        .map(|a| a.code)
-        .unwrap_or(ErrorCode::Internal)
+    e.chain().find_map(|c| c.downcast_ref::<ApiError>()).map(|a| a.code).unwrap_or(ErrorCode::Internal)
 }
 
 #[cfg(test)]

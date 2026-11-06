@@ -1,0 +1,46 @@
+[package]
+name = "snap-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+space-core = { path = "../core" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "io-util"] }
+
+# Eigener Workspace, damit das Haupt-Workspace stabil (ohne nightly) baut.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "invite_code"
+path = "fuzz_targets/invite_code.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ledger_entry"
+path = "fuzz_targets/ledger_entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ipc_frame"
+path = "fuzz_targets/ipc_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "paths"
+path = "fuzz_targets/paths.rs"
+test = false
+doc = false
+bench = false
