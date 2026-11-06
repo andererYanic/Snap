@@ -43,9 +43,11 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 |---|---|
 | `start` | Daemon starten (STRG+C / SIGTERM beendet sauber) |
 | `publish <datei>` | Datei freigeben, Ticket anzeigen |
-| `download <ticket\|hash\|name> [-o pfad] [--force]` | Herunterladen; ohne `--force` wird nie überschrieben |
+| `download <ticket\|hash\|name\|Freigabe/pfad> [-o pfad] [--force]` | Herunterladen; ohne `--force` wird nie überschrieben |
 | `list` | Eigene Freigaben und Dateien gekoppelter Geräte (gleicht im Hintergrund ab, wenn der Stand > 5 min alt ist) |
 | `sync` | Sofort mit allen gekoppelten Geräten abgleichen |
+| `share add <ordner> [--name N] [--devices a,b]` | Ordner freigeben (ohne `--devices`: alle gekoppelten, auch künftige Geräte) |
+| `share list` / `share remove <name>` / `share rescan [name]` | Freigaben verwalten |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
 | `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
@@ -88,6 +90,7 @@ core/src
   events.rs      Ereignis-Stream für Live-Updates
   worker.rs      Offline-Warteschlange
   sync.rs        Ledger-Abgleich (auf Anfrage, Hintergrund, periodisch)
+  shares.rs      Ordner-Freigaben: Scanner, Watcher, Import per Referenz
   pairing.rs     Einmal-Codes, Pairing-Protokoll (snap/pair/1)
   ledger.rs      signierte Dateilisten, Abgleich per Versionsvektor (snap/ledger/1)
   database.rs    SQLite: files, pending_pins, peer_status, devices, ledger_entries, peer_addrs
@@ -106,6 +109,16 @@ core/src
 - **Fehlerarten:**
   - Verbindungsfehler und Abbrüche → Warteschlange
   - Ablehnung durch den Peer (Datei nicht oder nicht mehr freigegeben) und lokale Fehler → sofortige Fehlermeldung bzw. Job-Status „fehlgeschlagen“
+
+### Ordner-Freigaben
+
+- `share add ~/Fotos` scannt den Ordner und beobachtet ihn danach (inotify, 2 s Bündelung).
+  Beim Daemon-Start werden Änderungen nachgeholt.
+- Dateien werden **per Referenz** importiert (keine Kopie). Unveränderte Dateien werden nicht
+  neu gehasht; reine Zeitänderungen erzeugen keinen Abgleichverkehr.
+- **Symlinks werden nie verfolgt**; temporäre und Systemdateien werden ignoriert.
+- Im Ledger stehen Freigabe-Name und Pfad **relativ** zur Freigabe – nie absolute Pfade.
+- Andere Geräte laden per `download Fotos/2024/strand.jpg`.
 
 ### Pairing & Ledger-Gossip
 
@@ -135,7 +148,10 @@ Unbekannte Node-IDs werden nicht gespeichert.
   freigegeben und nicht gelöscht sind. Heruntergeladene oder gelöschte Dateien sind nicht
   abrufbar. Die Frage „besitzt du Hash X?“ (Observe) wird für alles andere abgelehnt.
   `get_many` und `push` sind deaktiviert.
-- **Tickets sind Zugangsschlüssel:** Wer ein Ticket einer freigegebenen Datei hat, kann sie laden.
+- **Tickets sind Zugangsschlüssel – nur für Einzeldateien:** Wer ein Ticket einer mit `publish`
+  freigegebenen Datei hat, kann sie laden. **Dateien aus Ordner-Freigaben** gehen dagegen nur an
+  Geräte, die `files.read` auf den Ordner haben; die Node-ID der Gegenseite stammt aus TLS.
+  Wer nur den Hash kennt, bekommt nichts.
 - **Rechte pro Gerät:** Jede Operation läuft durch eine einzige Prüfstelle. Lokale Aufrufer
   (gleiche Benutzer-ID) dürfen alles; ein gekoppeltes Gerät nur, was ihm gewährt wurde –
   beim Koppeln ausschließlich `catalog.read`. Ordnerrechte gelten nur innerhalb des Ordners
@@ -178,7 +194,8 @@ Die Integrationstests (`core/tests/`) starten mehrere echte Daemons auf 127.0.0.
 Sie prüfen:
 - Zugriffskontrolle und den Ablauf „Peer offline → Warteschlange → Peer zurück → Download“,
 - Pairing, Abgleich in beide Richtungen, Weiterreichen über einen Knotenpunkt,
-- Angriffsfälle: fremde und entkoppelte Geräte, ersetzte, manipulierte und mehrfach genutzte Codes.
+- Angriffsfälle: fremde und entkoppelte Geräte, ersetzte, manipulierte und mehrfach genutzte Codes,
+  Share-Dateien ohne Recht oder nur mit bekanntem Hash, Symlinks nach außen, Pfadausbrüche.
 
 ## Roadmap
 

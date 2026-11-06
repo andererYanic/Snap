@@ -4,7 +4,7 @@
 //! Nachrichten über [`MAX_FRAME_LEN`] werden abgelehnt.
 
 use crate::api::error::ErrorCode;
-use crate::database::{AuditEntry, DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile};
+use crate::database::{AuditEntry, ShareInfo, DeviceInfo, FileRecord, PeerInfo, PendingJob, RemoteFile};
 use anyhow::{bail, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::PathBuf;
@@ -27,6 +27,15 @@ impl Envelope {
     pub fn new(req: Request) -> Self {
         Self { v: API_VERSION, req }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ScanResult {
+    pub name: String,
+    pub added_or_changed: usize,
+    pub deleted: usize,
+    pub unchanged: usize,
+    pub skipped: usize,
 }
 
 /// Seitenweise Abfrage des Katalogs (für Oberflächen).
@@ -68,6 +77,12 @@ pub struct CatalogItem {
     pub created_at: i64,
     /// Lokaler Pfad (nur bei eigenen Dateien).
     pub path: Option<String>,
+    /// Ordner-Freigabe (`None` = einzeln veröffentlicht).
+    #[serde(default)]
+    pub share: Option<String>,
+    /// Pfad relativ zur Freigabe.
+    #[serde(default)]
+    pub rel_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -106,6 +121,12 @@ pub enum Request {
     PairRevoke { device: String, capability: String, folder: Option<PathBuf> },
     /// Audit-Log der Operationen fremder Geräte (neueste zuerst).
     Audit { limit: u32 },
+    /// Ordner freigeben. `devices = None`: alle gekoppelten (auch künftige) Geräte.
+    ShareAdd { path: PathBuf, name: Option<String>, devices: Option<Vec<String>> },
+    ShareList,
+    ShareRemove { name: String },
+    /// Freigabe(n) sofort neu scannen (`None` = alle).
+    ShareRescan { name: Option<String> },
     /// Vollständiges Ticket einer freigegebenen Datei abfragen.
     Ticket { hash: String },
     /// Offline-Warteschlange anzeigen.
@@ -168,6 +189,9 @@ pub enum Response {
     Paired { device: DeviceInfo },
     Devices { devices: Vec<DeviceInfo> },
     Audit { entries: Vec<AuditEntry> },
+    Shares { shares: Vec<ShareInfo> },
+    ShareAdded { share: ShareInfo, granted: Vec<String> },
+    Scanned { results: Vec<ScanResult> },
     BrowsePage {
         items: Vec<CatalogItem>,
         total: u64,

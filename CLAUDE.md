@@ -9,5 +9,8 @@
 - **Performance:** Nach jedem neuen System ein Effizienz-Review mit Messung
   (`core/tests/perf.rs`, Release-Build) und Eintrag in `docs/PERFORMANCE.md`.
   Maßstab: keine GUI-Abfrage blockiert länger als 16 ms.
+- **Öffentliche Veröffentlichung geplant:** Code muss für fremde Nutzer sicher sein – sichere
+  Standardwerte, keine Geheimnisse oder persönlichen Daten im Repo, alle Eingaben von außen
+  (Netzwerk, IPC, Dateisystem) als feindlich behandeln. Checkliste in `docs/ROADMAP.md` (Phase 7).
 - Arbeit auf Feature-Branches, Pull Requests nach `main`; vor dem Commit `cargo test` und
   `cargo clippy --all-targets` ohne Warnungen.

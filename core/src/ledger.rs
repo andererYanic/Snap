@@ -35,7 +35,7 @@ const REVERSE_WAIT: Duration = Duration::from_secs(5);
 pub const MAX_NAME_LEN: usize = 255;
 
 /// Ein signierter Katalogeintrag. Pfade werden bewusst nicht geteilt.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEntry {
     /// Node-ID des Ursprungsgeräts (Hex) – zugleich der öffentliche Schlüssel.
     pub origin: String,
@@ -50,6 +50,47 @@ pub struct LedgerEntry {
     pub deleted: bool,
     /// Ed25519-Signatur (Hex) über [`LedgerEntry::signing_bytes`].
     pub signature: String,
+    /// Name der Ordner-Freigabe (leer = einzeln veröffentlichte Datei).
+    #[serde(default)]
+    pub share: String,
+    /// Pfad relativ zur Freigabe mit `/` als Trenner (leer = nur `name`).
+    #[serde(default)]
+    pub rel_path: String,
+}
+
+/// Maximale Länge eines relativen Pfads.
+pub const MAX_REL_PATH_LEN: usize = 4096;
+/// Maximale Länge eines Freigabe-Namens.
+pub const MAX_SHARE_NAME_LEN: usize = 64;
+
+/// Prüft einen relativen Pfad aus dem Ledger. Er darf später nie aus einem
+/// Zielordner herausführen (z. B. beim Pinning).
+pub fn validate_rel_path(rel: &str) -> Result<()> {
+    if rel.len() > MAX_REL_PATH_LEN {
+        bail!("relativer Pfad zu lang");
+    }
+    if rel.starts_with('/') || rel.contains('\\') || rel.chars().any(char::is_control) {
+        bail!("ungültiger relativer Pfad");
+    }
+    if rel.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..") {
+        bail!("ungültiger relativer Pfad");
+    }
+    Ok(())
+}
+
+/// Prüft einen Freigabe-Namen.
+pub fn validate_share_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.len() > MAX_SHARE_NAME_LEN
+        || name.contains('/')
+        || name.contains('\\')
+        || name == "."
+        || name == ".."
+        || name.chars().any(char::is_control)
+    {
+        bail!("ungültiger Freigabe-Name");
+    }
+    Ok(())
 }
 
 impl LedgerEntry {
@@ -60,7 +101,9 @@ impl LedgerEntry {
             buf.extend_from_slice(bytes);
         }
         let mut buf = Vec::with_capacity(256);
-        buf.extend_from_slice(b"snap-ledger-entry-v1\0");
+        // v1 (ohne Freigabe) bleibt byte-identisch, damit bestehende Signaturen gültig bleiben.
+        let v2 = !self.share.is_empty() || !self.rel_path.is_empty();
+        buf.extend_from_slice(if v2 { b"snap-ledger-entry-v2\0" } else { b"snap-ledger-entry-v1\0" });
         put(&mut buf, self.origin.as_bytes());
         buf.extend_from_slice(&self.entry_id.to_be_bytes());
         buf.extend_from_slice(&self.seq.to_be_bytes());
@@ -69,6 +112,10 @@ impl LedgerEntry {
         buf.extend_from_slice(&self.size.to_be_bytes());
         buf.extend_from_slice(&self.created_at.to_be_bytes());
         buf.push(self.deleted as u8);
+        if v2 {
+            put(&mut buf, self.share.as_bytes());
+            put(&mut buf, self.rel_path.as_bytes());
+        }
         buf
     }
 
@@ -86,6 +133,13 @@ impl LedgerEntry {
         }
         if self.seq <= 0 {
             bail!("ungültige Sequenznummer");
+        }
+        if !self.share.is_empty() || !self.rel_path.is_empty() {
+            validate_share_name(&self.share)?;
+            validate_rel_path(&self.rel_path)?;
+            if self.rel_path.rsplit('/').next() != Some(self.name.as_str()) {
+                bail!("Dateiname passt nicht zum relativen Pfad");
+            }
         }
         let origin: PublicKey = self.origin.parse().context("ungültige Ursprungs-ID")?;
         let sig_bytes = data_encoding::HEXLOWER
@@ -145,6 +199,9 @@ impl LedgerCtx {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PullStats {
     pub new_entries: usize,
+    /// Verworfene (ungültige) Einträge.
+    #[serde(default)]
+    pub rejected: usize,
     pub device_name: Option<String>,
 }
 
@@ -206,22 +263,38 @@ async fn pull_on(ctx: &LedgerCtx, conn: &Connection, peer: &str) -> Result<PullS
         let SyncResponse { entries, more, addrs, device_name } = resp;
         let page_empty = entries.is_empty();
         let resp_entries = entries;
-        // Erst alles prüfen, dann übernehmen: ein manipulierter Eintrag verwirft die ganze Seite.
-        // Prüfung (CPU-lastig) und Übernahme (blockierendes SQLite) laufen außerhalb der
-        // async-Runtime, damit andere Aufgaben (IPC, Transfers) nicht ausgebremst werden.
+        // Jeden Eintrag prüfen; ungültige werden verworfen (nie übernommen), gültige trotzdem
+        // übernommen – ein einzelner fehlerhafter Eintrag darf den Abgleich nicht dauerhaft
+        // blockieren. Prüfung (CPU) und Übernahme (SQLite) laufen außerhalb der async-Runtime.
         let db = ctx.db.clone();
         let self_id_c = self_id.clone();
-        let peer_short = peer[..10.min(peer.len())].to_string();
-        let applied = tokio::task::spawn_blocking(move || -> Result<usize> {
-            verify_all(&resp_entries).with_context(|| format!("Ungültiger Ledger-Eintrag von {peer_short}"))?;
+        let vv_before = ctx.db.version_vector()?;
+        let (applied, rejected) = tokio::task::spawn_blocking(move || -> Result<(usize, usize)> {
+            let valid = verify_each(&resp_entries);
+            let rejected = valid.iter().filter(|v| !**v).count();
             // Für eigene Einträge sind wir allein zuständig.
-            let foreign: Vec<LedgerEntry> = resp_entries.into_iter().filter(|e| e.origin != self_id_c).collect();
-            db.apply_remote_entries(&foreign)
-        });
-        stats.new_entries += applied.await.context("Abgleich-Task abgebrochen")??;
+            let foreign: Vec<LedgerEntry> = resp_entries
+                .into_iter()
+                .zip(valid)
+                .filter(|(e, ok)| *ok && e.origin != self_id_c)
+                .map(|(e, _)| e)
+                .collect();
+            Ok((db.apply_remote_entries(&foreign)?, rejected))
+        })
+        .await
+        .context("Abgleich-Task abgebrochen")??;
+        stats.new_entries += applied;
+        stats.rejected += rejected;
+        if rejected > 0 {
+            tracing::warn!("{rejected} ungültige Ledger-Einträge von {} verworfen", &peer[..10.min(peer.len())]);
+        }
         let _ = ctx.db.set_addr_hints(peer, &addrs);
         stats.device_name = Some(sanitize_device_name(&device_name, peer));
         if !more {
+            break;
+        }
+        // Ohne Fortschritt (z. B. nur ungültige Einträge) nicht endlos dieselbe Seite holen.
+        if !page_empty && ctx.db.version_vector()? == vv_before {
             break;
         }
         if page_empty {
@@ -254,6 +327,23 @@ pub fn verify_all(entries: &[LedgerEntry]) -> Result<()> {
         handles
             .into_iter()
             .try_for_each(|h| h.join().unwrap_or_else(|_| bail!("Prüfung abgebrochen")))
+    })
+}
+
+/// Prüft jeden Eintrag einzeln (parallel bei großen Seiten). `true` = gültig.
+pub fn verify_each(entries: &[LedgerEntry]) -> Vec<bool> {
+    const MIN_PER_THREAD: usize = 64;
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    if entries.len() < MIN_PER_THREAD * 2 || threads < 2 {
+        return entries.iter().map(|e| e.verify().is_ok()).collect();
+    }
+    let chunk = entries.len().div_ceil(threads).max(MIN_PER_THREAD);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = entries
+            .chunks(chunk)
+            .map(|c| scope.spawn(move || c.iter().map(|e| e.verify().is_ok()).collect::<Vec<_>>()))
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
     })
 }
 
@@ -369,6 +459,7 @@ mod tests {
             created_at: 1_700_000_000,
             deleted: false,
             signature: String::new(),
+            ..Default::default()
         };
         e.signature = e.sign(key);
         e
@@ -439,6 +530,64 @@ mod tests {
         verify_all(&entries).unwrap();
         entries[177].size += 1;
         assert!(verify_all(&entries).is_err());
+        let each = verify_each(&entries);
+        assert_eq!(each.iter().filter(|v| !**v).count(), 1);
+        assert!(!each[177]);
+    }
+
+    #[test]
+    fn v1_signatures_stay_valid_and_v2_covers_paths() {
+        let key = SecretKey::generate();
+        let v1 = entry(&key);
+        // v1-Bytes beginnen mit der alten Domäne
+        assert!(v1.signing_bytes().starts_with(b"snap-ledger-entry-v1\0"));
+        v1.verify().unwrap();
+
+        let mut v2 = entry(&key);
+        v2.share = "Fotos".into();
+        v2.rel_path = "2024/foto.jpg".into();
+        v2.signature = v2.sign(&key);
+        v2.verify().unwrap();
+        // Freigabe oder Pfad manipulieren -> Signatur ungültig
+        let mut t = v2.clone();
+        t.rel_path = "2025/foto.jpg".into();
+        assert!(t.verify().is_err());
+        let mut t = v2.clone();
+        t.share = "Privat".into();
+        assert!(t.verify().is_err());
+        // v2-Eintrag auf v1 "zurückgestuft" -> ungültig
+        let mut t = v2.clone();
+        t.share.clear();
+        t.rel_path.clear();
+        assert!(t.verify().is_err());
+    }
+
+    #[test]
+    fn malicious_paths_are_rejected_even_if_signed() {
+        let key = SecretKey::generate();
+        for (share, rel) in [
+            ("Fotos", "../../.bashrc"),
+            ("Fotos", "/etc/foto.jpg"),
+            ("Fotos", "a/./foto.jpg"),
+            ("Fotos", "a//foto.jpg"),
+            ("Fotos", "a\\..\\foto.jpg"),
+            ("Fotos", "a/\nfoto.jpg"),
+            ("..", "foto.jpg"),
+            ("a/b", "foto.jpg"),
+            ("", "foto.jpg"),
+        ] {
+            let mut e = entry(&key);
+            e.share = share.into();
+            e.rel_path = rel.into();
+            e.signature = e.sign(&key);
+            assert!(e.verify().is_err(), "{share} / {rel}");
+        }
+        // Name muss zum Pfad passen
+        let mut e = entry(&key);
+        e.share = "Fotos".into();
+        e.rel_path = "a/anders.jpg".into();
+        e.signature = e.sign(&key);
+        assert!(e.verify().is_err());
     }
 
     #[test]

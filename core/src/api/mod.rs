@@ -8,6 +8,7 @@ pub mod auth;
 pub mod devices;
 pub mod error;
 pub mod files;
+pub mod shares;
 pub mod transfer;
 
 use crate::ipc::{DaemonInfo, Request, Response};
@@ -19,7 +20,7 @@ use devices::{pair_invite, pair_remove};
 use files::{catalog, delete, publish, ticket};
 use transfer::download;
 
-pub(crate) async fn handle_request(inner: &DaemonInner, caller: &auth::Caller, req: Request) -> Response {
+pub(crate) async fn handle_request(inner: &std::sync::Arc<DaemonInner>, caller: &auth::Caller, req: Request) -> Response {
     // Einzige Prüfstelle: jede Anfrage braucht das passende Recht (lokal: alle).
     let cap = auth::required_capability(&req);
     let op = request_name(&req).unwrap_or("unbekannt");
@@ -61,6 +62,10 @@ pub(crate) async fn handle_request(inner: &DaemonInner, caller: &auth::Caller, r
         Request::PairList => devices::pair_list(inner),
         Request::PairGrant { device, capability, folder } => devices::pair_grant(inner, &device, &capability, folder),
         Request::PairRevoke { device, capability, folder } => devices::pair_revoke(inner, &device, &capability, folder),
+        Request::ShareAdd { path, name, devices } => shares::share_add(inner, &path, name, devices).await,
+        Request::ShareList => inner.db.list_shares().map(|shares| Response::Shares { shares }),
+        Request::ShareRemove { name } => shares::share_remove(inner, &name),
+        Request::ShareRescan { name } => shares::share_rescan(inner, name).await,
         Request::Audit { limit } => inner.db.audit_log(limit.clamp(1, 1000)).map(|entries| Response::Audit { entries }),
         Request::Ticket { hash } => ticket(inner, &hash),
         Request::Queue => inner.db.list_jobs().map(|jobs| Response::Queue { jobs }),
@@ -128,5 +133,9 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::PairGrant { .. } => "pair.grant",
         Request::PairRevoke { .. } => "pair.revoke",
         Request::Audit { .. } => "audit",
+        Request::ShareAdd { .. } => "share.add",
+        Request::ShareList => "share.list",
+        Request::ShareRemove { .. } => "share.remove",
+        Request::ShareRescan { .. } => "share.rescan",
     })
 }

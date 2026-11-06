@@ -27,6 +27,8 @@ pub enum Event {
     JobRemoved { job_id: i64 },
     DevicePaired { node_id: String, name: String },
     DeviceRemoved { node_id: String },
+    /// Eine Ordner-Freigabe wurde (neu) gescannt.
+    ShareScanned { name: String, changed: usize, deleted: usize, total: usize },
     /// Rechte eines Geräts wurden geändert.
     GrantsChanged { node_id: String },
     /// Der Abonnent hat Ereignisse verpasst und sollte seinen Zustand neu laden.

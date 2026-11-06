@@ -24,6 +24,8 @@ libc = "0.2"
 fastrand = "2"
 getrandom = "0.2"
 data-encoding = "2"
+walkdir = "2.5"
+notify = "8"
 
 [dev-dependencies]
 tempfile = "3"

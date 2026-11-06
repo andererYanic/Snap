@@ -19,7 +19,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Entscheidet, ob ein Hash an andere Peers ausgeliefert werden darf.
-pub type AccessCheck = Arc<dyn Fn(&Hash) -> bool + Send + Sync>;
+/// Erhält den Hash und – falls bekannt – die per TLS bestätigte Node-ID der Gegenseite.
+pub type AccessCheck = Arc<dyn Fn(&Hash, Option<EndpointId>) -> bool + Send + Sync>;
 /// Wird aufgerufen, wenn sich ein Peer bei uns verbindet (für den reaktiven Peer-Status).
 pub type ConnectHook = Arc<dyn Fn(EndpointId) + Send + Sync>;
 
@@ -163,6 +164,22 @@ impl P2pNetwork {
         Ok((hash, self.ticket_for(hash)))
     }
 
+    /// Importiert eine Datei **per Referenz** (keine Kopie im Blob-Store) und schützt
+    /// sie vor der GC. Ändert sich die Datei später, erkennt das der Watcher; ein
+    /// Empfänger würde veraltete Daten ohnehin an der BLAKE3-Prüfung ablehnen.
+    pub async fn import_reference(&self, abs_path: &Path) -> Result<Hash> {
+        use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
+        let opts = AddPathOptions { path: abs_path.to_path_buf(), format: BlobFormat::Raw, mode: ImportMode::TryReference };
+        let temp = self.store.add_path_with_opts(opts).temp_tag().await?;
+        let hash = temp.hash();
+        self.store
+            .tags()
+            .set(format!("{PUBLISH_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash))
+            .await?;
+        drop(temp);
+        Ok(hash)
+    }
+
     /// Hebt den Schutz eines freigegebenen Blobs auf; die GC entfernt ihn danach.
     pub async fn unpin_published(&self, hash: &Hash) -> Result<()> {
         self.store.tags().delete(format!("{PUBLISH_TAG_PREFIX}{hash}")).await?;
@@ -292,7 +309,9 @@ pub fn endpoint_addr(id: EndpointId, hints: &[String]) -> EndpointAddr {
 /// - eingehende Verbindungen: nur zur Status-Aktualisierung bekannter Peers
 fn access_control(access: AccessCheck, on_connect: ConnectHook) -> EventSender {
     let mask = EventMask {
-        connected: ConnectMode::Notify,
+        // Intercept statt Notify: Die Zuordnung Verbindung -> Node-ID steht garantiert,
+        // bevor die erste Anfrage dieser Verbindung geprüft wird.
+        connected: ConnectMode::Intercept,
         get: RequestMode::Intercept,
         get_many: RequestMode::Disabled,
         push: RequestMode::Disabled,
@@ -301,10 +320,23 @@ fn access_control(access: AccessCheck, on_connect: ConnectHook) -> EventSender {
     };
     let (tx, mut rx) = EventSender::channel(64, mask);
     tokio::spawn(async move {
+        // connection_id -> Node-ID der Gegenseite (aus TLS)
+        let mut peers: std::collections::HashMap<u64, EndpointId> = std::collections::HashMap::new();
         while let Some(msg) = rx.recv().await {
             match msg {
+                ProviderMessage::ClientConnected(msg) => {
+                    if let Some(id) = msg.endpoint_id {
+                        peers.insert(msg.connection_id, id);
+                        on_connect(id);
+                    }
+                    msg.tx.send(Ok(())).await.ok();
+                }
+                ProviderMessage::ConnectionClosed(msg) => {
+                    peers.remove(&msg.connection_id);
+                }
                 ProviderMessage::GetRequestReceived(msg) => {
-                    let allowed = msg.request.ranges.is_blob() && access(&msg.request.hash);
+                    let node = peers.get(&msg.connection_id).copied();
+                    let allowed = msg.request.ranges.is_blob() && access(&msg.request.hash, node);
                     if !allowed {
                         tracing::debug!("Get-Anfrage abgelehnt: {}", msg.request.hash.fmt_short());
                     }
@@ -312,17 +344,9 @@ fn access_control(access: AccessCheck, on_connect: ConnectHook) -> EventSender {
                     msg.tx.send(res).await.ok();
                 }
                 ProviderMessage::ObserveRequestReceived(msg) => {
-                    let res = if access(&msg.request.hash) { Ok(()) } else { Err(AbortReason::Permission) };
+                    let node = peers.get(&msg.connection_id).copied();
+                    let res = if access(&msg.request.hash, node) { Ok(()) } else { Err(AbortReason::Permission) };
                     msg.tx.send(res).await.ok();
-                }
-                ProviderMessage::ClientConnectedNotify(msg) => {
-                    if let Some(id) = msg.endpoint_id {
-                        on_connect(id);
-                    }
-                }
-                ProviderMessage::ClientConnected(msg) => {
-                    // Wird bei ConnectMode::Notify nicht gesendet; zur Sicherheit erlauben.
-                    msg.tx.send(Ok(())).await.ok();
                 }
                 _ => {}
             }
