@@ -585,3 +585,60 @@ fn file_ops() {
         phone.shutdown().await;
     });
 }
+
+#[test]
+#[ignore]
+fn media_thumbnails() {
+    use space_core::media::{metadata, ThumbCache, ThumbSize};
+    let dir = tempfile::tempdir().unwrap();
+    // 12-MP-Foto (4000 × 3000), typische Handykamera
+    let img = image::RgbImage::from_fn(4000, 3000, |x, y| {
+        image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x + y) % 239) as u8])
+    });
+    let mut buf = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90).encode_image(&img).unwrap();
+    let n = 10;
+    for i in 0..n {
+        std::fs::write(dir.path().join(format!("foto{i}.jpg")), &buf).unwrap();
+    }
+    println!("Testfoto: {:.1} MB", buf.len() as f64 / 1e6);
+    let cache = ThumbCache::new(dir.path().join("thumbs"), 100 << 20);
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let (rss0, _) = rss_mib();
+        let t = Instant::now();
+        for i in 0..n {
+            cache.get(&dir.path().join(format!("foto{i}.jpg")), ThumbSize::Small).await.unwrap();
+        }
+        report("media: Vorschaubild 12 MP → 256 px (neu)", n, t.elapsed());
+        let (_, hwm) = rss_mib();
+        println!("media: RAM-Spitze {hwm:.0} MiB (vorher {rss0:.0} MiB)");
+        let t = Instant::now();
+        let m = 1000;
+        for i in 0..m {
+            let t = cache.get(&dir.path().join(format!("foto{}.jpg", i % n)), ThumbSize::Small).await.unwrap();
+            assert!(t.cached);
+        }
+        report("media: Vorschaubild aus dem Cache", m, t.elapsed());
+        // Parallel angefragt (wie ein Raster in der Oberfläche); höchstens 2 decodieren gleichzeitig
+        let par = std::sync::Arc::new(ThumbCache::new(dir.path().join("thumbs2"), 100 << 20));
+        let t = Instant::now();
+        let tasks: Vec<_> = (0..n)
+            .map(|i| {
+                let (c, p) = (par.clone(), dir.path().join(format!("foto{i}.jpg")));
+                tokio::spawn(async move { c.get(&p, ThumbSize::Small).await.unwrap() })
+            })
+            .collect();
+        for task in tasks {
+            task.await.unwrap();
+        }
+        report("media: Vorschaubild parallel angefragt (neu)", n, t.elapsed());
+        let (_, hwm) = rss_mib();
+        println!("media: RAM-Spitze parallel {hwm:.0} MiB");
+    });
+    let t = Instant::now();
+    for i in 0..n {
+        metadata(&dir.path().join(format!("foto{i}.jpg"))).unwrap();
+    }
+    report("media: Metadaten (EXIF + Abmessungen)", n, t.elapsed());
+}

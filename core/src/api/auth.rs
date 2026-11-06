@@ -131,7 +131,11 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::RemoteOp { .. }
         | Request::OpsPending
         | Request::OpsApprove { .. }
-        | Request::OpsReject { .. } => Capability::Admin,
+        | Request::OpsReject { .. }
+        // Vorschaubilder/Metadaten beliebiger lokaler Dateien: nur lokal (für Geräte später
+        // über Freigaben mit files.read).
+        | Request::Thumbnail { .. }
+        | Request::Metadata { .. } => Capability::Admin,
     }
 }
 

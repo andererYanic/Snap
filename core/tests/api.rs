@@ -178,6 +178,8 @@ mod permissions {
             Request::TrashRestore { id: "x".into(), keep_both: true },
             Request::TrashPurge { id: "x".into() },
             Request::TrashEmpty,
+            Request::Thumbnail { path: "/etc/passwd".into(), size: Default::default() },
+            Request::Metadata { path: "/etc/passwd".into() },
         ]
     }
 

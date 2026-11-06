@@ -267,6 +267,16 @@ pub enum Request {
     OpsReject {
         id: i64,
     },
+    /// Vorschaubild (JPEG im lokalen Cache) für eine Bilddatei.
+    Thumbnail {
+        path: PathBuf,
+        #[serde(default)]
+        size: crate::media::ThumbSize,
+    },
+    /// Metadaten (EXIF, Audio-/Video-Tags, erkannte Art).
+    Metadata {
+        path: PathBuf,
+    },
 }
 
 /// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
@@ -409,6 +419,8 @@ pub enum Response {
     Approvals {
         items: Vec<ApprovalInfo>,
     },
+    Thumbnail(crate::media::Thumbnail),
+    Metadata(crate::media::MediaInfo),
     FileOpDone {
         job: u64,
         outcome: crate::fileops::jobs::Outcome,

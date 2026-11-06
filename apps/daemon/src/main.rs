@@ -170,6 +170,15 @@ enum Commands {
         #[command(subcommand)]
         action: Option<OpsAction>,
     },
+    /// Vorschaubild erzeugen und Pfad im Cache anzeigen
+    Thumb {
+        path: PathBuf,
+        /// 1024 px statt 256 px
+        #[arg(long)]
+        large: bool,
+    },
+    /// Metadaten anzeigen (Aufnahmedatum, Kamera, GPS, Dauer, Titel …)
+    Meta { path: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -505,6 +514,11 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Ops { action: None | Some(OpsAction::Pending) } => Request::OpsPending,
         Commands::Ops { action: Some(OpsAction::Approve { id }) } => Request::OpsApprove { id },
         Commands::Ops { action: Some(OpsAction::Reject { id }) } => Request::OpsReject { id },
+        Commands::Thumb { path, large } => Request::Thumbnail {
+            path: absolute(&path)?,
+            size: if large { space_core::media::ThumbSize::Large } else { space_core::media::ThumbSize::Small },
+        },
+        Commands::Meta { path } => Request::Metadata { path: absolute(&path)? },
         Commands::Watch => return watch(&config.socket_path).await,
     };
 
@@ -787,6 +801,28 @@ fn print_response(res: Response) -> ExitCode {
             println!("{watched_dirs} Ordner werden live beobachtet.");
         }
         Response::FileOpStarted { job } => println!("⏳ Auftrag {job} gestartet."),
+        Response::Thumbnail(t) => {
+            println!("{}", t.path.display());
+            println!("{} × {} px{}", t.width, t.height, if t.cached { " (aus dem Cache)" } else { "" });
+        }
+        Response::Metadata(m) => {
+            let line = |k: &str, v: Option<String>| {
+                if let Some(v) = v {
+                    println!("{k:<14} {v}");
+                }
+            };
+            line("Art:", m.kind.map(|k| format!("{k:?}")));
+            line("Typ:", m.mime.clone());
+            line("Größe:", Some(human_size(m.size)));
+            line("Abmessungen:", m.width.zip(m.height).map(|(w, h)| format!("{w} × {h} px")));
+            line("Aufgenommen:", m.taken_at.clone());
+            line("Kamera:", m.camera.clone());
+            line("Ort:", m.gps.map(|g| format!("{:.5}, {:.5}", g.lat, g.lon)));
+            line("Dauer:", m.duration_secs.map(|d| format!("{}:{:02}", d as u64 / 60, d as u64 % 60)));
+            line("Titel:", m.title.clone());
+            line("Interpret:", m.artist.clone());
+            line("Album:", m.album.clone());
+        }
         Response::Approvals { items } => {
             if items.is_empty() {
                 println!("Keine angehaltenen Anfragen.");

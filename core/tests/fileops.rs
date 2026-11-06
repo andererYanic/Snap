@@ -165,3 +165,37 @@ async fn background_job_reports_progress_and_can_be_cancelled() {
     assert!(!tmp.path().join("ziel/quelle").exists());
     d.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn thumbnails_and_metadata_via_daemon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = start(&tmp.path().join("snap")).await;
+    let img = image::RgbImage::from_fn(800, 600, |x, y| image::Rgb([x as u8, y as u8, 0]));
+    let photo = tmp.path().join("foto.jpg");
+    img.save(&photo).unwrap();
+
+    match d.request(Request::Thumbnail { path: photo.clone(), size: Default::default() }).await {
+        Response::Thumbnail(t) => {
+            assert_eq!((t.width, t.height), (256, 192));
+            assert!(t.path.starts_with(&d.config().data_dir), "Cache im privaten Datenordner");
+            assert!(t.path.exists());
+        }
+        other => panic!("{other:?}"),
+    }
+    match d.request(Request::Metadata { path: photo.clone() }).await {
+        Response::Metadata(m) => {
+            assert_eq!((m.width, m.height), (Some(800), Some(600)));
+            assert_eq!(m.mime.as_deref(), Some("image/jpeg"));
+        }
+        other => panic!("{other:?}"),
+    }
+    // Keine Bilddatei / relativer Pfad / fehlend
+    std::fs::write(tmp.path().join("text.txt"), b"hallo").unwrap();
+    let res = d.request(Request::Thumbnail { path: tmp.path().join("text.txt"), size: Default::default() }).await;
+    assert_eq!(code(&res), Some(ErrorCode::InvalidInput));
+    let res = d.request(Request::Thumbnail { path: "foto.jpg".into(), size: Default::default() }).await;
+    assert_eq!(code(&res), Some(ErrorCode::InvalidInput));
+    let res = d.request(Request::Metadata { path: tmp.path().join("fehlt") }).await;
+    assert_eq!(code(&res), Some(ErrorCode::NotFound));
+    d.shutdown().await;
+}

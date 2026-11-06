@@ -108,6 +108,12 @@ pub(crate) async fn handle_request(
         Request::OpsPending => fileops::ops_pending(inner),
         Request::OpsApprove { id } => crate::remote_ops::approve(inner, id).await,
         Request::OpsReject { id } => crate::remote_ops::reject(inner, id),
+        Request::Thumbnail { path, size } => inner.thumbs.get(&path, size).await.map(Response::Thumbnail),
+        Request::Metadata { path } => tokio::task::spawn_blocking(move || crate::media::metadata(&path))
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|r| r)
+            .map(Response::Metadata),
         Request::Subscribe => Ok(Response::error(
             error::ErrorCode::InvalidInput,
             "Ereignisse gibt es nur über eine Socket-Verbindung oder Daemon::subscribe()",
@@ -179,5 +185,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::OpsPending => "ops.pending",
         Request::OpsApprove { .. } => "ops.approve",
         Request::OpsReject { .. } => "ops.reject",
+        Request::Thumbnail { .. } => "thumbnail",
+        Request::Metadata { .. } => "metadata",
     })
 }
