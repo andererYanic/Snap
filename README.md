@@ -62,6 +62,8 @@ space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 | `ops` / `ops approve <nr>` / `ops reject <nr>` | Vom Massenschutz angehaltene Änderungen anderer Geräte |
 | `thumb <bild> [--large]` | Vorschaubild erzeugen (256 bzw. 1024 px, Cache im Datenordner) |
 | `meta <datei>` | Metadaten: Art, Abmessungen, Aufnahmedatum, Kamera, Ort (GPS), Dauer, Titel/Interpret |
+| `stream <ziel>` | Lokale Abspiel-Adresse (auch für Dateien anderer Geräte), z. B. `mpv "$(space-daemon stream Filme/urlaub.mkv)"` |
+| `remote <gerät> thumb Freigabe/pfad [--large]` | Vorschaubild einer Datei auf einem anderen Gerät (braucht dort `files.read`) |
 | `pair invite` / `pair join <code>` | Gerät koppeln (Einmal-Code, 10 min gültig) |
 | `pair list` / `pair remove <gerät>` | Gekoppelte Geräte mit Rechten anzeigen / entkoppeln |
 | `pair grant\|revoke <gerät> <recht> [--folder <ordner>]` | Rechte vergeben/entziehen (`catalog.read`, `files.read`, `files.write`, `files.delete`, `pin.request`) |
@@ -183,6 +185,20 @@ core/src
 - Sicherheit: nur reine Rust-Decoder, Größe und Speicher werden vor dem Decodieren geprüft
   (Schutz vor Dekompressionsbomben), höchstens 2 Decodierungen gleichzeitig, Symlinks werden
   nicht verfolgt. Die Vorschaubilder für gekoppelte Geräte folgen mit dem Streaming (5a).
+
+### Streaming
+
+- `space-daemon stream Filme/urlaub.mkv` liefert eine Adresse wie `http://127.0.0.1:…/s/<token>/urlaub.mkv`,
+  die jeder Player abspielen kann – auch wenn die Datei auf einem anderen Gerät liegt.
+- Spulen lädt nur die nötigen Stücke (Byte-Bereiche, BLAKE3-verifiziert); fällt das Ursprungsgerät
+  aus, springen andere Geräte mit demselben Inhalt ein.
+- Angesehene Teile bleiben im Streaming-Cache (`stream_cache_mb`, Standard 2048), älteste zuerst
+  wieder freigegeben.
+- Sicherheit: nur `127.0.0.1`, unratbares Token je Datei (verfällt nach 12 h ohne Nutzung),
+  Host-Prüfung gegen DNS-Rebinding, nur GET/HEAD. Ob ein Gerät liefern darf, entscheidet es selbst
+  (`files.read` bzw. veröffentlicht).
+- Vorschaubilder fremder Freigaben: `remote PC thumb Fotos/2024/strand.jpg` – nur das kleine JPEG
+  wird übertragen.
 
 ### Dateien auf anderen Geräten bearbeiten
 

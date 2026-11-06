@@ -60,6 +60,17 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   Restrisiko: Endlosschleifen in weiteren Parsern lassen sich ohne Prozess-Isolation nicht
   abbrechen. Für die Mobile-Einbettung wird geprüft, die Decoder in einem eigenen Prozess bzw.
   einer eigenen Erweiterung auszuführen.
+- **Streaming (lokaler HTTP-Server):** nur `127.0.0.1` (zusätzlich Loopback-Prüfung je
+  Verbindung), Adressen mit 256-Bit-Token aus dem Betriebssystem-Zufall (12 h Gültigkeit ohne
+  Nutzung, höchstens 1 000), Host-Kopf muss `127.0.0.1:<port>`/`localhost:<port>` sein (Schutz
+  vor DNS-Rebinding aus Webseiten), nur GET/HEAD, hyper als HTTP-Parser, Kopf-Zeitlimit,
+  höchstens 64 Verbindungen; `nosniff`, `no-store`, `no-referrer`. Daten sind BLAKE3/bao-
+  verifiziert; das liefernde Gerät prüft seine Rechte bei jeder Anfrage. Fuzz-Ziel `stream_range`.
+  Restrisiko: Andere lokale Prozesse, die eine Adresse kennen (z. B. aus der Prozessliste eines
+  Players), können die Datei ebenfalls abrufen.
+- **Vorschaubilder fremder Freigaben (`snap/thumb/1`):** nur gekoppelt, nur mit `files.read`,
+  nur innerhalb von Freigaben ohne Symlinks auf dem Weg; Anfrage ≤ 4 KiB, Antwort ≤ 1 MiB;
+  empfangene Bilder werden mit den begrenzten Decodern neu codiert, bevor sie im Cache landen.
 - **Fernoperationen (`snap/ops/1`):** nicht gekoppelte Gegenstellen werden vor dem Lesen
   getrennt; nur relative Pfade innerhalb einer Freigabe, Symlinks auf dem Weg werden abgelehnt,
   Ziele zusätzlich kanonisiert geprüft; jede Operation läuft durch die zentrale Rechteprüfung

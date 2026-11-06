@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 
 /// Was der Nutzer herunterladen will.
 pub(crate) struct DownloadTarget {
-    ticket: BlobTicket,
+    pub(crate) ticket: BlobTicket,
     /// Dateiname für den Standard-Zielordner.
-    default_name: String,
+    pub(crate) default_name: String,
 }
 
 /// Löst ein Download-Ziel auf: Ticket, Hash(-Präfix) oder Dateiname.

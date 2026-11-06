@@ -135,7 +135,9 @@ pub fn required_capability(req: &Request) -> Capability {
         // Vorschaubilder/Metadaten beliebiger lokaler Dateien: nur lokal (für Geräte später
         // über Freigaben mit files.read).
         | Request::Thumbnail { .. }
-        | Request::Metadata { .. } => Capability::Admin,
+        | Request::Metadata { .. }
+        | Request::StreamUrl { .. }
+        | Request::RemoteThumbnail { .. } => Capability::Admin,
     }
 }
 
@@ -156,7 +158,8 @@ pub fn authorize(
     let target = path.map(|p| p.display().to_string());
     let decision = decide(db, protected, node_id, cap, path);
     // Häufige, erlaubte Leserechte nicht protokollieren (der Abgleich läuft dauernd).
-    let noisy = cap == Capability::CatalogRead && decision.is_ok();
+    // Ebenso erlaubte Vorschaubild-Abrufe (eine Galerie fragt Hunderte auf einmal an).
+    let noisy = decision.is_ok() && (cap == Capability::CatalogRead || operation == "thumb.get");
     if !noisy {
         let detail = decision.as_ref().err().map(|e| e.to_string());
         let _ = db.audit(node_id, operation, target.as_deref(), decision.is_ok(), detail.as_deref());

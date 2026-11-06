@@ -277,6 +277,19 @@ pub enum Request {
     Metadata {
         path: PathBuf,
     },
+    /// Lokale Streaming-Adresse (http://127.0.0.1:…) für eine Datei – auch von anderen Geräten.
+    /// Ziel wie bei `Download`: Ticket, Hash-Präfix, Name oder Freigabe/Pfad.
+    StreamUrl {
+        target: String,
+    },
+    /// Vorschaubild einer Datei in der Freigabe eines gekoppelten Geräts (braucht dort files.read).
+    RemoteThumbnail {
+        device: String,
+        share: String,
+        path: String,
+        #[serde(default)]
+        size: crate::media::ThumbSize,
+    },
 }
 
 /// Eine angehaltene Fernoperation, die auf Bestätigung wartet.
@@ -420,6 +433,7 @@ pub enum Response {
         items: Vec<ApprovalInfo>,
     },
     Thumbnail(crate::media::Thumbnail),
+    StreamUrl(crate::stream::StreamInfo),
     Metadata(crate::media::MediaInfo),
     FileOpDone {
         job: u64,

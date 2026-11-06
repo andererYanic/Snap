@@ -57,6 +57,8 @@ pub struct DaemonInner {
     pub(crate) remote_ops: crate::remote_ops::RemoteOpsState,
     /// Vorschaubilder (Cache im Datenordner).
     pub(crate) thumbs: crate::media::ThumbCache,
+    /// Lokaler Streaming-Server (`None`, falls der Port nicht gebunden werden konnte).
+    pub(crate) stream: Option<Arc<crate::stream::StreamServer>>,
 }
 
 impl DaemonInner {
@@ -211,6 +213,13 @@ impl Daemon {
                     .accept(PAIR_ALPN, PairingProtocol { ctx: pairing })
                     .accept(crate::live::LIVE_ALPN, crate::live::LiveProtocol { mgr: live })
                     .accept(crate::remote_ops::OPS_ALPN, crate::remote_ops::OpsProtocol { inner: ops_slot.clone() })
+                    .accept(
+                        crate::remote_thumbs::THUMB_ALPN,
+                        crate::remote_thumbs::ThumbProtocol {
+                            inner: ops_slot.clone(),
+                            slots: Arc::new(tokio::sync::Semaphore::new(4)),
+                        },
+                    )
             },
         )
         .await?;
@@ -231,6 +240,13 @@ impl Daemon {
         };
 
         let config_trash_dir = config.trash_dir.clone();
+        let (stream, stream_listener) = match crate::stream::StreamServer::bind(config.stream_port).await {
+            Ok((s, l)) => (Some(s), Some(l)),
+            Err(e) => {
+                tracing::warn!("Streaming-Server nicht gestartet (Port {}): {e}", config.stream_port);
+                (None, None)
+            }
+        };
         let thumbs = crate::media::ThumbCache::new(config.thumb_dir(), config.thumb_cache_bytes);
         let inner = Arc::new(DaemonInner {
             config,
@@ -249,6 +265,7 @@ impl Daemon {
             index,
             remote_ops: Default::default(),
             thumbs,
+            stream: stream.clone(),
         });
         let _ = ops_slot.set(Arc::downgrade(&inner));
         if inner.config.live_connections {
@@ -264,12 +281,37 @@ impl Daemon {
         let shares = tokio::spawn(start_shares(inner.clone()));
         let pins = tokio::spawn(crate::pins::run_pin_loop(inner.clone()));
         let indexer = tokio::spawn(crate::indexer::run_indexer(inner.clone()));
+        let streamer = match (stream, stream_listener) {
+            (Some(s), Some(l)) => tokio::spawn(crate::stream::serve(s, l, Arc::downgrade(&inner))),
+            _ => tokio::spawn(async {}),
+        };
+        let stream_cache = tokio::spawn({
+            let inner = inner.clone();
+            async move {
+                loop {
+                    if let Err(e) = crate::stream::enforce_cache_limit(&inner, inner.config.stream_cache_bytes).await {
+                        tracing::debug!("Streaming-Cache nicht aufgeräumt: {e:#}");
+                    }
+                    tokio::time::sleep(Duration::from_secs(600)).await;
+                }
+            }
+        });
         {
             // Vorschaubild-Cache beim Start auf die eingestellte Größe bringen.
             let (dir, max) = (inner.config.thumb_dir(), inner.config.thumb_cache_bytes);
             tokio::task::spawn_blocking(move || crate::media::prune(&dir, max));
         }
-        daemon.tasks.lock().unwrap().extend([ipc, worker, pruner, periodic, shares, pins, indexer]);
+        daemon.tasks.lock().unwrap().extend([
+            ipc,
+            worker,
+            pruner,
+            periodic,
+            shares,
+            pins,
+            indexer,
+            streamer,
+            stream_cache,
+        ]);
 
         Ok(daemon)
     }

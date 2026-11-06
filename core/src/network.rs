@@ -81,6 +81,8 @@ pub struct P2pNetwork {
 
 /// Tag-Präfix für freigegebene Dateien. Getaggte Blobs überleben die Garbage Collection.
 const PUBLISH_TAG_PREFIX: &str = "snap/pub/";
+/// Tags für den Streaming-Cache (auch unvollständige Blobs).
+const STREAM_TAG_PREFIX: &str = "snap/stream/";
 
 impl P2pNetwork {
     /// `extra_protocols` registriert zusätzliche Protokolle (Ledger, Pairing) am Router.
@@ -261,6 +263,106 @@ impl P2pNetwork {
         conns.retain(|_, c| c.close_reason().is_none());
         conns.insert(addr.id, conn.clone());
         Ok(conn)
+    }
+
+    /// Verifizierte Größe eines Blobs; lädt bei Bedarf nur das letzte Stück vom Gerät
+    /// (BLAKE3/bao beweist die Größe).
+    pub async fn stream_size(&self, addr: &EndpointAddr, hash: Hash) -> Result<u64, FetchError> {
+        if let Some(s) = self.validated_size(hash).await {
+            return Ok(s);
+        }
+        use iroh_blobs::protocol::{ChunkRanges, ChunkRangesExt};
+        self.ensure_chunks(addr, hash, ChunkRanges::last_chunk()).await?;
+        self.validated_size(hash)
+            .await
+            .ok_or_else(|| FetchError::Rejected("Gerät hat die Größe nicht nachgewiesen".into()))
+    }
+
+    async fn validated_size(&self, hash: Hash) -> Option<u64> {
+        self.store.observe(hash).await.ok().and_then(|bf| bf.validated_size())
+    }
+
+    /// Stellt sicher, dass die Bytes `[start, end)` lokal (verifiziert) vorliegen; fehlende
+    /// Stücke werden vom Gerät geholt. Bereits vorhandene Teile werden nicht erneut übertragen.
+    pub async fn ensure_range(&self, addr: &EndpointAddr, hash: Hash, start: u64, end: u64) -> Result<(), FetchError> {
+        use iroh_blobs::protocol::{ChunkRanges, ChunkRangesExt};
+        if end <= start {
+            return Ok(());
+        }
+        self.ensure_chunks(addr, hash, ChunkRanges::bytes(start..end)).await
+    }
+
+    async fn ensure_chunks(
+        &self,
+        addr: &EndpointAddr,
+        hash: Hash,
+        ranges: iroh_blobs::protocol::ChunkRanges,
+    ) -> Result<(), FetchError> {
+        use iroh_blobs::protocol::{ChunkRangesSeq, GetRequest};
+        let request = GetRequest::new(hash, ChunkRangesSeq::from_ranges([ranges]));
+        let local = self.store.remote().local_for_request(request).await.map_err(|e| FetchError::Local(e.into()))?;
+        if local.is_complete() {
+            return Ok(());
+        }
+        if addr.id == self.endpoint.id() {
+            return Err(FetchError::Rejected("Daten liegen auf diesem Gerät nicht vor".into()));
+        }
+        let conn = self.connection(addr).await?;
+        match self.store.remote().execute_get(conn.clone(), local.missing()).complete().await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if conn.close_reason().is_some() {
+                    self.conns.lock().unwrap().remove(&addr.id);
+                    Err(FetchError::Interrupted(e.to_string()))
+                } else {
+                    Err(FetchError::Rejected(e.to_string()))
+                }
+            }
+        }
+    }
+
+    /// Liest lokal vorliegende, verifizierte Bytes `[start, end)`.
+    pub async fn read_local(&self, hash: Hash, start: u64, end: u64) -> Result<Vec<u8>> {
+        use iroh_blobs::api::proto::ExportRangesItem;
+        use n0_future::StreamExt;
+        let len = usize::try_from(end.saturating_sub(start))?;
+        let mut out = vec![0u8; len];
+        let mut filled = 0usize;
+        let mut stream = std::pin::pin!(self.store.export_ranges(hash, start..end).stream());
+        while let Some(item) = stream.next().await {
+            match item {
+                ExportRangesItem::Data(leaf) => {
+                    let (ls, le) = (leaf.offset, leaf.offset + leaf.data.len() as u64);
+                    let (a, b) = (ls.max(start), le.min(end));
+                    if a < b {
+                        out[(a - start) as usize..(b - start) as usize]
+                            .copy_from_slice(&leaf.data[(a - ls) as usize..(b - ls) as usize]);
+                        filled += (b - a) as usize;
+                    }
+                }
+                ExportRangesItem::Size(_) => {}
+                ExportRangesItem::Error(e) => anyhow::bail!("Lesen fehlgeschlagen: {e}"),
+            }
+        }
+        anyhow::ensure!(filled == len, "Bereich liegt nicht vollständig vor ({filled}/{len} Bytes)");
+        Ok(out)
+    }
+
+    /// Hält gestreamte (auch unvollständige) Blobs über die GC hinaus (Streaming-Cache).
+    pub async fn tag_stream(&self, hash: Hash) -> Result<()> {
+        self.store.tags().set(format!("{STREAM_TAG_PREFIX}{hash}"), HashAndFormat::raw(hash)).await?;
+        Ok(())
+    }
+
+    /// Gibt einen gestreamten Blob für die GC frei.
+    pub async fn untag_stream(&self, hash: Hash) -> Result<()> {
+        self.store.tags().delete(format!("{STREAM_TAG_PREFIX}{hash}")).await?;
+        Ok(())
+    }
+
+    /// Lokal vorliegende Bytes eines Blobs (für die Cache-Größe).
+    pub async fn local_bytes(&self, hash: Hash) -> u64 {
+        self.store.observe(hash).await.map(|bf| bf.total_bytes()).unwrap_or(0)
     }
 
     async fn has_complete(&self, hash: Hash) -> bool {

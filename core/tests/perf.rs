@@ -642,3 +642,93 @@ fn media_thumbnails() {
     }
     report("media: Metadaten (EXIF + Abmessungen)", n, t.elapsed());
 }
+
+#[test]
+#[ignore]
+fn streaming() {
+    use space_core::ipc::{Request, Response};
+    use space_core::{Config, Daemon};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let mk = |n: &str| {
+            let mut c = Config::portable(&dir.path().join(n));
+            c.use_relay = false;
+            c.device_name = n.into();
+            c.live_connections = false;
+            c.stream_cache_bytes = 1 << 30;
+            c
+        };
+        let share = dir.path().join("Filme");
+        std::fs::create_dir_all(&share).unwrap();
+        const SIZE: usize = 64 * 1024 * 1024;
+        for name in ["a.mkv", "b.mkv"] {
+            let data: Vec<u8> =
+                (0..SIZE as u32).map(|i| (i.wrapping_mul(2654435761) >> (13 + name.len())) as u8).collect();
+            std::fs::write(share.join(name), data).unwrap();
+        }
+        let pc = Daemon::start_loopback(mk("PC")).await.unwrap();
+        let phone = Daemon::start_loopback(mk("Handy")).await.unwrap();
+        let code = match pc.request(Request::PairInvite).await {
+            Response::PairInvite { code, .. } => code,
+            other => panic!("{other:?}"),
+        };
+        assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
+        pc.request(Request::ShareAdd { path: share.clone(), name: Some("Filme".into()), devices: None }).await;
+        loop {
+            phone.request(Request::Sync).await;
+            if let Response::Catalog { remote, .. } = phone.request(Request::List).await {
+                if remote.len() >= 2 {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let url = |t: &str| {
+            let phone = phone.clone();
+            let t = t.to_string();
+            async move {
+                match phone.request(Request::StreamUrl { target: t }).await {
+                    Response::StreamUrl(i) => i.url,
+                    other => panic!("{other:?}"),
+                }
+            }
+        };
+        async fn fetch(url: &str, range: Option<(u64, u64)>) -> (Duration, Duration, usize) {
+            let rest = &url["http://".len()..];
+            let (hostport, path) = rest.split_at(rest.find('/').unwrap());
+            let t = Instant::now();
+            let mut s = tokio::net::TcpStream::connect(hostport).await.unwrap();
+            let r = range.map(|(a, b)| format!("Range: bytes={a}-{b}\r\n")).unwrap_or_default();
+            s.write_all(format!("GET {path} HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\n{r}\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut first = [0u8; 1];
+            s.read_exact(&mut first).await.unwrap();
+            let ttfb = t.elapsed();
+            let mut buf = Vec::new();
+            s.read_to_end(&mut buf).await.unwrap();
+            (ttfb, t.elapsed(), buf.len() + 1)
+        }
+        let a = url("Filme/a.mkv").await;
+        let (ttfb, _, _) = fetch(&a, Some((32 << 20, (33 << 20) - 1))).await;
+        println!("stream: Spulen in die Mitte, erstes Byte (kalt) {:>8.2} ms", ttfb.as_secs_f64() * 1e3);
+        let (ttfb, total, n) = fetch(&a, None).await;
+        println!(
+            "stream: 64 MiB am Stück (kalt)       erstes Byte {:>6.2} ms, {:>7.1} MB/s",
+            ttfb.as_secs_f64() * 1e3,
+            n as f64 / total.as_secs_f64() / 1e6
+        );
+        let (ttfb, total, n) = fetch(&a, None).await;
+        println!(
+            "stream: 64 MiB am Stück (aus Cache)  erstes Byte {:>6.2} ms, {:>7.1} MB/s",
+            ttfb.as_secs_f64() * 1e3,
+            n as f64 / total.as_secs_f64() / 1e6
+        );
+        let (_, rss) = rss_mib();
+        println!("stream: RAM-Spitze Testprozess (2 Daemons) {rss:.0} MiB");
+        pc.shutdown().await;
+        phone.shutdown().await;
+    });
+}

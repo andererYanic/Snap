@@ -177,6 +177,13 @@ mod permissions {
             Request::TrashEmpty,
             Request::Thumbnail { path: "/etc/passwd".into(), size: Default::default() },
             Request::Metadata { path: "/etc/passwd".into() },
+            Request::StreamUrl { target: "abcdef".into() },
+            Request::RemoteThumbnail {
+                device: "x".into(),
+                share: "F".into(),
+                path: "a.jpg".into(),
+                size: Default::default(),
+            },
         ]
     }
 
