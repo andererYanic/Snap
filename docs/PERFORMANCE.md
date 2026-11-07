@@ -447,6 +447,21 @@ Messung `core/tests/perf.rs` (Release, Index mit 1 Mio. Einträgen, kalter Cache
   hält zusätzlich die URIs im Speicher und lädt die ersten 40 Bilder der Zeitachse vorab.
 - Animationen laufen über Reanimated auf dem UI-Thread, also unabhängig von JS-Last.
 
+## Review 20 – Archive entpacken (4e, 2026-11-07)
+
+Messung `core/tests/perf.rs` → `archive_extract` (Release):
+
+| Messung | Ergebnis |
+|---|---|
+| ZIP mit 5 000 Dateien à 2 KB (50 Ordner) | **81 ms** (16 µs je Datei) |
+| ZIP mit einer Datei, 200 MB (schwach komprimierbar) | **1,0 s** (≈ 206 MB/s) |
+
+- Entpacken läuft als Auftrag im Hintergrund (`spawn_blocking`) mit Fortschritt und Abbruch;
+  die Oberfläche wartet nie darauf. Prüfungen (Pfade, Grenzen) kosten neben dem Schreiben kaum
+  etwas.
+- Auf Telefonen rechnen wir grob mit einem Drittel bis einem Fünftel – also etwa 40–70 MB/s.
+- Geschrieben wird in 64-KiB-Blöcken; der Speicherbedarf bleibt unabhängig von der Archivgröße.
+
 ## Review 21 – Android: Ruckler und träge Menüs (4h, 2026-11-07)
 
 Anlass: Der Nutzer meldete starke Bildeinbrüche und träge Menüs. Neue Messung im Emulator-CI

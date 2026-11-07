@@ -1079,3 +1079,46 @@ fn backup_engine() {
         println!("backup: RAM-Spitze Testprozess {hwm:.0} MiB");
     });
 }
+
+#[test]
+#[ignore]
+fn archive_extract() {
+    use space_core::fileops::archive::{extract, Limits};
+    use space_core::fileops::ops::Progress;
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let limits = Limits { max_entries: 100_000, max_bytes: 1 << 40, max_ratio: 1000 };
+    // 1) Viele kleine Dateien: 5 000 Einträge à 2 KB (typisch: Fotos-/Belege-Archiv)
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opt = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let body: Vec<u8> = (0..2048u32).map(|i| (i * 7 % 251) as u8).collect();
+    for i in 0..5000 {
+        w.start_file(format!("ordner{}/datei-{i:05}.txt", i % 50), opt).unwrap();
+        w.write_all(&body).unwrap();
+    }
+    let small = dir.path().join("klein.zip");
+    std::fs::write(&small, w.finish().unwrap().into_inner()).unwrap();
+    let t = Instant::now();
+    let x = extract(&small, None, Some(limits), &Progress::default()).unwrap();
+    report("entpacken: ZIP 5 000 Dateien à 2 KB", 5000, t.elapsed());
+    assert_eq!(x.files, 5000);
+    // 2) Eine große Datei: 200 MB, schwach komprimierbar
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    w.start_file("gross.bin", opt).unwrap();
+    let mut chunk = vec![0u8; 1 << 20];
+    let mut seed = 1u64;
+    for _ in 0..200 {
+        for b in chunk.iter_mut() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *b = (seed >> 59) as u8; // 5 Bit Zufall: komprimierbar, aber nicht trivial
+        }
+        w.write_all(&chunk).unwrap();
+    }
+    let big = dir.path().join("gross.zip");
+    std::fs::write(&big, w.finish().unwrap().into_inner()).unwrap();
+    let t = Instant::now();
+    let x = extract(&big, None, Some(limits), &Progress::default()).unwrap();
+    let d = t.elapsed();
+    report("entpacken: ZIP 1 Datei 200 MB", 1, d);
+    println!("entpacken: {:.0} MB/s", x.bytes as f64 / 1e6 / d.as_secs_f64());
+}
