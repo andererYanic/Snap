@@ -1,3 +1,4 @@
+import { locale, t } from "./i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -129,7 +130,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
 
   // ------------------------------------------------------------ Sortierung, Auswahl
   const sorted = useMemo(() => {
-    const coll = new Intl.Collator("de", { numeric: true, sensitivity: "base" });
+    const coll = new Intl.Collator(locale, { numeric: true, sensitivity: "base" });
     const v = [...items];
     v.sort((a, b) => {
       if (a.dir !== b.dir) return a.dir ? -1 : 1;
@@ -180,15 +181,15 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
 
   const trash = (list: Item[]) => {
     if (!list.length) return;
-    run(api.trash(list.map((i) => i.path)), `${list.length === 1 ? `„${list[0].name}“` : `${list.length} Elemente`} in den Papierkorb verschoben – Strg+Z macht es rückgängig.`);
+    run(api.trash(list.map((i) => i.path)), list.length === 1 ? t("„{name}“ in den Papierkorb verschoben – Strg+Z macht es rückgängig.", { name: list[0].name }) : t("{n} Elemente in den Papierkorb verschoben – Strg+Z macht es rückgängig.", { n: list.length }));
   };
 
   const deleteForever = (list: Item[]) => list.length && run(api.deletePermanently(list.map((i) => i.path)));
 
   const newFolder = async () => {
-    let name = "Neuer Ordner";
+    let name = t("Neuer Ordner");
     const names = new Set(items.map((i) => i.name));
-    for (let n = 2; names.has(name); n++) name = `Neuer Ordner (${n})`;
+    for (let n = 2; names.has(name); n++) name = `${t("Neuer Ordner")} (${n})`;
     try {
       await api.mkdir(tab.path, name);
       setTimeout(() => {
@@ -257,7 +258,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
 
   // ------------------------------------------------------------ Darstellung
   const crumbs = useMemo(() => {
-    if (isTrash) return [{ name: "Papierkorb", path: "trash:" }];
+    if (isTrash) return [{ name: t("Papierkorb"), path: "trash:" }];
     const parts = tab.path.split("/").filter(Boolean);
     const out = [{ name: "/", path: "/" }];
     let acc = "";
@@ -267,7 +268,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
     }
     if (tab.path.startsWith(home) && home !== "/") {
       const hp = home.split("/").filter(Boolean).length;
-      return [{ name: "Persönlicher Ordner", path: home }, ...out.slice(hp + 1)];
+      return [{ name: t("Persönlicher Ordner"), path: home }, ...out.slice(hp + 1)];
     }
     return out;
   }, [tab.path, home, isTrash]);
@@ -320,10 +321,10 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
   return (
     <>
       <div className="toolbar">
-        <button className="iconbtn" disabled={tab.index === 0} onClick={() => go(-1)} title="Zurück (Alt+←)"><Icon.back /></button>
-        <button className="iconbtn" disabled={tab.index >= tab.history.length - 1} onClick={() => go(1)} title="Vor (Alt+→)"><Icon.forward /></button>
-        <button className="iconbtn" disabled={isTrash || !parentOf(tab.path)} onClick={() => navigate("folder", parentOf(tab.path)!)} title="Übergeordneter Ordner (Alt+↑)"><Icon.up /></button>
-        <button className="iconbtn" onClick={load} title="Aktualisieren (F5)"><Icon.refresh /></button>
+        <button className="iconbtn" disabled={tab.index === 0} onClick={() => go(-1)} title={t("Zurück (Alt+←)")}><Icon.back /></button>
+        <button className="iconbtn" disabled={tab.index >= tab.history.length - 1} onClick={() => go(1)} title={t("Vor (Alt+→)")}><Icon.forward /></button>
+        <button className="iconbtn" disabled={isTrash || !parentOf(tab.path)} onClick={() => navigate("folder", parentOf(tab.path)!)} title={t("Übergeordneter Ordner (Alt+↑)")}><Icon.up /></button>
+        <button className="iconbtn" onClick={load} title={t("Aktualisieren (F5)")}><Icon.refresh /></button>
         <div className="address" onClick={() => !isTrash && setEditAddress(true)}>
           {editAddress ? (
             <input
@@ -361,7 +362,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
           <Icon.search />
           <input
             ref={searchRef}
-            placeholder={isTrash ? "Suche" : "Überall suchen"}
+            placeholder={isTrash ? t("Suche") : t("Überall suchen")}
             value={query}
             disabled={isTrash}
             onChange={(e) => setQuery(e.target.value)}
@@ -390,23 +391,23 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
           </>
         ) : (
           <>
-            <button className="cmd" disabled={searching !== null} onClick={newFolder}><Icon.newfolder /> Neu</button>
+            <button className="cmd" disabled={searching !== null} onClick={newFolder}><Icon.newfolder /> {t("Neu")}</button>
             <span className="cmdsep" />
-            <button className="cmd" disabled={!selected.length} onClick={() => setClip({ mode: "cut", paths: selected.map((i) => i.path) })} title="Ausschneiden (Strg+X)"><Icon.cut /></button>
-            <button className="cmd" disabled={!selected.length} onClick={() => setClip({ mode: "copy", paths: selected.map((i) => i.path) })} title="Kopieren (Strg+C)"><Icon.copy /></button>
-            <button className="cmd" disabled={!canPaste} onClick={paste} title="Einfügen (Strg+V)"><Icon.paste /></button>
-            <button className="cmd" disabled={selected.length !== 1} onClick={() => setRenaming(selected[0]?.path)} title="Umbenennen (F2)"><Icon.rename /></button>
-            <button className="cmd" disabled={!selected.length} onClick={() => trash(selected)} title="In den Papierkorb (Entf)"><Icon.trash /></button>
+            <button className="cmd" disabled={!selected.length} onClick={() => setClip({ mode: "cut", paths: selected.map((i) => i.path) })} title={t("Ausschneiden (Strg+X)")}><Icon.cut /></button>
+            <button className="cmd" disabled={!selected.length} onClick={() => setClip({ mode: "copy", paths: selected.map((i) => i.path) })} title={t("Kopieren (Strg+C)")}><Icon.copy /></button>
+            <button className="cmd" disabled={!canPaste} onClick={paste} title={t("Einfügen (Strg+V)")}><Icon.paste /></button>
+            <button className="cmd" disabled={selected.length !== 1} onClick={() => setRenaming(selected[0]?.path)} title={t("Umbenennen (F2)")}><Icon.rename /></button>
+            <button className="cmd" disabled={!selected.length} onClick={() => trash(selected)} title={t("In den Papierkorb (Entf)")}><Icon.trash /></button>
             <span className="cmdsep" />
-            <button className="cmd" onClick={undo} title="Rückgängig (Strg+Z)"><Icon.undo /> Rückgängig</button>
+            <button className="cmd" onClick={undo} title={t("Rückgängig (Strg+Z)")}><Icon.undo /> {t("Rückgängig")}</button>
           </>
         )}
         <span className="spacer" />
-        <button className={`iconbtn${showHidden ? " on" : ""}`} onClick={() => { localStorage.setItem("hidden", showHidden ? "0" : "1"); setShowHidden(!showHidden); }} title="Versteckte Dateien">
+        <button className={`iconbtn${showHidden ? " on" : ""}`} onClick={() => { localStorage.setItem("hidden", showHidden ? "0" : "1"); setShowHidden(!showHidden); }} title={t("Versteckte Dateien")}>
           <Icon.hidden />
         </button>
-        <button className={`iconbtn${view === "details" ? " on" : ""}`} onClick={() => { setView("details"); localStorage.setItem("view", "details"); }} title="Details"><Icon.list /></button>
-        <button className={`iconbtn${view === "grid" ? " on" : ""}`} onClick={() => { setView("grid"); localStorage.setItem("view", "grid"); }} title="Kacheln"><Icon.gridview /></button>
+        <button className={`iconbtn${view === "details" ? " on" : ""}`} onClick={() => { setView("details"); localStorage.setItem("view", "details"); }} title={t("Details")}><Icon.list /></button>
+        <button className={`iconbtn${view === "grid" ? " on" : ""}`} onClick={() => { setView("grid"); localStorage.setItem("view", "grid"); }} title={t("Kacheln")}><Icon.gridview /></button>
       </div>
 
       <div
@@ -421,7 +422,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
         onDrop={(e) => dropInto(e, tab.path)}
       >
         {error ? (
-          <div className="empty"><div><div className="big">Ordner nicht lesbar</div>{error}</div></div>
+          <div className="empty"><div><div className="big">{t("Ordner nicht lesbar")}</div>{error}</div></div>
         ) : !loading && sorted.length === 0 ? (
           <div className="empty">
             <div><div className="big">{searching !== null ? "Keine Treffer" : isTrash ? "Der Papierkorb ist leer" : "Dieser Ordner ist leer"}</div></div>
@@ -430,7 +431,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
           <table className="details">
             <colgroup><col style={{ width: "52%" }} /><col style={{ width: "22%" }} /><col style={{ width: "13%" }} /><col style={{ width: "13%" }} /></colgroup>
             <thead>
-              <tr>{header("name", "Name")}{header("mtime", isTrash ? "Gelöscht am" : "Geändert")}<th>Art</th>{header("size", "Größe")}</tr>
+              <tr>{header("name", t("Name"))}{header("mtime", isTrash ? t("Gelöscht am") : t("Geändert"))}<th>{t("Art")}</th>{header("size", t("Größe"))}</tr>
             </thead>
             <tbody>
               {sorted.map((it) => (
@@ -442,7 +443,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
                     </div>
                   </td>
                   <td>{formatDate(it.mtime)}</td>
-                  <td>{it.dir ? "Ordner" : it.name.includes(".") ? `${it.name.slice(it.name.lastIndexOf(".") + 1).toUpperCase()}-Datei` : "Datei"}</td>
+                  <td>{it.dir ? t("Ordner") : it.name.includes(".") ? t("{ext}-Datei", { ext: it.name.slice(it.name.lastIndexOf(".") + 1).toUpperCase() }) : t("Datei")}</td>
                   <td>{it.dir ? "" : humanSize(it.size)}</td>
                 </tr>
               ))}
@@ -467,9 +468,9 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
       </div>
 
       <div className="statusbar">
-        <span>{sorted.length} {sorted.length === 1 ? "Element" : "Elemente"}</span>
-        {selected.length > 0 && <span>{selected.length} ausgewählt{totalSel ? ` · ${humanSize(totalSel)}` : ""}</span>}
-        {clip && <span>{clip.paths.length} in der Zwischenablage ({clip.mode === "copy" ? "kopieren" : "verschieben"})</span>}
+        <span>{sorted.length === 1 ? t("1 Element") : t("{n} Elemente", { n: sorted.length })}</span>
+        {selected.length > 0 && <span>{t("{n} ausgewählt", { n: selected.length })}{totalSel ? ` · ${humanSize(totalSel)}` : ""}</span>}
+        {clip && <span>{clip.mode === "copy" ? t("{n} in der Zwischenablage (kopieren)", { n: clip.paths.length }) : t("{n} in der Zwischenablage (verschieben)", { n: clip.paths.length })}</span>}
         <span className="spacer" />
         {progress && <div className="progress"><div style={{ width: `${Math.round(progress.pct * 100)}%` }} /></div>}
       </div>
@@ -478,28 +479,28 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
           {menu.on && !isTrash && (
             <>
-              <button onClick={() => open(menu.on!)}><Icon.open /> Öffnen</button>
-              {menu.on.dir && <button onClick={() => openTab("folder", menu.on!.path)}><Icon.plus /> In neuem Tab öffnen</button>}
-              {searching !== null && <button onClick={() => navigate("folder", parentOf(menu.on!.path) ?? "/")}><Icon.up /> Speicherort öffnen</button>}
+              <button onClick={() => open(menu.on!)}><Icon.open /> {t("Öffnen")}</button>
+              {menu.on.dir && <button onClick={() => openTab("folder", menu.on!.path)}><Icon.plus /> {t("In neuem Tab öffnen")}</button>}
+              {searching !== null && <button onClick={() => navigate("folder", parentOf(menu.on!.path) ?? "/")}><Icon.up /> {t("Speicherort öffnen")}</button>}
               <hr />
-              <button onClick={() => setClip({ mode: "cut", paths: selected.map((i) => i.path) })}><Icon.cut /> Ausschneiden <span className="key">Strg+X</span></button>
-              <button onClick={() => setClip({ mode: "copy", paths: selected.map((i) => i.path) })}><Icon.copy /> Kopieren <span className="key">Strg+C</span></button>
-              <button disabled={selected.length !== 1} onClick={() => setRenaming(menu.on!.path)}><Icon.rename /> Umbenennen <span className="key">F2</span></button>
+              <button onClick={() => setClip({ mode: "cut", paths: selected.map((i) => i.path) })}><Icon.cut /> {t("Ausschneiden")} <span className="key">{t("Strg+X")}</span></button>
+              <button onClick={() => setClip({ mode: "copy", paths: selected.map((i) => i.path) })}><Icon.copy /> {t("Kopieren")} <span className="key">{t("Strg+C")}</span></button>
+              <button disabled={selected.length !== 1} onClick={() => setRenaming(menu.on!.path)}><Icon.rename /> {t("Umbenennen")} <span className="key">F2</span></button>
               <hr />
-              <button onClick={() => trash(selected)}><Icon.trash /> In den Papierkorb <span className="key">Entf</span></button>
-              <button className="danger" onClick={() => deleteForever(selected)}><Icon.trash /> Endgültig löschen <span className="key">Umschalt+Entf</span></button>
+              <button onClick={() => trash(selected)}><Icon.trash /> {t("In den Papierkorb")} <span className="key">{t("Entf")}</span></button>
+              <button className="danger" onClick={() => deleteForever(selected)}><Icon.trash /> {t("Endgültig löschen")} <span className="key">{t("Umschalt+Entf")}</span></button>
             </>
           )}
           {menu.on && isTrash && (
-            <button onClick={() => selected.forEach((i) => i.trash && run(api.trashRestore(i.trash.id), "Wiederhergestellt."))}><Icon.restore /> Wiederherstellen</button>
+            <button onClick={() => selected.forEach((i) => i.trash && run(api.trashRestore(i.trash.id), "Wiederhergestellt."))}><Icon.restore /> {t("Wiederherstellen")}</button>
           )}
           {!menu.on && !isTrash && (
             <>
-              <button disabled={searching !== null} onClick={newFolder}><Icon.newfolder /> Neuer Ordner <span className="key">Strg+Umschalt+N</span></button>
-              <button disabled={!canPaste} onClick={paste}><Icon.paste /> Einfügen <span className="key">Strg+V</span></button>
+              <button disabled={searching !== null} onClick={newFolder}><Icon.newfolder /> {t("Neuer Ordner")} <span className="key">{t("Strg+Umschalt+N")}</span></button>
+              <button disabled={!canPaste} onClick={paste}><Icon.paste /> {t("Einfügen")} <span className="key">{t("Strg+V")}</span></button>
               <hr />
-              <button onClick={undo}><Icon.undo /> Rückgängig <span className="key">Strg+Z</span></button>
-              <button onClick={load}><Icon.refresh /> Aktualisieren <span className="key">F5</span></button>
+              <button onClick={undo}><Icon.undo /> {t("Rückgängig")} <span className="key">{t("Strg+Z")}</span></button>
+              <button onClick={load}><Icon.refresh /> {t("Aktualisieren")} <span className="key">F5</span></button>
             </>
           )}
         </ContextMenu>

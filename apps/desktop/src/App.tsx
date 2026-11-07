@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, baseName, errorText, onDaemonEvent, onDaemonStatus, type DaemonEvent, type Place } from "./api";
@@ -28,14 +29,14 @@ export interface Toast {
 let nextId = 1;
 export const newTab = (kind: Tab["kind"], path: string): Tab => ({ id: nextId++, kind, path, history: [path], index: 0 });
 
-function tabTitle(t: Tab, home: string): string {
-  if (t.kind === "photos") return "Fotos";
-  if (t.kind === "trash") return "Papierkorb";
-  if (t.kind === "devices") return "Geräte";
-  if (t.kind === "backups") return "Sicherungen";
-  if (t.kind === "settings") return "Einstellungen";
-  if (t.path === home) return "Persönlicher Ordner";
-  return baseName(t.path);
+function tabTitle(tb: Tab, home: string): string {
+  if (tb.kind === "photos") return t("Fotos");
+  if (tb.kind === "trash") return t("Papierkorb");
+  if (tb.kind === "devices") return t("Geräte");
+  if (tb.kind === "backups") return t("Sicherungen");
+  if (tb.kind === "settings") return t("Einstellungen");
+  if (tb.path === home) return t("Persönlicher Ordner");
+  return baseName(tb.path);
 }
 
 export default function App() {
@@ -139,7 +140,7 @@ export default function App() {
         <div className="body center">
           <div className="card">
             <Icon.drive size={36} />
-            <h2>Der Snap-Dienst läuft nicht</h2>
+            <h2>{t("Der Snap-Dienst läuft nicht")}</h2>
             <p>
               Der Dienst hält Index, Sicherungen und Verbindungen zu deinen Geräten im Hintergrund aktuell –
               auch wenn dieses Fenster geschlossen ist.
@@ -155,7 +156,7 @@ export default function App() {
                   .finally(() => setStarting(false));
               }}
             >
-              {starting ? "Startet …" : "Dienst starten"}
+              {starting ? t("Startet …") : t("Dienst starten")}
             </button>
           </div>
         </div>
@@ -168,33 +169,33 @@ export default function App() {
     <div className="app">
       <TitleBar win={win}>
         <div className="tabs">
-          {tabs.map((t, i) => (
+          {tabs.map((tb, i) => (
             <div
-              key={t.id}
+              key={tb.id}
               className={`tab${i === active ? " active" : ""}`}
               onMouseDown={(e) => {
                 if (e.button === 1) closeTab(i);
                 else setActive(i);
               }}
-              title={t.kind === "folder" ? t.path : undefined}
+              title={tb.kind === "folder" ? tb.path : undefined}
             >
               {(() => {
-                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, folder: Icon.home }[t.kind];
+                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, folder: Icon.home }[tb.kind];
                 return <I />;
               })()}
-              <span className="label">{tabTitle(t, home)}</span>
+              <span className="label">{tabTitle(tb, home)}</span>
               <button
                 className="close"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => closeTab(i)}
-                aria-label="Tab schließen"
+                aria-label={t("Tab schließen")}
               >
                 <Icon.close size={12} />
               </button>
             </div>
           ))}
         </div>
-        <button className="newtab" onClick={() => openTab("folder", home)} title="Neuer Tab (Strg+T)">
+        <button className="newtab" onClick={() => openTab("folder", home)} title={t("Neuer Tab (Strg+T)")}>
           <Icon.plus />
         </button>
       </TitleBar>
@@ -243,9 +244,9 @@ function TitleBar({ win, children }: { win: ReturnType<typeof getCurrentWindow>;
       {children}
       <div className="drag" data-tauri-drag-region onDoubleClick={() => win.toggleMaximize()} />
       <div className="winbtns">
-        <button onClick={() => win.minimize()} aria-label="Minimieren"><Icon.min /></button>
-        <button onClick={() => win.toggleMaximize()} aria-label="Maximieren"><Icon.max size={14} /></button>
-        <button className="closewin" onClick={() => win.close()} aria-label="Schließen"><Icon.close /></button>
+        <button onClick={() => win.minimize()} aria-label={t("Minimieren")}><Icon.min /></button>
+        <button onClick={() => win.toggleMaximize()} aria-label={t("Maximieren")}><Icon.max size={14} /></button>
+        <button className="closewin" onClick={() => win.close()} aria-label={t("Schließen")}><Icon.close /></button>
       </div>
     </div>
   );
@@ -260,36 +261,36 @@ function Sidebar({ places, tab, onGo }: { places: Place[]; tab?: Tab; onGo: (k: 
         return (
           <button key={p.path} className={`navitem${is("folder", p.path) ? " active" : ""}`} onClick={() => onGo("folder", p.path)}>
             <I size={16} />
-            <span>{p.name}</span>
+            <span>{t(p.name)}</span>
           </button>
         );
       })}
-      <h4>Snap</h4>
+      <h4>{t("Snap")}</h4>
       <button className={`navitem${is("photos", "") ? " active" : ""}`} onClick={() => onGo("photos", "photos:")}>
         <Icon.photos size={16} />
-        <span>Fotos</span>
+        <span>{t("Fotos")}</span>
       </button>
       <button className={`navitem${is("trash", "") ? " active" : ""}`} onClick={() => onGo("trash", "trash:")}>
         <Icon.bin size={16} />
-        <span>Papierkorb</span>
+        <span>{t("Papierkorb")}</span>
       </button>
       <button className={`navitem${is("devices", "") ? " active" : ""}`} onClick={() => onGo("devices", "devices:")}>
         <Icon.devices size={16} />
-        <span>Geräte</span>
+        <span>{t("Geräte")}</span>
       </button>
       <button className={`navitem${is("backups", "") ? " active" : ""}`} onClick={() => onGo("backups", "backups:")}>
         <Icon.backup size={16} />
-        <span>Sicherungen</span>
+        <span>{t("Sicherungen")}</span>
       </button>
-      <h4>Dieser Computer</h4>
+      <h4>{t("Dieser Computer")}</h4>
       <button className={`navitem${is("folder", "/") ? " active" : ""}`} onClick={() => onGo("folder", "/")}>
         <Icon.drive size={16} />
-        <span>Dateisystem</span>
+        <span>{t("Dateisystem")}</span>
       </button>
       <div className="sidespacer" />
       <button className={`navitem${is("settings", "") ? " active" : ""}`} onClick={() => onGo("settings", "settings:")}>
         <Icon.settings size={16} />
-        <span>Einstellungen</span>
+        <span>{t("Einstellungen")}</span>
       </button>
     </nav>
   );

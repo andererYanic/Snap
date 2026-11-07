@@ -1,6 +1,7 @@
 // Typisierte Aufrufe der Rust-Befehle (siehe src-tauri/src/commands.rs).
 // Es gibt bewusst keinen allgemeinen Aufruf – jede Funktion entspricht genau einem Befehl.
 import { invoke } from "@tauri-apps/api/core";
+import { locale } from "./i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type NodeKind = "File" | "Dir" | "Symlink";
@@ -135,12 +136,12 @@ export function humanSize(n: number): string {
     v /= 1024;
     i++;
   }
-  return `${v.toLocaleString("de-DE", { maximumFractionDigits: v < 10 ? 1 : 0 })} ${u[i]}`;
+  return `${v.toLocaleString(locale, { maximumFractionDigits: v < 10 ? 1 : 0 })} ${u[i]}`;
 }
 
 export function formatDate(unix: number): string {
   if (!unix) return "";
-  return new Date(unix * 1000).toLocaleString("de-DE", {
+  return new Date(unix * 1000).toLocaleString(locale, {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

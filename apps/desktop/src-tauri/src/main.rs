@@ -4,6 +4,7 @@
 
 mod bridge;
 mod commands;
+mod i18n;
 
 use bridge::{percent_decode, Daemon};
 use space_core::ipc::{read_frame, write_frame, Envelope, Request, Response};
@@ -101,6 +102,7 @@ fn main() {
             commands::open_path,
             commands::start_daemon,
             commands::places,
+            commands::set_language,
             commands::devices,
             commands::peers,
             commands::pair_invite,

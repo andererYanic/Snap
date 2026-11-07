@@ -2,6 +2,7 @@
 //! bewusst keinen Befehl, der beliebige Anfragen durchreicht (siehe `bridge.rs`).
 
 use crate::bridge::{is_risky_to_open, ui_path, Daemon, UiError, UiResult};
+use crate::i18n::tr;
 use serde_json::Value;
 use space_core::fileops::jobs::FileOp;
 use space_core::fileops::ops::Conflict;
@@ -10,15 +11,15 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 /// Nativer Bestätigungsdialog (außerhalb der Web-Ansicht). `true` = bestätigt.
-async fn confirm(app: &AppHandle, title: &str, text: String, ok: &str) -> bool {
+async fn confirm(app: &AppHandle, title: String, text: String, ok: String) -> bool {
     let app = app.clone();
-    let (title, ok) = (title.to_string(), ok.to_string());
+    let cancel = tr("Abbrechen", &[]);
     tokio::task::spawn_blocking(move || {
         app.dialog()
             .message(text)
             .title(title)
             .kind(MessageDialogKind::Warning)
-            .buttons(MessageDialogButtons::OkCancelCustom(ok, "Abbrechen".into()))
+            .buttons(MessageDialogButtons::OkCancelCustom(ok, cancel))
             .blocking_show()
     })
     .await
@@ -48,7 +49,7 @@ fn summary(list: &[std::path::PathBuf]) -> String {
         })
         .collect();
     if list.len() > 5 {
-        s.push(format!("… und {} weitere", list.len() - 5));
+        s.push(tr("… und {n} weitere", &[("n", &(list.len() - 5).to_string())]));
     }
     s.join("\n")
 }
@@ -153,12 +154,16 @@ pub async fn trash_restore(d: State<'_, Daemon>, id: String) -> UiResult<Value> 
 #[tauri::command]
 pub async fn delete_permanently(app: AppHandle, d: State<'_, Daemon>, items: Vec<String>) -> UiResult<Value> {
     let list = paths(items)?;
-    let text = format!(
-        "{} endgültig löschen? Das kann nicht rückgängig gemacht werden.\n\n{}",
-        if list.len() == 1 { "Dieses Element".to_string() } else { format!("Diese {} Elemente", list.len()) },
-        summary(&list)
-    );
-    if !confirm(&app, "Endgültig löschen", text, "Endgültig löschen").await {
+    let question = if list.len() == 1 {
+        tr("Dieses Element endgültig löschen? Das kann nicht rückgängig gemacht werden.", &[])
+    } else {
+        tr(
+            "Diese {n} Elemente endgültig löschen? Das kann nicht rückgängig gemacht werden.",
+            &[("n", &list.len().to_string())],
+        )
+    };
+    let text = format!("{question}\n\n{}", summary(&list));
+    if !confirm(&app, tr("Endgültig löschen", &[]), text, tr("Endgültig löschen", &[])).await {
         return Err(cancelled());
     }
     file_op(&d, FileOp::Delete { paths: list }).await
@@ -166,8 +171,8 @@ pub async fn delete_permanently(app: AppHandle, d: State<'_, Daemon>, items: Vec
 
 #[tauri::command]
 pub async fn trash_empty(app: AppHandle, d: State<'_, Daemon>) -> UiResult<Value> {
-    let text = "Alle Elemente im Papierkorb endgültig löschen?".to_string();
-    if !confirm(&app, "Papierkorb leeren", text, "Leeren").await {
+    let text = tr("Alle Elemente im Papierkorb endgültig löschen?", &[]);
+    if !confirm(&app, tr("Papierkorb leeren", &[]), text, tr("Leeren", &[])).await {
         return Err(cancelled());
     }
     d.request(Request::TrashEmpty).await
@@ -183,11 +188,12 @@ pub async fn open_path(app: AppHandle, path: String) -> UiResult<()> {
         return Err(UiError::new("InvalidInput", "Nur Dateien lassen sich öffnen."));
     }
     if is_risky_to_open(&p, meta.permissions().mode()) {
-        let text = format!(
-            "„{}“ kann Programme ausführen. Nur öffnen, wenn die Datei aus einer vertrauenswürdigen Quelle stammt.",
-            summary(std::slice::from_ref(&p)).trim_start_matches("• ")
+        let name = summary(std::slice::from_ref(&p)).trim_start_matches("• ").to_string();
+        let text = tr(
+            "„{name}“ kann Programme ausführen. Nur öffnen, wenn die Datei aus einer vertrauenswürdigen Quelle stammt.",
+            &[("name", &name)],
         );
-        if !confirm(&app, "Datei öffnen?", text, "Trotzdem öffnen").await {
+        if !confirm(&app, tr("Datei öffnen?", &[]), text, tr("Trotzdem öffnen", &[])).await {
             return Err(cancelled());
         }
     }
@@ -299,11 +305,11 @@ pub async fn pair_join(d: State<'_, Daemon>, code: String) -> UiResult<Value> {
 
 #[tauri::command]
 pub async fn pair_remove(app: AppHandle, d: State<'_, Daemon>, device: String, name: String) -> UiResult<Value> {
-    let text = format!(
-        "„{}“ entkoppeln? Das Gerät verliert alle Rechte und sieht deine Freigaben nicht mehr.",
-        short_text(&name, 80)
+    let text = tr(
+        "„{name}“ entkoppeln? Das Gerät verliert alle Rechte und sieht deine Freigaben nicht mehr.",
+        &[("name", &short_text(&name, 80))],
     );
-    if !confirm(&app, "Gerät entkoppeln", text, "Entkoppeln").await {
+    if !confirm(&app, tr("Gerät entkoppeln", &[]), text, tr("Entkoppeln", &[])).await {
         return Err(cancelled());
     }
     d.request(Request::PairRemove { device }).await
@@ -320,13 +326,18 @@ pub async fn pair_grant(
     folder: Option<String>,
 ) -> UiResult<Value> {
     let folder = folder.map(|f| ui_path(&f)).transpose()?;
-    let scope = folder.as_ref().map(|f| format!(" für {}", short_text(&f.to_string_lossy(), 120))).unwrap_or_default();
-    let text = format!(
-        "„{}“ das Recht „{}“{scope} geben?\n\nGib Rechte nur Geräten, die dir gehören.",
-        short_text(&name, 80),
-        short_text(&capability, 40)
-    );
-    if !confirm(&app, "Recht gewähren", text, "Gewähren").await {
+    let vars = [("name", short_text(&name, 80)), ("right", short_text(&capability, 40))];
+    let mut vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let folder_text = folder.as_ref().map(|f| short_text(&f.to_string_lossy(), 120));
+    let question = match &folder_text {
+        Some(f) => {
+            vars.push(("folder", f));
+            tr("„{name}“ das Recht „{right}“ für {folder} geben?", &vars)
+        }
+        None => tr("„{name}“ das Recht „{right}“ geben?", &vars),
+    };
+    let text = format!("{question}\n\n{}", tr("Gib Rechte nur Geräten, die dir gehören.", &[]));
+    if !confirm(&app, tr("Recht gewähren", &[]), text, tr("Gewähren", &[])).await {
         return Err(cancelled());
     }
     d.request(Request::PairGrant { device, capability, folder }).await
@@ -352,8 +363,8 @@ pub async fn ops_pending(d: State<'_, Daemon>) -> UiResult<Value> {
 
 #[tauri::command]
 pub async fn ops_approve(app: AppHandle, d: State<'_, Daemon>, id: i64, summary: String) -> UiResult<Value> {
-    let text = format!("Diese Änderung eines anderen Geräts zulassen?\n\n{}", short_text(&summary, 300));
-    if !confirm(&app, "Fernzugriff zulassen", text, "Zulassen").await {
+    let text = format!("{}\n\n{}", tr("Diese Änderung eines anderen Geräts zulassen?", &[]), short_text(&summary, 300));
+    if !confirm(&app, tr("Fernzugriff zulassen", &[]), text, tr("Zulassen", &[])).await {
         return Err(cancelled());
     }
     d.request(Request::OpsApprove { id }).await
@@ -413,8 +424,8 @@ pub async fn backup_restore(
 
 #[tauri::command]
 pub async fn backup_remove(app: AppHandle, d: State<'_, Daemon>, id: String) -> UiResult<Value> {
-    let text = "Diese Sicherung aus Snap entfernen? Die gesicherten Daten am Ziel bleiben erhalten und lassen sich mit Passwort oder Wiederherstellungsschlüssel wieder verbinden.".to_string();
-    if !confirm(&app, "Sicherung entfernen", text, "Entfernen").await {
+    let text = tr("Diese Sicherung aus Snap entfernen? Die gesicherten Daten am Ziel bleiben erhalten und lassen sich mit Passwort oder Wiederherstellungsschlüssel wieder verbinden.", &[]);
+    if !confirm(&app, tr("Sicherung entfernen", &[]), text, tr("Entfernen", &[])).await {
         return Err(cancelled());
     }
     d.request(Request::BackupRemove { id }).await
@@ -432,4 +443,10 @@ pub async fn setting_set(d: State<'_, Daemon>, key: String, value: Option<i64>) 
         return Err(UiError::new("InvalidInput", "Ungültige Einstellung."));
     }
     d.request(Request::SettingSet { key, value }).await
+}
+
+/// Sprache der nativen Dialoge (gleiche Wahl wie die Oberfläche). Unbekannte Kürzel → Deutsch.
+#[tauri::command]
+pub fn set_language(code: String) {
+    crate::i18n::set(&code);
 }

@@ -1,9 +1,11 @@
+import { locale, t } from "./i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorText, humanSize, thumbUrl, type MonthCount, type TimelineItem } from "./api";
 import type { Toast } from "./App";
 
-const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+/** Monatsnamen in der gewählten Sprache (Intl). */
+const MONTHS = Array.from({ length: 12 }, (_, m) => new Date(Date.UTC(2000, m, 1)).toLocaleString(locale, { month: "long", timeZone: "UTC" }));
 
 /** Aufnahmezeit ist lokale Uhrzeit ohne Zeitzone (als UTC gespeichert) → immer in UTC anzeigen. */
 const monthKey = (t: number) => new Date(t * 1000).toISOString().slice(0, 7);
@@ -12,7 +14,7 @@ const monthLabel = (t: number) => {
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 };
 const dayLabel = (t: number) =>
-  new Date(t * 1000).toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+  new Date(t * 1000).toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
 export default function Photos({ notify }: { notify: (t: Toast) => void }) {
   const [items, setItems] = useState<TimelineItem[]>([]);
@@ -91,7 +93,7 @@ export default function Photos({ notify }: { notify: (t: Toast) => void }) {
         {days.length === 0 && !loading ? (
           <div className="empty">
             <div>
-              <div className="big">Noch keine Fotos</div>
+              <div className="big">{t("Noch keine Fotos")}</div>
               Bilder und Videos aus deinen indexierten Ordnern erscheinen hier, sortiert nach Aufnahmedatum.
             </div>
           </div>
@@ -103,7 +105,7 @@ export default function Photos({ notify }: { notify: (t: Toast) => void }) {
                 {d.items.map((it) => (
                   <div key={it.path} className="photo" onDoubleClick={() => open(it)} onClick={() => open(it)} title={`${dayLabel(it.taken)}\n${it.path}`}>
                     <img src={thumbUrl(it.path)} loading="lazy" alt="" draggable={false} onError={(e) => (e.currentTarget.style.visibility = "hidden")} />
-                    {it.video && <span className="badge">▶ Video</span>}
+                    {it.video && <span className="badge">{t("▶ Video")}</span>}
                   </div>
                 ))}
               </div>
@@ -119,7 +121,7 @@ export default function Photos({ notify }: { notify: (t: Toast) => void }) {
             return (
               <div key={`${m.year}-${m.month}`}>
                 {head && <div className="y">{m.year}</div>}
-                <button onClick={() => jump(m)} title={`${m.count} Fotos/Videos`}>{MONTHS[m.month - 1].slice(0, 3)}</button>
+                <button onClick={() => jump(m)} title={t("{n} Fotos/Videos", { n: m.count })}>{MONTHS[m.month - 1].slice(0, 3)}</button>
               </div>
             );
           })}

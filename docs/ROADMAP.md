@@ -58,6 +58,7 @@ Abstriche bei der Sicherheit.
 | 2026-11-06 | **Nächste Phase: Desktop-App (Tauri v2 + React)** | Backend weitgehend fertig; die App macht es im Alltag nutzbar und testbar. |
 | 2026-11-06 | **App-Brücke: nur typisierte Befehle, native Bestätigung für Folgenreiches** (endgültig löschen, Papierkorb leeren, ausführbare Dateien öffnen); strenge CSP, minimale Tauri-Rechte | Ein XSS über feindliche Dateinamen bekäme sonst volle Adminrechte. |
 | 2026-11-06 | **App ist Client eines eigenständigen Dienstes** (systemd-Benutzerdienst), startet ihn bei Bedarf | Sicherungen, Uploads und Abgleich laufen weiter, wenn das Fenster zu ist. |
+| 2026-11-07 | **Mehrsprachigkeit: Deutsch als Ausgangssprache, Englisch mitgeliefert**; deutscher Text = Schlüssel, eine JSON-Datei je Sprache (`apps/desktop/locales/`), automatisch erkannt von Oberfläche und nativen Dialogen; Test auf Vollständigkeit | Wunsch des Nutzers: englische Version und einfacher Weg für eigene Sprachen. |
 | 2026-11-06 | **Gestaltung: Fluent-Designsprache** (Mica-Hintergrund, Acryl, Tabs in der Titelleiste) nach dem Vorbild der Explorer-Alternative „Files“ – eigene Umsetzung ohne fremde Grafiken | Wunsch des Nutzers: klar, modern, durchscheinend. |
 | 2026-11-06 | **Eigene PRs bei grüner CI selbst mergen** | Freigabe des Nutzers; Designs sicherheitsrelevanter Systeme werden weiterhin vorher vorgelegt. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |

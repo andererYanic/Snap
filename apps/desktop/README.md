@@ -46,6 +46,13 @@ nicht, bietet die App an, ihn zu starten: zuerst als systemd-Benutzerdienst `sna
 
 Geplant: Freigabelinks, Speicheranalyse und Duplikate in der App.
 
+## Sprachen
+
+Die Oberfläche ist auf Deutsch geschrieben und liegt zusätzlich auf Englisch vor. Gewählt wird die
+Systemsprache, umstellen lässt sie sich unter **Einstellungen → Sprache**. Eine eigene Sprache ist
+eine JSON-Datei in `locales/`, ohne Codeänderung; sie gilt auch für die nativen Dialoge.
+Anleitung: [`docs/TRANSLATING.md`](../../docs/TRANSLATING.md).
+
 ## Sicherheit
 
 - **Keine allgemeine Brücke:** Die Web-Ansicht kann nur die typisierten Befehle in
