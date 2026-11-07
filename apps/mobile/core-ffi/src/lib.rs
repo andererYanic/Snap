@@ -63,6 +63,47 @@ fn absolute(p: &str, what: &str) -> Result<PathBuf, SnapError> {
     Ok(path)
 }
 
+/// Datei für Absturzberichte im privaten Datenordner.
+fn crash_log_path(data_dir: &std::path::Path) -> PathBuf {
+    data_dir.join("crash.log")
+}
+
+/// Schreibt Panics des Kerns (Nachricht, Ort, Thread) in `crash.log`, damit die App beim
+/// nächsten Start zeigen kann, was passiert ist. Höchstens 64 KiB.
+fn install_panic_log(data_dir: PathBuf) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(move || {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            use std::io::Write;
+            let path = crash_log_path(&data_dir);
+            let small = std::fs::metadata(&path).map(|m| m.len() < 64 * 1024).unwrap_or(true);
+            if small {
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                    let secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let thread = std::thread::current().name().unwrap_or("?").to_string();
+                    let _ = writeln!(f, "[{secs}] Thread {thread}: {info}");
+                }
+            }
+            previous(info);
+        }));
+    });
+}
+
+/// Absturzbericht des letzten Laufs lesen und löschen (`None`, wenn es keinen gibt).
+/// Funktioniert ohne laufenden Kern.
+#[uniffi::export]
+pub fn take_crash_log(data_dir: String) -> Option<String> {
+    let path = crash_log_path(std::path::Path::new(&data_dir));
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.chars().take(8000).collect())
+}
+
 /// Konfiguration für Android aus den Startoptionen.
 pub fn mobile_config(opts: &CoreOptions) -> Result<space_core::config::Config, SnapError> {
     let data = absolute(&opts.data_dir, "data_dir")?;
@@ -92,6 +133,8 @@ impl SnapCore {
     #[uniffi::constructor]
     pub fn start(opts: CoreOptions) -> Result<Arc<Self>, SnapError> {
         let cfg = mobile_config(&opts)?;
+        let _ = std::fs::create_dir_all(&cfg.data_dir);
+        install_panic_log(cfg.data_dir.clone());
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -201,6 +244,16 @@ mod tests {
         println!("ffi: kleine Anfrage (Settings): {:.1} µs", t.elapsed().as_secs_f64() * 1e3);
         assert!(per < std::time::Duration::from_millis(16));
         core.stop();
+    }
+
+    #[test]
+    fn crash_log_is_read_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_string_lossy().to_string();
+        assert_eq!(take_crash_log(dir.clone()), None);
+        std::fs::write(tmp.path().join("crash.log"), "[1] Thread snap-core: panicked at x.rs:1:1\n").unwrap();
+        assert!(take_crash_log(dir.clone()).unwrap().contains("panicked"));
+        assert_eq!(take_crash_log(dir), None, "nach dem Lesen gelöscht");
     }
 
     #[test]

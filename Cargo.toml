@@ -13,6 +13,12 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Android-App: wie release, aber Panics beenden nur die betroffene Aufgabe bzw. kommen als
+# Fehler in der App an, statt den ganzen App-Prozess sofort zu beenden.
+[profile.mobile]
+inherits = "release"
+panic = "unwind"
+
 # Entwicklungs-Builds: nur Zeilentabellen (Backtraces bleiben lesbar), Abhängigkeiten ohne
 # Debug-Infos – spart viele GB im target-Ordner und beschleunigt das Linken.
 [profile.dev]

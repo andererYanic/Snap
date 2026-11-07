@@ -10,6 +10,7 @@ jest.mock('react-native-safe-area-context', () => require('react-native-safe-are
 
 const calls: unknown[] = [];
 let allFiles = true;
+let crashReport: string | null = null;
 
 const listing = {
   DirListing: {
@@ -34,6 +35,7 @@ NativeModules.SnapCore = {
     return JSON.stringify({ Success: { message: 'ok' } });
   }),
   hasAllFilesAccess: jest.fn(async () => allFiles),
+  lastCrash: jest.fn(async () => crashReport),
   requestAllFilesAccess: jest.fn(),
   storageRoot: jest.fn(async () => '/storage/emulated/0'),
   getPref: jest.fn(async (k: string) => (k === 'lang' ? 'de' : null)),
@@ -73,6 +75,7 @@ function byLabel(r: ReactTestRenderer.ReactTestRenderer, label: string) {
 beforeEach(() => {
   calls.length = 0;
   allFiles = true;
+  crashReport = null;
 });
 
 test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
@@ -109,4 +112,19 @@ test('Ohne Dateizugriff: Hinweis und Knopf zu den Systemeinstellungen', async ()
   const btn = r.root.find((n) => n.props.accessibilityRole === 'button' && typeof n.props.onPress === 'function');
   await act(async () => { btn.props.onPress(); });
   expect(NativeModules.SnapCore.requestAllFilesAccess).toHaveBeenCalled();
+});
+
+test('Absturz beim letzten Start: Bericht und „Erneut versuchen“ statt erneutem Absturz', async () => {
+  crashReport = '[1] Thread snap-core: panicked at core/src/x.rs:1:1';
+  NativeModules.SnapCore.start.mockClear();
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await flush();
+  expect(allText(r)).toContain('panicked at core/src/x.rs');
+  expect(NativeModules.SnapCore.start).not.toHaveBeenCalled();
+  crashReport = null;
+  await act(async () => { await pressable(r, 'Erneut versuchen').props.onPress(); });
+  await flush();
+  expect(NativeModules.SnapCore.start).toHaveBeenCalledTimes(1);
+  expect(allText(r)).toContain('brief.pdf');
 });

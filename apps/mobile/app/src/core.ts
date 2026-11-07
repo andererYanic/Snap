@@ -42,6 +42,7 @@ export function onEvent(cb: (ev: { type: string; [k: string]: any }) => void) {
   return () => sub.remove();
 }
 
+export const lastCrash = (): Promise<string | null> => native().lastCrash();
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();
 export const storageRoot = (): Promise<string> => native().storageRoot();

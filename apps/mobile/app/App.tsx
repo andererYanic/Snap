@@ -1,7 +1,7 @@
 // Snap für Android: Start (Berechtigung, Kern), untere Navigation, Rückgängig-Leiste.
 // Gestaltung: docs/MOBILE_UX.md (Snap-Optik, Android-Bedienung, Material You wahlweise).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Pressable, StatusBar, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { AppState, Pressable, ScrollView, StatusBar, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as core from './src/core';
 import Files from './src/Files';
@@ -20,12 +20,13 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('files');
   const [material, setMaterialState] = useState(false);
   const [materialAvailable, setMaterialAvailable] = useState(false);
+  const [crash, setCrash] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
   const [selecting, setSelecting] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const theme: Theme = material && materialAvailable ? materialTheme(dark) : snapTheme(dark);
 
-  const boot = useCallback(async () => {
+  const boot = useCallback(async (force = false) => {
     try {
       await initLanguage();
       const sdk = await core.sdkInt();
@@ -36,6 +37,14 @@ export default function App() {
         setReady('permission');
         return;
       }
+      // Ist der letzte Start abgestürzt? Dann Bericht zeigen statt erneut abzustürzen.
+      const report = force ? null : await core.lastCrash();
+      if (report) {
+        setCrash(report);
+        setReady('crash');
+        return;
+      }
+      setReady('start');
       await core.start();
       setReady('ok');
     } catch (e: any) {
@@ -43,10 +52,18 @@ export default function App() {
     }
   }, []);
 
+  // Einmal beim Öffnen starten
   useEffect(() => {
     boot();
-    // Nach Rückkehr aus den Systemeinstellungen erneut prüfen
-    const sub = AppState.addEventListener('change', (st) => st === 'active' && ready === 'permission' && boot());
+  }, [boot]);
+
+  // Nach Rückkehr aus den Systemeinstellungen erneut prüfen
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active' && ready === 'permission') {
+        boot();
+      }
+    });
     return () => sub.remove();
   }, [boot, ready]);
 
@@ -84,8 +101,18 @@ export default function App() {
                     <Text style={s.btnText}>{t('Zugriff erlauben')}</Text>
                   </Pressable>
                 </>
+              ) : ready === 'crash' ? (
+                <>
+                  <Text style={s.muted}>{t('Snap wurde beim letzten Start unerwartet beendet. Bericht:')}</Text>
+                  <ScrollView style={s.report}>
+                    <Text selectable style={s.reportText}>{crash}</Text>
+                  </ScrollView>
+                  <Pressable style={s.btn} onPress={() => boot(true)} accessibilityRole="button">
+                    <Text style={s.btnText}>{t('Erneut versuchen')}</Text>
+                  </Pressable>
+                </>
               ) : (
-                <Text style={s.error}>{ready}</Text>
+                <Text selectable style={s.error}>{ready}</Text>
               )}
             </View>
           </SafeAreaView>
@@ -156,6 +183,8 @@ const styles = (th: Theme) =>
     title: { color: th.text, fontSize: 28, fontWeight: '700', marginBottom: 12 },
     muted: { color: th.text2, fontSize: 15, lineHeight: 22 },
     error: { color: th.danger, fontSize: 15 },
+    report: { maxHeight: 260, marginTop: 12, padding: 10, borderRadius: 10, backgroundColor: th.accentSoft },
+    reportText: { color: th.text, fontSize: 12, fontFamily: 'monospace' },
     btn: { minHeight: 52, justifyContent: 'center', alignItems: 'center', borderRadius: 16, backgroundColor: th.accent, marginTop: 20 },
     btnText: { color: th.onAccent, fontSize: 16, fontWeight: '600' },
     header: { color: th.text, fontSize: 26, fontWeight: '700', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },

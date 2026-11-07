@@ -9,7 +9,6 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
-import com.facebook.react.modules.core.DeviceEventManagerModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,8 +36,14 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
       try {
         val core = CoreHolder.get(ctx.applicationContext)
         CoreHolder.listen { json ->
-          if (ctx.hasActiveReactInstance()) {
-            ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java).emit("snap-event", json)
+          // Aufruf kommt von einem Rust-Thread: niemals eine Ausnahme nach außen lassen,
+          // sonst beendet die JVM den Prozess.
+          try {
+            if (ctx.hasActiveReactInstance()) {
+              ctx.emitDeviceEvent("snap-event", json)
+            }
+          } catch (e: Throwable) {
+            android.util.Log.w("Snap", "Ereignis nicht zustellbar: ${e.message}")
           }
         }
         promise.resolve(core.apiVersion().toInt())
@@ -59,6 +64,19 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
       } catch (e: Throwable) {
         promise.reject("request", e.message ?: e.toString(), e)
       }
+    }
+  }
+
+  /**
+   * Bericht über einen Absturz beim letzten Start (Rust-Panic, Java-Ausnahme oder Prozess beim
+   * Starten des Kerns beendet). `null`, wenn alles normal war. Wird beim Lesen gelöscht.
+   */
+  @ReactMethod
+  fun lastCrash(promise: Promise) {
+    try {
+      promise.resolve(CoreHolder.takeCrashReport(ctx.applicationContext))
+    } catch (e: Throwable) {
+      promise.resolve("Absturzbericht nicht lesbar: ${e.message}")
     }
   }
 
@@ -115,18 +133,53 @@ object CoreHolder {
   @Volatile private var listener: ((String) -> Unit)? = null
   private var subscribed = false
 
+  private fun dataDir(context: android.content.Context) = context.filesDir.absolutePath + "/snap"
+
+  private fun startMarker(context: android.content.Context) = java.io.File(context.filesDir, "snap-starting")
+
+  /** Java-/Kotlin-Abstürze ebenfalls ins crash.log schreiben (danach normal weiter). */
+  fun installCrashHandler(context: android.content.Context) {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, e ->
+      try {
+        val dir = java.io.File(dataDir(context)).apply { mkdirs() }
+        java.io.File(dir, "crash.log").appendText(
+          "[${System.currentTimeMillis() / 1000}] Thread ${thread.name}: ${android.util.Log.getStackTraceString(e).take(6000)}\n",
+        )
+      } catch (_: Throwable) {
+      }
+      previous?.uncaughtException(thread, e)
+    }
+  }
+
+  fun takeCrashReport(context: android.content.Context): String? {
+    System.loadLibrary("snap_ffi")
+    val parts = mutableListOf<String>()
+    val marker = startMarker(context)
+    if (marker.exists()) {
+      parts += "Der Snap-Kern wurde beim letzten Start unerwartet beendet."
+      marker.delete()
+    }
+    uniffi.snap_ffi.takeCrashLog(dataDir(context))?.let { parts += it }
+    return if (parts.isEmpty()) null else parts.joinToString("\n\n")
+  }
+
   @Synchronized
   fun get(context: android.content.Context): SnapCore {
     core?.let { return it }
     System.loadLibrary("snap_ffi")
     val storage = Environment.getExternalStorageDirectory().absolutePath
+    // Marker: existiert er beim nächsten Start noch, ist der Prozess beim Starten gestorben.
+    val marker = startMarker(context)
+    marker.writeText(System.currentTimeMillis().toString())
     val c = SnapCore.start(
       CoreOptions(
-        dataDir = context.filesDir.absolutePath + "/snap",
+        dataDir = dataDir(context),
         storageRoot = storage,
         deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
       ),
     )
+    marker.delete()
     core = c
     return c
   }
@@ -139,7 +192,11 @@ object CoreHolder {
     val c = core ?: return
     c.subscribe(object : EventListener {
       override fun onEvent(json: String) {
-        listener?.invoke(json)
+        try {
+          listener?.invoke(json)
+        } catch (e: Throwable) {
+          android.util.Log.w("Snap", "Ereignis-Empfänger: ${e.message}")
+        }
       }
     })
     subscribed = true

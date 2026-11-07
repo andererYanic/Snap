@@ -102,6 +102,8 @@ android {
     buildTypes {
         release {
             signingConfig System.getenv("SNAP_KEYSTORE") ? signingConfigs.release : signingConfigs.debug
+            // Nur für den Emulator-Test in der CI: erlaubt `run-as` zum Auslesen von crash.log.
+            debuggable project.hasProperty("snapE2E")
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
@@ -147,7 +149,7 @@ tasks.register("buildRustCore", Exec) {
     workingDir repoRoot
     def args = ["cargo", "ndk"]
     abiTargets.each { args += ["-t", it] }
-    args += ["--platform", "24", "-o", rustOut.absolutePath, "build", "-p", "snap-ffi", "--release"]
+    args += ["--platform", "24", "-o", rustOut.absolutePath, "build", "-p", "snap-ffi", "--profile", "mobile"]
     commandLine args
     environment "ANDROID_NDK_HOME", android.ndkDirectory.absolutePath
 }

@@ -22,6 +22,7 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    CoreHolder.installCrashHandler(this)
     loadReactNative(this)
     SyncWorker.schedule(this)
   }
