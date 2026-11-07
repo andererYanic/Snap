@@ -300,3 +300,128 @@ async fn hostile_peers_and_frames() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+/// ZIP mit den Einträgen `(name, inhalt)`, optional mit AES-Passwort.
+fn make_zip(path: &Path, entries: &[(&str, &[u8])], password: Option<&str>) {
+    use std::io::Write;
+    let mut w = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    for (name, data) in entries {
+        let mut opt = zip::write::SimpleFileOptions::default();
+        if let Some(pw) = password {
+            opt = opt.with_aes_encryption(zip::AesMode::Aes256, pw);
+        }
+        w.start_file(*name, opt).unwrap();
+        w.write_all(data).unwrap();
+    }
+    w.finish().unwrap();
+}
+
+fn extract(archive: &str, password: Option<&str>) -> RemoteOp {
+    RemoteOp::Extract {
+        share: "Fotos".into(),
+        archive: archive.into(),
+        password: password.map(|p| space_core::fileops::archive::Password(p.into())),
+    }
+}
+
+async fn audit_text(a: &Daemon) -> String {
+    format!("{:?}", a.request(Request::Audit { limit: 1000 }).await)
+}
+
+/// Entpacken auf einem anderen Gerät – Angriffstests: Rechte, Pfadtricks, Symlinks, Zip-Slip,
+/// Passwort-Raten, Passwort nie im Protokoll.
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_extract_attacks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b, share) = setup(tmp.path(), 100).await;
+    make_zip(&share.join("paket.zip"), &[("a.txt", b"A"), ("ordner/b.txt", b"B")], None);
+    make_zip(&share.join("boese.zip"), &[("../../geheim/boese.txt", b"X")], None);
+    make_zip(&share.join("tresor.zip"), &[("geheim.txt", b"G")], Some("richtig123"));
+    std::fs::write(tmp.path().join("geheim/aussen.zip"), b"PK\x05\x06").unwrap();
+
+    // Nur files.read: verboten, nichts entpackt
+    assert_eq!(code(&remote(&b, extract("paket.zip", None)).await), Some(ErrorCode::PermissionDenied));
+    assert!(!share.join("paket").exists());
+    grant(&a, &b, "files.write", &share).await;
+
+    // Pfadtricks, Symlinks, keine Archive
+    for bad in ["../geheim/aussen.zip", "/etc/x.zip", "2024/../../x.zip", "", "2024/bild0.jpg"] {
+        let res = remote(&b, extract(bad, None)).await;
+        assert_eq!(code(&res), Some(ErrorCode::InvalidInput), "{bad}: {res:?}");
+    }
+    let res = remote(&b, extract("abkuerzung/aussen.zip", None)).await;
+    assert_eq!(code(&res), Some(ErrorCode::PermissionDenied), "{res:?}");
+    assert!(!tmp.path().join("geheim/aussen").exists());
+    // Überlanges oder leeres Passwort
+    assert_eq!(code(&remote(&b, extract("tresor.zip", Some(&"x".repeat(2000)))).await), Some(ErrorCode::InvalidInput));
+    assert_eq!(code(&remote(&b, extract("tresor.zip", Some(""))).await), Some(ErrorCode::InvalidInput));
+
+    // Normal: neuer Ordner neben dem Archiv
+    let res = remote(&b, extract("paket.zip", None)).await;
+    assert!(matches!(res, Response::Success { .. }), "{res:?}");
+    assert_eq!(std::fs::read(share.join("paket/ordner/b.txt")).unwrap(), b"B");
+    // Zip-Slip: abgelehnt, nichts außerhalb, kein Arbeitsordner bleibt liegen
+    let res = remote(&b, extract("boese.zip", None)).await;
+    assert!(code(&res).is_some(), "{res:?}");
+    assert!(!tmp.path().join("geheim/boese.txt").exists());
+    assert!(std::fs::read_dir(&share)
+        .unwrap()
+        .flatten()
+        .all(|e| !e.file_name().to_string_lossy().starts_with(".snap-entpacken")));
+
+    // Passwort: fehlt → nachfragen; 5× falsch → danach gesperrt (auch das richtige)
+    assert_eq!(code(&remote(&b, extract("tresor.zip", None)).await), Some(ErrorCode::PasswordRequired));
+    for i in 0..5 {
+        let res = remote(&b, extract("tresor.zip", Some(&format!("falsch-{i}-xyz")))).await;
+        assert_eq!(code(&res), Some(ErrorCode::PasswordRequired), "{i}: {res:?}");
+    }
+    let res = remote(&b, extract("tresor.zip", Some("richtig123"))).await;
+    assert_eq!(code(&res), Some(ErrorCode::Rejected), "{res:?}");
+    assert!(!share.join("tresor").exists());
+    // Ein anderes Archiv ist davon nicht betroffen
+    make_zip(&share.join("tresor2.zip"), &[("g.txt", b"G")], Some("richtig123"));
+    assert!(matches!(remote(&b, extract("tresor2.zip", Some("richtig123"))).await, Response::Success { .. }));
+    assert_eq!(std::fs::read(share.join("tresor2/g.txt")).unwrap(), b"G");
+
+    // Passwörter tauchen nirgends im Audit-Log auf
+    let log = audit_text(&a).await;
+    assert!(log.contains("ops.extract"), "{log}");
+    assert!(!log.contains("richtig123") && !log.contains("falsch-"), "{log}");
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+/// Massenschutz beim Entpacken: zählt die Einträge; das Passwort bleibt nur im Speicher.
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_extract_mass_protection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b, share) = setup(tmp.path(), 3).await;
+    grant(&a, &b, "files.write", &share).await;
+    let many: Vec<(String, Vec<u8>)> = (0..5).map(|i| (format!("f{i}.txt"), vec![b'x'])).collect();
+    let refs: Vec<(&str, &[u8])> = many.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+    make_zip(&share.join("viele.zip"), &refs, Some("geheim-pw-42"));
+
+    let res = remote(&b, extract("viele.zip", Some("geheim-pw-42"))).await;
+    assert_eq!(code(&res), Some(ErrorCode::NeedsApproval), "{res:?}");
+    assert!(!share.join("viele").exists());
+    let items = match a.request(Request::OpsPending).await {
+        Response::Approvals { items } => items,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(items.len(), 1);
+    assert!(!format!("{items:?}").contains("geheim-pw-42"), "Passwort nicht in der Datenbank");
+    // Auch nicht in der Datenbankdatei selbst
+    let db_bytes: Vec<u8> = std::fs::read_dir(tmp.path().join("a"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains(".db"))
+        .flat_map(|e| std::fs::read(e.path()).unwrap_or_default())
+        .collect();
+    assert!(!db_bytes.windows(12).any(|w| w == b"geheim-pw-42"));
+    // Bestätigen: entpackt mit dem gehaltenen Passwort
+    let res = a.request(Request::OpsApprove { id: items[0].id }).await;
+    assert!(matches!(res, Response::Success { .. }), "{res:?}");
+    assert!(share.join("viele/f4.txt").exists());
+    a.shutdown().await;
+    b.shutdown().await;
+}

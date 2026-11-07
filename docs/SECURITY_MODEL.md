@@ -78,6 +78,15 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Vorschaubilder fremder Freigaben (`snap/thumb/1`):** nur gekoppelt, nur mit `files.read`,
   nur innerhalb von Freigaben ohne Symlinks auf dem Weg; Anfrage ≤ 4 KiB, Antwort ≤ 1 MiB;
   empfangene Bilder werden mit den begrenzten Decodern neu codiert, bevor sie im Cache landen.
+- **Entpacken auf einem anderen Gerät (`Extract` über `snap/ops/1`, entschieden 2026-11-07):**
+  braucht `files.read` am Archiv und `files.write` im Ordner; entpackt wird immer in einen neuen
+  Ordner daneben (nie überschreiben, rückgängig machbar). Es gelten die Grenzen des Archivmoduls
+  (100 000 Einträge, freier Platz minus Reserve, Verhältnis 1000 : 1, Zip-Slip und Links werden
+  nie angelegt). Der Massenschutz zählt die Einträge des Archivs. Höchstens ein Entpacken je Gerät
+  gleichzeitig, höchstens 5 falsche Passwörter je Gerät, Archiv und Stunde. Das Passwort reist nur
+  in der verschlüsselten Verbindung, erscheint nie in `Debug`, Audit-Log oder Beschreibung und wird
+  nie gespeichert – bei angehaltenen Anfragen liegt es höchstens eine Stunde im Speicher.
+  Angriffstests: `core/tests/remote_ops.rs` (`remote_extract_*`), Fuzz-Ziel `ops_request`.
 - **Hochladen (`Import` über `snap/ops/1`):** Das Ziel holt den Inhalt selbst per iroh-blobs. Ein
   Angebot gilt nur für genau dieses Gerät und diesen Hash (2 h) und wird danach zurückgezogen. Die
   Größe wird per BLAKE3/bao nachgewiesen und muss der Angabe entsprechen. Nur mit `files.write`;

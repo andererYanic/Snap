@@ -1,7 +1,8 @@
 //! Fernoperationen auf Dateien in Freigaben (Protokoll `snap/ops/1`).
 //!
 //! Ein gekoppeltes Gerät darf innerhalb einer Freigabe umbenennen, verschieben, kopieren,
-//! Ordner anlegen, in den Papierkorb legen und – mit eigenem Recht – endgültig löschen.
+//! Ordner anlegen, Archive entpacken, in den Papierkorb legen und – mit eigenem Recht –
+//! endgültig löschen.
 //!
 //! Sicherheit:
 //! - Identität aus TLS; nicht gekoppelte Gegenstellen werden vor dem Lesen getrennt.
@@ -13,6 +14,10 @@
 //! - Massenschutz: mehr als `ops_hourly_limit` veränderte Dateien pro Gerät und Stunde werden
 //!   angehalten, bis der Nutzer am Zielgerät bestätigt.
 //! - Nachrichten ≤ 64 KiB, strikte Typen, Zeitlimits, höchstens 4 Operationen gleichzeitig.
+//! - Entpacken: Grenzen des Archivmoduls (Einträge, Größe, Verhältnis, Zip-Slip, keine Links),
+//!   Massenschutz zählt die Einträge, höchstens ein Entpacken je Gerät, 5 falsche Passwörter je
+//!   Archiv und Stunde. Passwörter nie in Protokollen oder der Datenbank (angehaltene Anfragen
+//!   halten sie höchstens eine Stunde im Speicher).
 
 use crate::api::auth::{authorize, Caller, Capability};
 use crate::api::error::{code_of, ApiError, ErrorCode};
@@ -92,7 +97,21 @@ pub enum RemoteOp {
         #[serde(default = "keep_both")]
         conflict: Conflict,
     },
+    /// Archiv (ZIP, TAR, TAR.GZ) in einen neuen Ordner daneben entpacken (Rechte `files.read` am
+    /// Archiv, `files.write` im Ordner). Das Passwort reist nur in der verschlüsselten Verbindung,
+    /// erscheint nie in Protokollen und wird nie gespeichert.
+    Extract {
+        share: String,
+        archive: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        password: Option<crate::fileops::archive::Password>,
+    },
 }
+
+/// Längstes Archiv-Passwort.
+pub const MAX_PASSWORD: usize = 1024;
+/// Falsche Passwörter je Gerät und Archiv pro Stunde.
+pub const MAX_PASSWORD_FAILURES: usize = 5;
 
 fn keep_both() -> Conflict {
     Conflict::KeepBoth
@@ -145,7 +164,8 @@ impl RemoteOp {
             | RemoteOp::Mkdir { share, .. }
             | RemoteOp::Trash { share, .. }
             | RemoteOp::Purge { share, .. }
-            | RemoteOp::Import { share, .. } => share,
+            | RemoteOp::Import { share, .. }
+            | RemoteOp::Extract { share, .. } => share,
         }
     }
 
@@ -158,6 +178,7 @@ impl RemoteOp {
             RemoteOp::Trash { .. } => "ops.trash",
             RemoteOp::Purge { .. } => "ops.purge",
             RemoteOp::Import { .. } => "ops.import",
+            RemoteOp::Extract { .. } => "ops.extract",
         }
     }
 
@@ -182,6 +203,8 @@ impl RemoteOp {
             RemoteOp::Import { share, dest_dir, name, size, .. } => {
                 format!("'{name}' ({:.1} MB) nach '{share}/{dest_dir}' hochladen", *size as f64 / 1e6)
             }
+            // Ohne Passwort: die Beschreibung landet im Audit-Log und in Bestätigungen.
+            RemoteOp::Extract { share, archive, .. } => format!("'{share}/{archive}' entpacken"),
         }
     }
 
@@ -226,6 +249,16 @@ impl RemoteOp {
                 }
                 Ok(())
             }
+            RemoteOp::Extract { archive, password, .. } => {
+                rel(archive)?;
+                if !crate::fileops::archive::is_archive_name(archive) {
+                    return Err(bad("Kein unterstütztes Archiv (ZIP, TAR, TAR.GZ)"));
+                }
+                if password.as_ref().is_some_and(|p| p.0.is_empty() || p.0.len() > MAX_PASSWORD) {
+                    return Err(bad("Ungültiges Passwort"));
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -261,6 +294,7 @@ pub fn resolve_in_share(root: &Path, rel: &str) -> Result<PathBuf> {
 enum Action {
     File(FileOp),
     Import { dest: PathBuf, name: String, hash: iroh_blobs::Hash, size: u64, conflict: Conflict },
+    Extract { archive: PathBuf, password: Option<crate::fileops::archive::Password> },
 }
 
 struct Prepared {
@@ -354,6 +388,16 @@ fn prepare(inner: &DaemonInner, op: &RemoteOp) -> Result<Prepared> {
                 },
             }
         }
+        RemoteOp::Extract { archive, password, .. } => {
+            let a = r(archive)?;
+            let dir = a.parent().map(Path::to_path_buf).unwrap_or_else(|| root.clone());
+            Prepared {
+                // Gelesen wird das Archiv, geschrieben ein neuer Ordner daneben.
+                checks: vec![(Capability::FilesRead, a.clone()), (Capability::FilesWrite, dir)],
+                weighted: vec![],
+                op: Action::Extract { archive: a, password: password.clone() },
+            }
+        }
     })
 }
 
@@ -361,11 +405,71 @@ fn prepare(inner: &DaemonInner, op: &RemoteOp) -> Result<Prepared> {
 pub struct RemoteOpsState {
     window: Mutex<HashMap<String, VecDeque<(Instant, u64)>>>,
     slots: Arc<tokio::sync::Semaphore>,
+    /// Laufendes Entpacken je Gerät (höchstens eines).
+    extracting: Mutex<std::collections::HashSet<String>>,
+    /// Falsche Passwörter je (Gerät, Archiv) im Stundenfenster.
+    pw_failures: Mutex<HashMap<(String, PathBuf), VecDeque<Instant>>>,
+    /// Passwörter angehaltener Anfragen – nur im Speicher, nie in der Datenbank.
+    held_passwords: Mutex<HashMap<i64, (Instant, crate::fileops::archive::Password)>>,
 }
 
 impl Default for RemoteOpsState {
     fn default() -> Self {
-        Self { window: Mutex::new(HashMap::new()), slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT)) }
+        Self {
+            window: Mutex::new(HashMap::new()),
+            slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT)),
+            extracting: Mutex::new(Default::default()),
+            pw_failures: Mutex::new(HashMap::new()),
+            held_passwords: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// Gibt den Entpack-Platz eines Geräts beim Verlassen frei.
+struct ExtractSlot<'a> {
+    state: &'a RemoteOpsState,
+    peer: String,
+}
+
+impl Drop for ExtractSlot<'_> {
+    fn drop(&mut self) {
+        self.state.extracting.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.peer);
+    }
+}
+
+impl RemoteOpsState {
+    fn begin_extract(&self, peer: &str) -> Option<ExtractSlot<'_>> {
+        let mut set = self.extracting.lock().unwrap_or_else(|e| e.into_inner());
+        set.insert(peer.to_string()).then(|| ExtractSlot { state: self, peer: peer.to_string() })
+    }
+
+    fn password_blocked(&self, peer: &str, archive: &Path) -> bool {
+        let now = Instant::now();
+        let mut map = self.pw_failures.lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|_, q| {
+            while q.front().is_some_and(|t| now.duration_since(*t) > WINDOW) {
+                q.pop_front();
+            }
+            !q.is_empty()
+        });
+        map.get(&(peer.to_string(), archive.to_path_buf())).is_some_and(|q| q.len() >= MAX_PASSWORD_FAILURES)
+    }
+
+    fn password_failed(&self, peer: &str, archive: &Path) {
+        let mut map = self.pw_failures.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry((peer.to_string(), archive.to_path_buf())).or_default().push_back(Instant::now());
+    }
+
+    fn hold_password(&self, id: i64, pw: crate::fileops::archive::Password) {
+        let now = Instant::now();
+        let mut map = self.held_passwords.lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|_, (t, _)| now.duration_since(*t) <= WINDOW);
+        map.insert(id, (now, pw));
+    }
+
+    fn take_password(&self, id: i64) -> Option<crate::fileops::archive::Password> {
+        let mut map = self.held_passwords.lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(&id).filter(|(t, _)| t.elapsed() <= WINDOW).map(|(_, p)| p)
     }
 }
 
@@ -413,6 +517,45 @@ async fn execute(inner: &Arc<DaemonInner>, peer: &str, op: &RemoteOp, prepared: 
             let path = crate::upload::receive(inner, peer, &dest, &name, hash, size, conflict).await?;
             root.and_then(|r| path.strip_prefix(&r).ok().map(|p| p.to_string_lossy().into_owned()))
         }
+        Action::Extract { archive, password } => {
+            let Some(_slot) = inner.remote_ops.begin_extract(peer) else {
+                api_bail!(Rejected, "Dieses Gerät entpackt bereits ein Archiv – bitte warten.");
+            };
+            if inner.remote_ops.password_blocked(peer, &archive) {
+                api_bail!(
+                    Rejected,
+                    "Zu viele falsche Passwörter für dieses Archiv – in einer Stunde erneut versuchen."
+                );
+            }
+            let had_password = password.is_some();
+            let (job, p) = inner.files.register();
+            let res = crate::api::fileops::run_job(
+                inner.clone(),
+                job,
+                p,
+                FileOp::Extract { archive: archive.clone(), password },
+            )
+            .await;
+            match res {
+                Ok(outcome) => {
+                    let root = inner
+                        .db
+                        .list_shares()?
+                        .into_iter()
+                        .find(|s| s.name == op.share())
+                        .map(|s| PathBuf::from(s.root));
+                    outcome.done.first().and_then(|d| {
+                        root.and_then(|r| d.to.strip_prefix(&r).ok().map(|p| p.to_string_lossy().into_owned()))
+                    })
+                }
+                Err(e) => {
+                    if had_password && code_of(&e) == ErrorCode::PasswordRequired {
+                        inner.remote_ops.password_failed(peer, &archive);
+                    }
+                    return Err(e);
+                }
+            }
+        }
     };
     Ok(OpsReply { ok: true, code: None, message: format!("Erledigt: {}", op.summary()), approval_id: None, result })
 }
@@ -448,11 +591,30 @@ async fn serve_inner(inner: &Arc<DaemonInner>, peer: &str, req: OpsRequest) -> R
         RemoteOp::Rename { .. } => 1,
         // Hochladen verändert nichts Bestehendes (eigene Grenze: upload_daily_gb) – außer beim Ersetzen.
         RemoteOp::Import { conflict, .. } => u64::from(*conflict == Conflict::Replace),
+        // Entpacken legt so viele Dateien an, wie das Archiv Einträge hat.
+        RemoteOp::Extract { .. } => match &prepared.op {
+            Action::Extract { archive, .. } => {
+                let a = archive.clone();
+                tokio::task::spawn_blocking(move || crate::fileops::archive::count_entries(&a, 100_001)).await??.max(1)
+            }
+            _ => 1,
+        },
         _ => tokio::task::spawn_blocking(move || weighted.iter().map(|p| measure(p).0.max(1)).sum::<u64>()).await?,
     };
     if !inner.remote_ops.try_take(peer, weight, inner.settings.ops_hourly_limit()) {
-        let json = serde_json::to_string(&op)?;
+        // Passwörter nie in die Datenbank: gespeichert wird die Anfrage ohne, das Passwort
+        // bleibt bis zur Entscheidung (höchstens eine Stunde) im Speicher.
+        let (stored, held) = match &op {
+            RemoteOp::Extract { share, archive, password } => {
+                (RemoteOp::Extract { share: share.clone(), archive: archive.clone(), password: None }, password.clone())
+            }
+            other => (other.clone(), None),
+        };
+        let json = serde_json::to_string(&stored)?;
         let id = inner.db.add_approval(peer, &json, &op.summary())?;
+        if let Some(pw) = held {
+            inner.remote_ops.hold_password(id, pw);
+        }
         let _ = inner.db.audit(peer, op.kind(), Some(op.share()), false, Some("Massenschutz: wartet auf Bestätigung"));
         tracing::warn!(
             "Gerät {} überschreitet das Stundenlimit – Anfrage {id} wartet auf Bestätigung",
@@ -479,7 +641,10 @@ pub(crate) async fn approve(inner: &Arc<DaemonInner>, id: i64) -> Result<Respons
     if !inner.db.is_paired(&peer)? {
         api_bail!(PermissionDenied, "Das Gerät ist nicht mehr gekoppelt.");
     }
-    let op: RemoteOp = serde_json::from_str(&json).context("Gespeicherte Anfrage ist beschädigt")?;
+    let mut op: RemoteOp = serde_json::from_str(&json).context("Gespeicherte Anfrage ist beschädigt")?;
+    if let RemoteOp::Extract { password, .. } = &mut op {
+        *password = inner.remote_ops.take_password(id);
+    }
     let prepared = prepare(inner, &op)?;
     authorize_all(inner, &peer, &op, &prepared)?;
     let reply = execute(inner, &peer, &op, prepared).await?;
@@ -488,6 +653,7 @@ pub(crate) async fn approve(inner: &Arc<DaemonInner>, id: i64) -> Result<Respons
 }
 
 pub(crate) fn reject(inner: &DaemonInner, id: i64) -> Result<Response> {
+    let _ = inner.remote_ops.take_password(id);
     let Some((peer, _)) = inner.db.decide_approval(id, false)? else {
         api_bail!(NotFound, "Keine offene Anfrage mit Nummer {id}.");
     };
