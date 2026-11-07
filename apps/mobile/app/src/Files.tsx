@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  FadeIn, LinearTransition, runOnJS, SlideInLeft, SlideInRight,
+  LinearTransition, runOnJS,
 } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
 import * as core from './core';
@@ -20,7 +20,7 @@ import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, type SheetAction } from './ui';
 import Viewer from './Viewer';
-import { m, popIn, popOut } from './motion';
+import { DUR, EASE_OUT, fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
 interface Props {
   theme: Theme;
@@ -54,9 +54,12 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   const [error, setError] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // Ab zwei markierten Dateien: Aktionsleiste unten statt Menü am Finger. Einmal offen, bleibt sie,
+  // bis alles abgewählt ist.
+  const [barOn, setBarOn] = useState(false);
   const [clip, setClip] = useState<{ mode: 'copy' | 'move'; paths: string[] } | null>(null);
   const [naming, setNaming] = useState<{ mode: 'folder' | 'file' | 'rename'; from?: string; value: string } | null>(null);
-  const [sheet, setSheet] = useState<'create' | 'more' | null>(null);
+  const [sheet, setSheet] = useState<'create' | 'more' | 'selection' | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [sort, setSort] = useState<Sort>('name');
   const [hidden, setHidden] = useState(false);
@@ -136,6 +139,17 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   }, [path, root]);
 
   useEffect(() => selectionChanged(sel.size > 0 || clip !== null), [sel, clip, selectionChanged]);
+
+  useEffect(() => {
+    if (sel.size === 0) {
+      setBarOn(false);
+      setMenu(null);
+    } else if (sel.size > 1) {
+      setBarOn(true);
+      setMenu(null);
+    }
+  }, [sel]);
+  const showBar = barOn && sel.size > 0;
 
   // Suche beim Tippen (entprellt; veraltete Antworten werden verworfen)
   useEffect(() => {
@@ -325,7 +339,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     [grid, tile, tileH],
   );
 
-  const drag = useRef<{ start: number; base: Set<string>; last: number; x: number; y: number } | null>(null);
+  const drag = useRef<{ start: number; base: Set<string>; last: number; x: number; y: number; size: number } | null>(null);
   const autoScroll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const dragStart = useCallback(
@@ -338,7 +352,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       setMenu(null);
       const base = new Set(sel);
       base.add(shown[i].path);
-      drag.current = { start: i, base, last: i, x: ax, y: ay };
+      drag.current = { start: i, base, last: i, x: ax, y: ay, size: base.size };
       setSel(new Set(base));
       core.haptic('select');
     },
@@ -372,6 +386,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       for (let k = Math.min(d.start, i); k <= Math.max(d.start, i); k++) {
         n.add(shown[k].path);
       }
+      d.size = n.size;
       setSel(n);
       core.haptic('tick');
     },
@@ -386,14 +401,15 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     setScrollEnabled(true);
     const d = drag.current;
     drag.current = null;
-    if (d) {
+    // Menü am Finger nur, wenn genau eine Datei markiert ist; sonst übernimmt die Leiste unten
+    if (d && d.size === 1) {
       setMenu({ x: d.x, y: d.y });
     }
   }, []);
 
   const selectGesture = Gesture.Pan()
     .withTestId('files-select')
-    .activateAfterLongPress(320)
+    .activateAfterLongPress(LONG_PRESS)
     .enabled(!clip)
     .onStart((e) => runOnJS(dragStart)(e.x, e.y, e.absoluteX, e.absoluteY))
     .onUpdate((e) => runOnJS(dragMove)(e.x, e.y))
@@ -403,7 +419,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   if (path === null && !hits) {
     const used = storage ? storage.total - storage.free : 0;
     return (
-      <Animated.View entering={m(dir === 'back' ? SlideInLeft.duration(220) : FadeIn.duration(200))} style={s.fill}>
+      <Animated.View entering={m(dir === 'back' ? pageIn('back') : fadeIn)} style={s.fill}>
         <ScrollView contentContainerStyle={s.landing} keyboardShouldPersistTaps="handled">
           <Text style={s.bigTitle}>{t('Dateien')}</Text>
           <SearchField theme={theme} value={query} onChange={setQuery} />
@@ -423,7 +439,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
                 {storage && (
                   <View style={[s.usage, { backgroundColor: theme.accentSoft }]}>
                     <Animated.View
-                      entering={m(FadeIn.duration(400))}
+                      entering={m(fadeIn)}
                       style={[s.usageFill, { backgroundColor: theme.accent, width: `${Math.min(100, (used / storage.total) * 100)}%` }]}
                     />
                   </View>
@@ -434,8 +450,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           </Tap>
           {folders.length > 0 && <Text style={s.section}>{t('Standardordner')}</Text>}
           <View style={s.folderGrid}>
-            {folders.map(([d, label], i) => (
-              <Animated.View key={d} entering={m(FadeIn.delay(i * 40).duration(220))} style={s.folderCell}>
+            {folders.map(([d, label]) => (
+              <Animated.View key={d} style={s.folderCell}>
                 <Tap theme={theme} onPress={() => go(joinPath(root, d), 'forward')} style={s.folderTile} label={t(label)}>
                   <Glyph name={d} dir theme={theme} size={44} />
                   <Text style={s.folderLabel} numberOfLines={1}>{t(label)}</Text>
@@ -460,6 +476,21 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: t('In den Papierkorb'), separate: true, onPress: trash },
     { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
+  const toClip = (mode: 'copy' | 'move') => {
+    setClip({ mode, paths: selected.map((e) => e.path) });
+    setSel(new Set());
+  };
+  const barActions = [
+    { icon: '⇪', label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
+    { icon: '⧉', label: t('Kopieren'), onPress: () => toClip('copy') },
+    { icon: '➜', label: t('Verschieben'), onPress: () => toClip('move') },
+    { icon: '🗑', label: t('Papierkorb'), danger: true, onPress: trash },
+    { icon: '⋯', label: t('Mehr'), onPress: () => setSheet('selection') },
+  ];
+  const selectionActions: SheetAction[] = [
+    { label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
+    { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
+  ];
   const moreActions: SheetAction[] = [
     { label: view === 'list' ? t('Als Raster anzeigen') : t('Als Liste anzeigen'), onPress: () => setView(view === 'list' ? 'grid' : 'list') },
     { label: t('Nach Name sortieren'), onPress: () => setSort('name'), disabled: sort === 'name' },
@@ -468,13 +499,12 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: hidden ? t('Versteckte Dateien ausblenden') : t('Versteckte Dateien anzeigen'), onPress: () => setHidden(!hidden) },
   ];
 
-  const renderItem = ({ item: e, index }: { item: Item; index: number }) => {
+  const renderItem = ({ item: e }: { item: Item }) => {
     const on = sel.has(e.path);
-    const enter = FadeIn.delay(Math.min(index, 12) * 18).duration(180);
     if (grid) {
       return (
-        <Animated.View entering={m(enter)} style={{ width: tile, height: tileH }}>
-          <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
+        <Animated.View style={{ width: tile, height: tileH }}>
+          <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} delayLongPress={LONG_PRESS} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
             <View style={[s.tileThumb, { width: tile - 12, height: tile - 12 }]}>
               <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
               {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
@@ -490,8 +520,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       );
     }
     return (
-      <Animated.View entering={m(enter)}>
-        <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
+      <Animated.View>
+        <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} delayLongPress={LONG_PRESS} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
           <View style={s.iconBox}>
             <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
             {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
@@ -518,7 +548,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     <View style={s.fill}>
       {/* Kopfzeile */}
       {sel.size > 0 ? (
-        <Animated.View entering={m(FadeIn.duration(150))} style={s.header}>
+        <Animated.View entering={m(fadeIn)} style={s.header}>
           <Tap theme={theme} onPress={() => { setSel(new Set()); setMenu(null); }} style={s.iconBtn} label={t('Auswahl aufheben')}>
             <Text style={s.iconText}>✕</Text>
           </Tap>
@@ -526,9 +556,13 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           <Tap theme={theme} onPress={() => setSel(new Set(shown.map((e) => e.path)))} style={s.textBtn}>
             <Text style={s.link}>{t('Alle')}</Text>
           </Tap>
-          <Tap theme={theme} onPress={() => setMenu({ x: W - 24, y: 96 })} style={s.iconBtn} label={t('Aktionen')}>
-            <Text style={s.iconText}>⋯</Text>
-          </Tap>
+          {showBar ? (
+            <View style={s.iconBtn} />
+          ) : (
+            <Tap theme={theme} onPress={() => setMenu({ x: W - 24, y: 96 })} style={s.iconBtn} label={t('Aktionen')}>
+              <Text style={s.iconText}>⋯</Text>
+            </Tap>
+          )}
         </Animated.View>
       ) : hits ? (
         <View style={s.searchHeader}>
@@ -557,7 +591,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       <GestureDetector gesture={selectGesture}>
         <Animated.View
           key={`${path}|${view}|${hits ? 'q' : ''}`}
-          entering={m(hits ? FadeIn.duration(150) : dir === 'forward' ? SlideInRight.duration(220) : SlideInLeft.duration(220))}
+          entering={m(hits ? fadeIn : pageIn(dir))}
           style={s.fill}
           onLayout={(e) => (listH.current = e.nativeEvent.layout.height)}
         >
@@ -570,7 +604,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
             contentContainerStyle={grid ? s.gridList : s.list}
             columnWrapperStyle={grid ? s.gridRow : undefined}
             getItemLayout={grid ? undefined : (_: unknown, i: number) => ({ length: ROW, offset: ROW * i, index: i })}
-            itemLayoutAnimation={m(LinearTransition.duration(180))}
+            itemLayoutAnimation={m(LinearTransition.duration(DUR.page).easing(EASE_OUT))}
             scrollEnabled={scrollEnabled}
             onScroll={(e: any) => (scrollY.current = e.nativeEvent.contentOffset.y)}
             scrollEventThrottle={16}
@@ -579,7 +613,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
             refreshing={false}
             keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
-              hits && searching ? undefined : <Animated.View entering={m(FadeIn.duration(200))} style={s.empty}>
+              hits && searching ? undefined : <Animated.View entering={m(fadeIn)} style={s.empty}>
                 <View style={[s.emptyIcon, { backgroundColor: theme.accentSoft }]}>
                   <Text style={[s.emptyPlus, { color: theme.accent }]}>{hits ? '∅' : '+'}</Text>
                 </View>
@@ -592,9 +626,18 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </Animated.View>
       </GestureDetector>
 
-      {/* Unten: „Hier einfügen“ oder „+“ */}
-      {clip ? (
-        <Animated.View entering={m(SlideInRight.duration(200))} style={s.bar}>
+      {/* Unten: Aktionsleiste (ab zwei Dateien), „Hier einfügen“ oder „+“ */}
+      {showBar ? (
+        <Animated.View entering={m(toastIn)} style={s.actionBar} accessibilityRole="toolbar">
+          {barActions.map((a) => (
+            <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
+              <Text style={[s.actionIcon, a.danger && { color: theme.danger }]}>{a.icon}</Text>
+              <Text style={[s.actionText, a.danger && { color: theme.danger }]} numberOfLines={1}>{a.label}</Text>
+            </Tap>
+          ))}
+        </Animated.View>
+      ) : clip ? (
+        <Animated.View entering={m(toastIn)} style={s.bar}>
           <Text style={s.clipText} numberOfLines={2}>
             {clip.mode === 'copy' ? t('{n} zum Kopieren ausgewählt', { n: clip.paths.length }) : t('{n} zum Verschieben ausgewählt', { n: clip.paths.length })}
           </Text>
@@ -609,7 +652,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </Animated.View>
       ) : null}
 
-      {menu && sel.size > 0 && <ContextMenu passThrough x={menu.x} y={menu.y} theme={theme} actions={menuActions} onClose={() => setMenu(null)} />}
+      {menu && sel.size > 0 && <ContextMenu x={menu.x} y={menu.y} theme={theme} actions={menuActions} onClose={() => setMenu(null)} />}
 
       <BottomSheet
         visible={sheet === 'create'}
@@ -622,6 +665,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         ]}
       />
       <BottomSheet visible={sheet === 'more'} theme={theme} onClose={() => setSheet(null)} actions={moreActions} />
+      <BottomSheet visible={sheet === 'selection'} title={t('{n} ausgewählt', { n: sel.size })} theme={theme} onClose={() => setSheet(null)} actions={selectionActions} />
 
       <Modal visible={!!naming} transparent animationType="fade" onRequestClose={() => setNaming(null)}>
         <View style={s.modalBg}>
@@ -753,6 +797,13 @@ const styles = (th: Theme) =>
     barBtn: { flex: 1, minHeight: 56, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
     barText: { color: th.text, fontSize: 13, fontWeight: '600' },
     clipText: { flex: 1.6, color: th.text2, fontSize: 13, paddingLeft: 16 },
+    actionBar: {
+      position: 'absolute', left: 0, right: 0, bottom: 0, height: 72, flexDirection: 'row', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 10,
+      backgroundColor: th.dark ? '#2b2d36' : '#ffffff', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.stroke, elevation: 12,
+    },
+    actionBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 14, overflow: 'hidden' },
+    actionIcon: { color: th.text, fontSize: 19, lineHeight: 24 },
+    actionText: { color: th.text, fontSize: 12, marginTop: 2 },
     fabBox: { position: 'absolute', right: 20, bottom: 20 },
     fab: {
       width: 60, height: 60, borderRadius: 20, overflow: 'hidden',

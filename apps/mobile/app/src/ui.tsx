@@ -124,14 +124,14 @@ export function BottomSheet({ visible, title, actions, onClose, theme }: {
 }
 
 /** Tippbare Fläche mit Android-Rückmeldung (Welle). */
-export function Tap({ children, onPress, onLongPress, style, theme, label, disabled, selected }: {
-  children: ReactNode; onPress?: () => void; onLongPress?: () => void; style?: any; theme: Theme; label?: string; disabled?: boolean; selected?: boolean;
+export function Tap({ children, onPress, onLongPress, delayLongPress = 350, style, theme, label, disabled, selected }: {
+  children: ReactNode; onPress?: () => void; onLongPress?: () => void; delayLongPress?: number; style?: any; theme: Theme; label?: string; disabled?: boolean; selected?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      delayLongPress={350}
+      delayLongPress={delayLongPress}
       disabled={disabled}
       android_ripple={{ color: theme.accentSoft as string }}
       style={style}

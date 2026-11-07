@@ -79,12 +79,13 @@ Eigene Ergänzungen:
 └──────────────────────────────┘
 ```
 
-- **Auswahl (seit Feedback-Runde 1):** Lang drücken und, ohne den Finger zu heben, über weitere
-  Einträge wischen – alles Überstrichene wird markiert (am Rand scrollt die Liste mit, jede neue
-  Markierung gibt ein leichtes Haptik-Signal). Beim Loslassen öffnet sich das Kontextmenü **dort, wo
-  der Finger zuerst aufgesetzt hat** (wie bei iOS), nicht als Leiste unten. Oben zeigt die Kopfzeile
-  Anzahl, „Alle“ und „⋯“ (öffnet das Menü erneut). Das Menü deckt nichts ab: Während es offen ist,
-  lassen sich weitere Dateien antippen oder per Halten-und-Wischen dazunehmen; Scrollen schließt es.
+- **Auswahl:** Lang drücken (190 ms) und, ohne den Finger zu heben, über weitere Einträge wischen –
+  alles Überstrichene wird markiert (am Rand scrollt die Liste mit, Haptik bei jeder neuen Markierung).
+  - **Genau eine Datei:** Beim Loslassen öffnet sich das Kontextmenü dort, wo der Finger zuerst
+    aufgesetzt hat, mit leichter Abdunkelung; Antippen daneben schließt nur das Menü.
+  - **Ab zwei Dateien:** Statt des Menüs erscheint unten – an der Stelle der Hauptleiste – eine
+    Aktionsleiste (Teilen, Kopieren, Verschieben, Papierkorb, Mehr). Sie bleibt, bis alle Dateien
+    abgewählt sind.
 - **Dateien:**
   - Start ist der gemeinsame Speicher.
   - Oben eine kleine Ortsauswahl: Telefon, SD-Karte, gekoppelte Geräte.
@@ -101,8 +102,10 @@ Eigene Ergänzungen:
   Treffer sind mit „ähnlich“ markiert.
 - **Bewegung:** Federnde Übergänge statt harter Wechsel (Ordner gleiten seitlich herein, Einträge
   blenden gestaffelt ein, Vorschaubilder blenden auf, Menüs zoomen vom Finger aus auf). Kurze
-  Dauern (120–250 ms), damit nichts träge wirkt. **Keine Federn, die nachschwingen:** Menüs, „+“ und
-  Dialoge klappen mit klarer Ease-out-Kurve von 92 % auf 100 % auf (`popIn` in `src/motion.ts`). Ist „Animationen entfernen“ eingeschaltet, entfallen
+  Dauern (120–250 ms), damit nichts träge wirkt. **Keine Federn, die nachschwingen.** Werte aus dem
+  Designlabor (`apps/mobile/prototype/`, mit dem Nutzer abgestimmt): Kurve `cubic-bezier(0.32, 0.72, 0, 1)`,
+  Menüs/„+“/Dialoge 180 ms von 92 % auf 100 %, Ordnerwechsel 140 ms „Gleiten + Blende“ (30 % Versatz),
+  keine gestaffelt einblendenden Listen. Alles zentral in `src/motion.ts`. Ist „Animationen entfernen“ eingeschaltet, entfallen
   alle Ein- und Ausblendungen (`src/motion.ts`).
 - **Geräte:** Status, Koppeln per Code oder QR-Code (Kamera), Rechte. Kamera-Upload-Regel pro Gerät.
 - **Mehr:** Sicherungen, Papierkorb, Freigabelinks, Speicheranalyse, Einstellungen (inkl. Sprache und
