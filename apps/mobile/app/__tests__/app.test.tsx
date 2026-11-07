@@ -66,6 +66,10 @@ NativeModules.SnapCore = {
   shareFiles: jest.fn(async () => null),
   thumbnail: jest.fn(async () => null),
   haptic: jest.fn(),
+  applyFont: jest.fn(async () => null),
+  pickFont: jest.fn(async () => 'Fira Code'),
+  resetFont: jest.fn(async () => null),
+  setFontFromFile: jest.fn(async () => 'MeineSchrift'),
   lastCrash: jest.fn(async () => crashReport),
   requestAllFilesAccess: jest.fn(),
   storageRoot: jest.fn(async () => '/storage/emulated/0'),
@@ -501,4 +505,29 @@ test('DOCX öffnet die Leseansicht (Kern liest, App zeigt Überschrift, Tabelle,
   } finally {
     listing.DirListing.entries.pop();
   }
+});
+
+test('Schrift: Standard Inconsolata, eigene TTF über Einstellungen und Dateimenü, zurücksetzen', async () => {
+  const { FONT, Text: AppText } = require('../src/text');
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  expect(NativeModules.SnapCore.applyFont).toHaveBeenCalled();
+  // Texte der App nutzen die registrierte Schrift
+  const t = r.root.findAll((n) => (n.type as any) === 'Text' && Array.isArray(n.props.style));
+  expect(t.length).toBeGreaterThan(0);
+  expect(t.every((n) => JSON.stringify(n.props.style).includes(FONT))).toBe(true);
+  expect(AppText).toBeTruthy();
+  // Einstellungen → „TTF-Datei wählen …“
+  await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[3].props.onPress(); });
+  await flush();
+  expect(allText(r)).toContain('Inconsolata (Standard)');
+  await act(async () => { await pressable(r, 'TTF-Datei wählen').props.onPress(); });
+  await flush();
+  expect(NativeModules.SnapCore.pickFont).toHaveBeenCalled();
+  expect(allText(r)).toContain('Fira Code');
+  await act(async () => { await pressable(r, 'Zurück zu Inconsolata').props.onPress(); });
+  await flush();
+  expect(NativeModules.SnapCore.resetFont).toHaveBeenCalled();
+  expect(allText(r)).toContain('Inconsolata (Standard)');
 });

@@ -1,6 +1,8 @@
 // Geräte (Status, Koppeln per Code) und „Mehr“ (Papierkorb, Einstellungen).
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Text, TextInput } from './text';
+import * as core from './core';
 import { request, shortDate } from './core';
 import { LANGUAGES, lang, locale, setLanguage, t } from './i18n';
 import type { Theme } from './theme';
@@ -100,8 +102,11 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
 
 interface TrashEntry { id: string; name: string; original_path: string; deleted_at: string }
 
-export function More({ theme, notify, material, setMaterial, materialAvailable }: {
+export function More({ theme, notify, material, setMaterial, materialAvailable, fontName, onFont }: {
   theme: Theme; notify: (t: string) => void; material: boolean; setMaterial: (v: boolean) => void; materialAvailable: boolean;
+  /** Name der eigenen Schrift oder null (= Inconsolata). */
+  fontName?: string | null;
+  onFont?: (name: string | null) => void;
 }) {
   const s = styles(theme);
   const [trash, setTrash] = useState<TrashEntry[] | null>(null);
@@ -148,6 +153,36 @@ export function More({ theme, notify, material, setMaterial, materialAvailable }
           <Text style={s.muted}>{materialAvailable ? t('Farben aus dem Hintergrundbild verwenden') : t('Ab Android 12 verfügbar')}</Text>
         </View>
         <Switch value={material} disabled={!materialAvailable} onValueChange={setMaterial} />
+      </View>
+      <View style={s.card}>
+        <View style={s.grow}>
+          <Text style={s.strong}>{t('Schriftart')}</Text>
+          <Text style={s.muted}>{fontName ?? t('Inconsolata (Standard)')}</Text>
+          <View style={s.chips}>
+            <Pressable
+              style={s.chip}
+              accessibilityRole="button"
+              onPress={() =>
+                core
+                  .pickFont()
+                  .then((name) => {
+                    if (name) {
+                      onFont?.(name);
+                      notify(t('Schriftart „{name}“ wird verwendet.', { name }));
+                    }
+                  })
+                  .catch((e) => notify(e.message))
+              }
+            >
+              <Text style={s.text}>{t('TTF-Datei wählen …')}</Text>
+            </Pressable>
+            {fontName && (
+              <Pressable style={s.chip} accessibilityRole="button" onPress={() => core.resetFont().then(() => onFont?.(null)).catch((e) => notify(e.message))}>
+                <Text style={s.text}>{t('Zurück zu Inconsolata')}</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
       </View>
     </ScrollView>
   );

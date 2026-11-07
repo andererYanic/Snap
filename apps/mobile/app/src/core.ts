@@ -60,6 +60,12 @@ export const readText = (path: string, maxBytes = 2 * 1024 * 1024): Promise<{ te
   native().readText(path, maxBytes);
 /** Ordner für Bilder aus Word-Dateien (App-Cache). */
 export const docxImageDir = (): Promise<string> => native().docxImageDir();
+/** Schrift registrieren (beim Start); Name der eigenen Schrift oder null (= Inconsolata). */
+export const applyFont = (): Promise<string | null> => native().applyFont?.() ?? Promise.resolve(null);
+/** Eigene Schrift aus einer Datei bzw. über den Auswahldialog; Ergebnis: Name oder null (abgebrochen). */
+export const setFontFromFile = (path: string): Promise<string | null> => native().setFontFromFile(path);
+export const pickFont = (): Promise<string | null> => native().pickFont();
+export const resetFont = (): Promise<void> => native().resetFont();
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

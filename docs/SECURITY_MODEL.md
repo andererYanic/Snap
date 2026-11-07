@@ -135,6 +135,12 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   ≤ 20 MiB, höchstens 100, unter eigenen Namen im App-Cache; Pfade mit `..`/absolut/URL werden
   verworfen. Links nur `http(s)`/`mailto`. Nur lokal (keine Anfrage für Geräte). Fuzz-Ziel
   `docx_read` prüft die Invarianten.
+- **Eigene Schriftart (Android):** Nur auf Wunsch des Nutzers (Auswahldialog des Systems oder
+  Dateimenü). Geprüft werden Größe (≤ 15 MB), Dateikopf (TrueType/OpenType) und ob Android die Datei
+  lädt; erst dann ersetzt sie die bisherige (privater App-Speicher). Kaputte Schrift beim Start →
+  Rückfall auf Inconsolata. **Restrisiko:** Schriften werden von Androids eigenem Schriftsystem
+  ausgewertet; eine bösartige Schriftdatei könnte dort Fehler auslösen – sie kommt aber nur auf
+  ausdrückliche Wahl des Nutzers in die App.
 - **Eingaben von außen:** Größenlimits (IPC 1 MiB, Ledger-Seite 1000 Einträge / 8 MiB,
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.

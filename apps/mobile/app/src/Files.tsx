@@ -5,9 +5,8 @@
 //   erscheint das Menü dort, wo der Finger zuerst lag (wie bei iOS).
 // - Bilder und Videos öffnen in der eingebauten Anzeige, alles andere mit der passenden App.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './text';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
@@ -32,6 +31,8 @@ interface Props {
    * einfügen“ hinein; `null` = Hauptmenü. So ändert sich die Höhe der Liste nie.
    */
   bottomSlot?: (node: React.ReactNode) => void;
+  /** Schrift wurde geändert (Name oder null = Inconsolata). */
+  onFont?: (name: string | null) => void;
   /** Zähler: ändert er sich, geht es zurück zur Startansicht (erneutes Antippen von „Dateien“). */
   home?: number;
 }
@@ -52,7 +53,7 @@ const FOLDERS: [string, string][] = [
   ['Movies', 'Videos'],
 ];
 
-export default function Files({ theme, root, notify, selectionChanged, bottomSlot, home = 0 }: Props) {
+export default function Files({ theme, root, notify, selectionChanged, bottomSlot, onFont, home = 0 }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [items, setItems] = useState<Item[]>([]);
@@ -579,6 +580,21 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     }
     if (/\.pdf$/i.test(e.name) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(e.name)) {
       return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
+    }
+    if (/\.(ttf|otf)$/i.test(e.name)) {
+      return [{
+        label: t('Als Schriftart verwenden'),
+        onPress: () => {
+          done();
+          core
+            .setFontFromFile(e.path)
+            .then((name) => {
+              onFont?.(name);
+              notify(t('Schriftart „{name}“ wird verwendet.', { name: name ?? e.name }));
+            })
+            .catch(fail);
+        },
+      }];
     }
     if (/\.(docx?|odt|rtf|xlsx?|ods|pptx?|odp)$/i.test(e.name)) {
       return [{ label: t('Mit Office-App öffnen'), onPress: () => { done(); core.openFile(e.path).catch(fail); } }];

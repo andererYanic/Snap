@@ -224,6 +224,81 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     promise.resolve(dir.absolutePath)
   }
 
+  /** Schrift registrieren; Ergebnis: Name der eigenen Schrift oder null (Inconsolata). */
+  @ReactMethod
+  fun applyFont(promise: Promise) {
+    try {
+      Fonts.apply(ctx.applicationContext)
+      promise.resolve(Fonts.customName(ctx.applicationContext))
+    } catch (e: Throwable) {
+      promise.resolve(null)
+    }
+  }
+
+  /** Eigene Schrift aus einer Datei (z. B. aus dem Dateibrowser von Snap). */
+  @ReactMethod
+  fun setFontFromFile(path: String, promise: Promise) {
+    val f = regularFile(path) ?: return promise.reject("font", "Nur Dateien lassen sich verwenden.")
+    scope.launch {
+      try {
+        f.inputStream().use { Fonts.import(ctx.applicationContext, it, f.name) }
+        promise.resolve(Fonts.customName(ctx.applicationContext))
+      } catch (e: Throwable) {
+        promise.reject("font", e.message ?: "Diese Schrift lässt sich nicht verwenden.")
+      }
+    }
+  }
+
+  private val FONT_REQUEST = 4711
+  private var fontPromise: Promise? = null
+  private val fontPicker = object : com.facebook.react.bridge.BaseActivityEventListener() {
+    override fun onActivityResult(activity: android.app.Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+      if (requestCode != FONT_REQUEST) return
+      val p = fontPromise ?: return
+      fontPromise = null
+      val uri = data?.data
+      if (resultCode != android.app.Activity.RESULT_OK || uri == null) return p.resolve(null)
+      scope.launch {
+        try {
+          val name = ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "Eigene Schrift"
+          val input = ctx.contentResolver.openInputStream(uri) ?: throw IllegalArgumentException("Datei nicht lesbar.")
+          input.use { Fonts.import(ctx.applicationContext, it, name) }
+          p.resolve(Fonts.customName(ctx.applicationContext))
+        } catch (e: Throwable) {
+          p.reject("font", e.message ?: "Diese Schrift lässt sich nicht verwenden.")
+        }
+      }
+    }
+  }
+
+  /** Systemdialog „Datei auswählen“ für eine TTF/OTF-Schrift (ohne Google-Dienste). */
+  @ReactMethod
+  fun pickFont(promise: Promise) {
+    val activity = ctx.currentActivity ?: return promise.reject("font", "App ist nicht im Vordergrund.")
+    if (fontPromise != null) return promise.reject("font", "Auswahl läuft bereits.")
+    fontPromise = promise
+    ctx.removeActivityEventListener(fontPicker)
+    ctx.addActivityEventListener(fontPicker)
+    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+      .addCategory(Intent.CATEGORY_OPENABLE)
+      .setType("*/*")
+      .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("font/ttf", "font/otf", "font/sfnt", "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt", "application/octet-stream"))
+    try {
+      activity.startActivityForResult(intent, FONT_REQUEST)
+    } catch (e: Throwable) {
+      fontPromise = null
+      promise.reject("font", e.message ?: e.toString())
+    }
+  }
+
+  /** Zurück zur Standardschrift Inconsolata. */
+  @ReactMethod
+  fun resetFont(promise: Promise) {
+    Fonts.reset(ctx.applicationContext)
+    promise.resolve(null)
+  }
+
   /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
   @ReactMethod
   fun printFile(path: String, promise: Promise) {
@@ -372,4 +447,5 @@ object CoreHolder {
     })
     subscribed = true
   }
+
 }

@@ -1,7 +1,8 @@
 // Snap für Android: Start (Berechtigung, Kern), untere Navigation, Rückgängig-Leiste.
 // Gestaltung: docs/MOBILE_UX.md (Snap-Optik, Android-Bedienung, Material You wahlweise).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Pressable, ScrollView, StatusBar, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { AppState, Pressable, ScrollView, StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+import { Text } from './src/text';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +29,13 @@ export default function App() {
   const [crash, setCrash] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
   const [, setSelecting] = useState(false);
+  // Schrift: Name der eigenen Schrift (null = Inconsolata); Version erzwingt Neuzeichnen
+  const [fontName, setFontName] = useState<string | null>(null);
+  const [fontVersion, setFontVersion] = useState(0);
+  const fontChanged = useCallback((name: string | null) => {
+    setFontName(name);
+    setFontVersion((v) => v + 1);
+  }, []);
   // Inhalt des unteren Platzes von „Dateien“ (Aktionsleiste, „Hier einfügen“); null = Hauptmenü
   const [bottomBar, setBottomBar] = useState<React.ReactNode>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -35,7 +43,8 @@ export default function App() {
 
   const boot = useCallback(async (force = false) => {
     try {
-      await Promise.all([initLanguage(), initMotion()]);
+      const [, , font] = await Promise.all([initLanguage(), initMotion(), core.applyFont().catch(() => null)]);
+      setFontName(font);
       const sdk = await core.sdkInt();
       setMaterialAvailable(sdk >= 31);
       setMaterialState((await core.getPref('material')) === '1');
@@ -140,16 +149,16 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider>
-      <View style={s.bg}>
+      <View style={s.bg} key={`font-${fontVersion}`}>
         {bar}
         <View style={s.tint} />
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab !== 'files' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
-            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} />}
+            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} onFont={fontChanged} />}
             {tab === 'photos' && <Photos theme={theme} />}
             {tab === 'devices' && <Devices theme={theme} notify={notify} />}
-            {tab === 'more' && <More theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} />}
+            {tab === 'more' && <More theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} fontName={fontName} onFont={fontChanged} />}
           </Animated.View>
           {toast && (
             <Animated.View entering={m(toastIn)} exiting={m(toastOut)} style={s.toast}>

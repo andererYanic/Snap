@@ -1,7 +1,8 @@
 // Gemeinsame Bausteine: Symbole (aus Formen gezeichnet – keine fremden Grafiken),
 // untere Auswahlfläche (Bottom Sheet), tippbare Zeile mit Rückmeldung.
 import type { ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './text';
 import Animated from 'react-native-reanimated';
 import { fadeIn, m, sheetIn } from './motion';
 import type { Theme } from './theme';

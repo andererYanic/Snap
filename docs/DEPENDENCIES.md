@@ -30,6 +30,7 @@ davon über Iroh.
 | `flate2` (Backend `miniz_oxide`) | Deflate/gzip | Standard, reines Rust-Backend. |
 | `tar` (ohne `xattr`) | tar/tar.gz entpacken | Etabliert (alexcrichton). Wir nutzen nur das Lesen der Einträge, nicht `unpack()`; Pfade und Typen prüft Snap selbst. |
 | `quick-xml` | DOCX-Leseansicht (XML lesen) | Verbreitet, reines Rust. Löst keine DTD-Entitäten auf (kein XXE). Version ≥ 0.41 wegen RUSTSEC-2026-0194/0195. Fuzz-Ziel `docx_read`. |
+| Schrift **Inconsolata** (Android-App, `assets/fonts/`) | Standardschrift der App | SIL Open Font License 1.1 (Lizenztext liegt bei: `Inconsolata-OFL.txt`); mit GPL-3.0 zusammen verteilbar. Bezogen aus dem offiziellen Projekt-Repository, keine Laufzeit-Abhängigkeit. |
 | `uniffi` (nur `apps/mobile/core-ffi`) | Kotlin-Anbindung des Kerns für Android | Von Mozilla, in Firefox für Android im Einsatz. Bringt zum Erzeugen der Anbindung `askama` und `basic-toml` mit (nur Bauzeit; `basic-toml` als „unmaintained“ gemeldet, ohne bekannte Lücke). |
 
 **Android-App (npm, Prüfung per `npm audit` in der CI):**
