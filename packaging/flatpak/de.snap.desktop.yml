@@ -9,7 +9,6 @@ runtime: org.gnome.Platform
 runtime-version: '48'
 sdk: org.gnome.Sdk
 sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
   - org.freedesktop.Sdk.Extension.node22
 command: snap-desktop
 finish-args:
@@ -28,14 +27,17 @@ modules:
   - name: snap
     buildsystem: simple
     build-options:
-      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+      # Rust in fester Version (wie im Release-Workflow), die SDK-Erweiterung ist zu alt
+      append-path: /run/build/snap/cargo-home/bin:/usr/lib/sdk/node22/bin
       build-args:
         - --share=network
       env:
         CARGO_HOME: /run/build/snap/cargo-home
+        RUSTUP_HOME: /run/build/snap/rustup-home
         CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
         npm_config_cache: /run/build/snap/npm-cache
     build-commands:
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.0 --no-modify-path
       # Oberfläche
       - cd apps/desktop && npm ci --no-fund --no-audit && npm run build
       # Dienst und App (App mit eingebetteter Oberfläche statt Entwicklungsserver)
