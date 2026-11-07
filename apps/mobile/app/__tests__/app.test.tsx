@@ -265,3 +265,22 @@ test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt b
   await flush();
   expect((getByGestureTestId('viewer-pan') as any).config.enabled).toBe(false);
 });
+
+test('Suchfeld bleibt beim ersten Buchstaben dasselbe Feld (Tastatur schließt nicht)', async () => {
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await flush();
+  const find = () => r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Überall suchen');
+  const node = () => (find() as any)._fiber.stateNode;
+  const before = node();
+  expect(before).toBeTruthy();
+  await act(async () => { find().props.onChangeText('u'); });
+  expect(allText(r)).not.toContain('Interner Speicher'); // Ansicht hat gewechselt …
+  expect(node()).toBe(before); // … das Eingabefeld aber nicht
+  await act(async () => { await new Promise<void>((resolve) => { setTimeout(() => resolve(), 260); }); });
+  expect(node()).toBe(before);
+  // Zurück zur Startseite: weiterhin dasselbe Feld
+  await act(async () => { find().props.onChangeText(''); });
+  expect(allText(r)).toContain('Interner Speicher');
+  expect(node()).toBe(before);
+});

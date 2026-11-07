@@ -436,13 +436,13 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   );
 
   // ------------------------------------------------------------ Startseite
-  if (path === null && !hits) {
-    const used = storage ? storage.total - storage.free : 0;
-    return (
+  // Startseite und Suche teilen sich EIN Suchfeld an derselben Stelle im Baum: Beim ersten
+  // Buchstaben wechselt nur der Inhalt darunter – die Tastatur bleibt offen.
+  const onLanding = path === null && !hits;
+  const used = storage ? storage.total - storage.free : 0;
+  const landingBody = !onLanding ? null : (
       <Animated.View entering={m(dir === 'back' ? pageIn('back') : fadeIn)} style={s.fill}>
         <ScrollView contentContainerStyle={s.landing} keyboardShouldPersistTaps="handled">
-          <Text style={s.bigTitle}>{t('Dateien')}</Text>
-          <SearchField theme={theme} value={query} onChange={setQuery} />
           <Text style={s.section}>{t('Speicher')}</Text>
           <Tap theme={theme} onPress={() => go(root, 'forward')} style={s.card} label={t('Interner Speicher')}>
             <View style={s.cardRow}>
@@ -481,11 +481,10 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           </View>
         </ScrollView>
       </Animated.View>
-    );
-  }
+  );
 
   // ------------------------------------------------------------ Explorer / Suche
-  const title = hits ? '' : path === root ? t('Interner Speicher') : path!.slice(path!.lastIndexOf('/') + 1);
+  const title = hits || path === null ? '' : path === root ? t('Interner Speicher') : path.slice(path.lastIndexOf('/') + 1);
   const single = selected.length === 1 ? selected[0] : null;
   const menuActions: MenuAction[] = [
     ...(single && single.kind === 'File' ? [{ label: t('Öffnen'), onPress: () => open({ ...single }) }] : []),
@@ -539,13 +538,18 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
             </Tap>
           )}
         </Animated.View>
-      ) : hits ? (
-        <View style={s.searchHeader}>
-          <Tap theme={theme} onPress={() => setQuery('')} style={s.iconBtn} label={t('Zurück')}>
-            <Text style={s.iconText}>‹</Text>
-          </Tap>
-          <View style={s.grow}>
-            <SearchField theme={theme} value={query} onChange={setQuery} autoFocus />
+      ) : path === null || hits ? (
+        <View style={hits ? s.searchTopActive : s.searchTop}>
+          {!hits && <Text style={s.bigTitle}>{t('Dateien')}</Text>}
+          <View style={s.searchRow}>
+            {hits ? (
+              <Tap theme={theme} onPress={() => setQuery('')} style={s.iconBtn} label={t('Zurück')}>
+                <Text style={s.iconText}>‹</Text>
+              </Tap>
+            ) : null}
+            <View style={s.grow}>
+              <SearchField theme={theme} value={query} onChange={setQuery} />
+            </View>
           </View>
         </View>
       ) : (
@@ -563,6 +567,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </View>
       )}
 
+      {landingBody ?? (
       <GestureDetector gesture={selectGesture}>
         <Animated.View
           key={`${path}|${view}|${hits ? 'q' : ''}`}
@@ -604,9 +609,10 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           />
         </Animated.View>
       </GestureDetector>
+      )}
 
       {/* Unten: Aktionsleiste (ab zwei Dateien), „Hier einfügen“ oder „+“ */}
-      {showBar ? (
+      {onLanding ? null : showBar ? (
         <Animated.View entering={m(toastIn)} style={s.actionBar} accessibilityRole="toolbar">
           {barActions.map((a) => (
             <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
@@ -770,7 +776,7 @@ const styles = themed((th: Theme) =>
   StyleSheet.create({
     fill: { flex: 1 },
     grow: { flex: 1 },
-    landing: { padding: 16, paddingBottom: 40 },
+    landing: { paddingHorizontal: 16, paddingBottom: 40 },
     bigTitle: { color: th.text, fontSize: 30, fontWeight: '700', marginTop: 4, marginBottom: 14 },
     search: {
       flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingLeft: 14, borderRadius: 16,
@@ -779,7 +785,9 @@ const styles = themed((th: Theme) =>
     searchIcon: { color: th.text2, fontSize: 18, marginRight: 8 },
     searchInput: { flex: 1, color: th.text, fontSize: 16, paddingVertical: 10 },
     clear: { width: 48, height: 48, justifyContent: 'center', alignItems: 'center' },
-    searchHeader: { flexDirection: 'row', alignItems: 'center', paddingRight: 12, paddingVertical: 4 },
+    searchTop: { paddingHorizontal: 16, paddingTop: 4 },
+    searchTopActive: { paddingRight: 12, paddingVertical: 4 },
+    searchRow: { flexDirection: 'row', alignItems: 'center' },
     section: { color: th.text2, fontSize: 13, fontWeight: '700', marginTop: 24, marginBottom: 8, marginLeft: 4, letterSpacing: 0.3 },
     card: { borderRadius: 18, backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke, overflow: 'hidden' },
     cardRow: { flexDirection: 'row', alignItems: 'center', padding: 16 },
