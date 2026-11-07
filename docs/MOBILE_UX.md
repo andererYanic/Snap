@@ -102,6 +102,11 @@ Eigene Ergänzungen:
   erscheint sofort ein 1024-px-Vorschaubild, dann das Original. Gewischt wird durch alle Dateien des
   Ordners; was die Anzeige nicht darstellt (PDF, Text …), erscheint als Karte mit „Öffnen mit …“. Videos über Media3/ExoPlayer; was
   nicht abspielbar ist, bietet „Mit anderer App öffnen“ an.
+- **Bilder bearbeiten:** im Menü am Finger und in der Bildanzeige. Zuschneiden (frei oder 1:1, 4:3,
+  3:4, 16:9, Ecken ziehen, Drittel-Raster), Drehen, Helligkeit/Kontrast/Sättigung/Wärme, Filter. Android
+  rechnet (Hardware), die Vorschau folgt den Reglern nach kurzer Pause. Speichern fragt: Kopie
+  (Original bleibt) oder Original ersetzen (Original in den Papierkorb, „Rückgängig“). Aufnahmedatum,
+  Kamera und Ort bleiben erhalten.
 - **Suche:** Wechsel in die Suchansicht schon beim ersten Buchstaben, Ergebnisse beim Tippen (160 ms Pause), Tippfehler werden toleriert; solche
   Treffer sind mit „ähnlich“ markiert.
 - **Bewegung:** Federnde Übergänge statt harter Wechsel (Ordner gleiten seitlich herein, Einträge

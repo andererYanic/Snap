@@ -66,6 +66,19 @@ export const applyFont = (family = 'SnapFont'): Promise<string | null> => native
 export const setFontFromFile = (path: string): Promise<string | null> => native().setFontFromFile(path);
 export const pickFont = (): Promise<string | null> => native().pickFont();
 export const resetFont = (): Promise<void> => native().resetFont();
+/** Bildbearbeitung (Android): Parameter wie in `ImageEditor`. */
+export interface EditParams {
+  rot: number;
+  crop: { x: number; y: number; w: number; h: number } | null;
+  light: number;
+  contrast: number;
+  sat: number;
+  warm: number;
+  filter: string;
+}
+export const editPreview = (path: string, p: EditParams, edge: number, withCrop = false): Promise<string> =>
+  native().editPreview(path, JSON.stringify(p), edge, withCrop);
+export const editSave = (path: string, p: EditParams, mode: 'copy' | 'temp'): Promise<string> => native().editSave(path, JSON.stringify(p), mode);
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

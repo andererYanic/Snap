@@ -509,3 +509,12 @@ Anlass: Der Nutzer meldete starke Bildeinbrüche und träge Menüs. Neue Messung
   gemeldet – eine Nachricht von < 100 Byte. Kein messbarer Einfluss auf Akku oder Netz.
 - `pair list` liest den zuletzt gemeldeten Wert aus dem Speicher (keine Netzabfrage) – die
   Startseite blockiert nicht.
+
+## Review 24 – Bildbearbeitung (Android, 2026-11-07)
+
+- Vorschau: Android dekodiert das Bild verkleinert (höchstens ~1080–2048 px Kante, 4 MP), wendet
+  Drehung und Farbmatrix auf der Grafik-Pipeline an und legt das Ergebnis als JPEG im Cache ab
+  (80 MB begrenzt). Regler sind entprellt (90 ms), veraltete Vorschauen werden verworfen; alles
+  läuft außerhalb des UI-Threads, die Oberfläche bleibt bedienbar.
+- Speichern in voller Größe (höchstens 24 MP, sonst verkleinert), ebenfalls im Hintergrund.
+- **Offen:** Messung auf echter Hardware (Vorschau-Zeit je Reglerschritt) nachholen.

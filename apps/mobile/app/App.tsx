@@ -163,7 +163,7 @@ export default function App() {
           {tab === 'photos' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
             {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} onFont={fontChanged} />}
-            {tab === 'photos' && <Photos theme={theme} />}
+            {tab === 'photos' && <Photos theme={theme} notify={notify} />}
             {tab === 'settings' && (
               <Settings theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} fontName={fontName} onFont={fontChanged} home={settingsHome} />
             )}

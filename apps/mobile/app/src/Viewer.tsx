@@ -30,7 +30,11 @@ export interface MediaItem {
 
 const { width: W, height: H } = Dimensions.get('window');
 
-export default function Viewer({ items, start, onClose }: { items: MediaItem[]; start: number; onClose: () => void }) {
+export default function Viewer({ items, start, onClose, onEdit }: {
+  items: MediaItem[]; start: number; onClose: () => void;
+  /** Bild bearbeiten (eingebauter Editor); fehlt er, gibt es keinen Knopf. */
+  onEdit?: (item: MediaItem) => void;
+}) {
   const [index, setIndex] = useState(start);
   const [chrome, setChrome] = useState(true);
   const [zoomed, setZoomed] = useState(false);
@@ -98,6 +102,11 @@ export default function Viewer({ items, start, onClose }: { items: MediaItem[]; 
               <Text style={styles.title} numberOfLines={1}>{item.name}</Text>
               <Text style={styles.counter}>{`${index + 1} / ${items.length}`}</Text>
             </View>
+            {onEdit && !isVideo(item.name) && (
+              <Pressable onPress={() => onEdit(item)} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Bearbeiten')}>
+                <Text style={styles.btnSmall}>{t('Bearbeiten')}</Text>
+              </Pressable>
+            )}
             <Pressable onPress={() => core.shareFiles([item.path]).catch(() => {})} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Teilen')}>
               <Text style={styles.btnSmall}>{t('Teilen')}</Text>
             </Pressable>

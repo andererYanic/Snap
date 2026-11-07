@@ -16,6 +16,7 @@ import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
+import ImageEditor from './ImageEditor';
 import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
 import Viewer from './Viewer';
@@ -76,6 +77,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [hits, setHits] = useState<Item[] | null>(null);
   const [searching, setSearching] = useState(false); // Anfrage läuft noch
   const [pdf, setPdf] = useState<{ path: string; name: string } | null>(null);
+  const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
   const [viewer, setViewer] = useState<{ items: Item[]; start: number } | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
@@ -608,7 +610,13 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     if (ARCHIVE.test(e.name)) {
       return [{ label: t('Entpacken'), onPress: () => extractAll([e.path]) }];
     }
-    if (/\.pdf$/i.test(e.name) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(e.name)) {
+    if (/\.(jpe?g|png|webp|heic|heif|bmp)$/i.test(e.name)) {
+      return [
+        { label: t('Bearbeiten'), onPress: () => { done(); setEditing({ path: e.path, name: e.name }); } },
+        { label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } },
+      ];
+    }
+    if (/\.pdf$/i.test(e.name) || /\.gif$/i.test(e.name)) {
       return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
     }
     if (/\.(ttf|otf)$/i.test(e.name)) {
@@ -871,7 +879,30 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
 
       {textFile && <TextViewer path={textFile.path} name={textFile.name} theme={theme} onClose={() => setTextFile(null)} />}
       {pdf && <PdfViewer path={pdf.path} name={pdf.name} onClose={() => setPdf(null)} />}
-      {viewer && <Viewer items={viewer.items} start={viewer.start} onClose={() => setViewer(null)} />}
+      {viewer && (
+        <Viewer
+          items={viewer.items}
+          start={viewer.start}
+          onClose={() => setViewer(null)}
+          onEdit={(it) => {
+            setViewer(null);
+            setEditing({ path: it.path, name: it.name });
+          }}
+        />
+      )}
+      {editing && (
+        <ImageEditor
+          path={editing.path}
+          name={editing.name}
+          notify={(text, undo) => notify(text, undo ? () => { undo(); setTimeout(load, 300); } : undefined)}
+          onClose={(changed) => {
+            setEditing(null);
+            if (changed) {
+              load();
+            }
+          }}
+        />
+      )}
     </View>
   );
 }

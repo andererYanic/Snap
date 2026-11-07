@@ -4,7 +4,7 @@ use super::archive::{self, Password};
 use super::ops::{self, Conflict, Done, Progress};
 use super::trash::{remove_any, Trash};
 use crate::api_bail;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -59,6 +59,12 @@ pub enum FileOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
+    /// `path` durch `with` ersetzen (z. B. bearbeitetes Bild): das Original wandert in den
+    /// Papierkorb, `with` (im selben Ordner) nimmt seinen Platz ein. Rückgängig stellt es wieder her.
+    Replace {
+        path: PathBuf,
+        with: PathBuf,
+    },
     /// Archiv (ZIP, tar, tar.gz) in einen neuen Ordner daneben entpacken.
     Extract {
         archive: PathBuf,
@@ -79,6 +85,9 @@ impl FileOp {
             FileOp::Trash { paths } => format!("{} Einträge in den Papierkorb", paths.len()),
             FileOp::Delete { paths } => format!("{} Einträge endgültig löschen", paths.len()),
             FileOp::Compress { sources, .. } => format!("{} Einträge packen", sources.len()),
+            FileOp::Replace { path, .. } => {
+                format!("'{}' ersetzen", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+            }
             FileOp::Extract { archive, .. } => format!(
                 "'{}' entpacken",
                 archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
@@ -149,6 +158,8 @@ enum Undo {
     TrashCopies(Vec<PathBuf>),
     /// Angelegten (leeren) Ordner entfernen.
     RemoveDir(PathBuf),
+    /// Ersetzte Datei: neue Fassung in den Papierkorb, Original zurückholen.
+    ReplaceBack { path: PathBuf, original: String },
 }
 
 /// Verwaltet laufende Aufträge und den „Rückgängig“-Stapel.
@@ -229,6 +240,26 @@ impl FileJobs {
                 }
                 Some(Undo::Restore(out.trashed.clone()))
             }
+            FileOp::Replace { path, with } => {
+                if !path.is_absolute() || !with.is_absolute() || path.parent() != with.parent() {
+                    api_bail!(InvalidInput, "Ersetzen nur mit einer Datei im selben Ordner.");
+                }
+                let (Ok(old), Ok(new)) = (std::fs::symlink_metadata(path), std::fs::symlink_metadata(with)) else {
+                    api_bail!(NotFound, "Datei existiert nicht.");
+                };
+                if !old.is_file() || !new.is_file() {
+                    api_bail!(InvalidInput, "Nur Dateien lassen sich ersetzen.");
+                }
+                let id = self.trash.trash(path)?;
+                if let Err(e) = ops::rename_noreplace(with, path) {
+                    // Original sofort zurück, nichts verlieren
+                    let _ = self.trash.restore(&id.to_string_lossy(), false);
+                    return Err(e).context("Ersetzen fehlgeschlagen");
+                }
+                out.done = vec![Done { from: with.clone(), to: path.clone() }];
+                out.trashed = vec![id.to_string_lossy().into_owned()];
+                Some(Undo::ReplaceBack { path: path.clone(), original: id.to_string_lossy().into_owned() })
+            }
             FileOp::Compress { sources, name } => {
                 let x = archive::compress(sources, name.as_deref(), p)?;
                 out.done = vec![Done { from: sources[0].clone(), to: x.archive.clone() }];
@@ -302,6 +333,11 @@ impl FileJobs {
                     self.trash.trash(path)?;
                     dirs.extend(path.parent().map(Path::to_path_buf));
                 }
+            }
+            Undo::ReplaceBack { path, original } => {
+                self.trash.trash(&path)?;
+                self.trash.restore(&original, false)?;
+                dirs.extend(path.parent().map(Path::to_path_buf));
             }
             Undo::RemoveDir(dir) => {
                 if std::fs::remove_dir(&dir).is_err() {
@@ -393,5 +429,27 @@ mod tests {
         assert_eq!(out.affected_dirs(&op), vec![root.clone()]);
         jobs.undo().unwrap();
         assert!(!root.join("Paket").exists() && root.join("Paket.zip").exists());
+    }
+
+    #[test]
+    fn replace_and_undo() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("r");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("bild.jpg"), b"original").unwrap();
+        std::fs::write(root.join(".snap-edit-1.jpg"), b"bearbeitet").unwrap();
+        let jobs = FileJobs::new(Trash::new(dir.path().join("Trash")));
+        let p = Progress::default();
+        // Nur im selben Ordner
+        let other = dir.path().join("anders.jpg");
+        std::fs::write(&other, b"x").unwrap();
+        assert!(jobs.run(&FileOp::Replace { path: root.join("bild.jpg"), with: other }, &p).is_err());
+        let op = FileOp::Replace { path: root.join("bild.jpg"), with: root.join(".snap-edit-1.jpg") };
+        let out = jobs.run(&op, &p).unwrap();
+        assert_eq!(out.trashed.len(), 1);
+        assert_eq!(std::fs::read(root.join("bild.jpg")).unwrap(), b"bearbeitet");
+        assert!(!root.join(".snap-edit-1.jpg").exists());
+        jobs.undo().unwrap();
+        assert_eq!(std::fs::read(root.join("bild.jpg")).unwrap(), b"original");
     }
 }
