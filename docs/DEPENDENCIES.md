@@ -40,6 +40,7 @@ davon über Iroh.
 | `react-native-reanimated`, `react-native-worklets` | Animationen auf dem UI-Thread | Von Software Mansion, Standard in React Native. Keine Netzwerkzugriffe. |
 | `react-native-gesture-handler` | Gesten (Wisch-Auswahl, Zoom, Wischen zum Schließen) | Von Software Mansion, Standard. |
 | `react-native-video` (Media3/ExoPlayer) | Videos in der App abspielen | Nur lokale Dateien. Google-IMA-Werbemodul sowie HLS/DASH/RTSP/SmoothStreaming in `gradle.properties` abgeschaltet; Media3 selbst ist quelloffen (Apache-2.0) und braucht keine Play-Dienste. |
+| `androidx.media3:media3-transformer`, `media3-effect` (1.8.0) | Videos kürzen, drehen, Ton entfernen | Gleiche Media3-Version wie die Wiedergabe, Apache-2.0, ohne Play-Dienste; arbeitet nur mit lokalen Dateien. |
 
 ## Ergebnisse
 

@@ -79,6 +79,26 @@ export interface EditParams {
 export const editPreview = (path: string, p: EditParams, edge: number, withCrop = false): Promise<string> =>
   native().editPreview(path, JSON.stringify(p), edge, withCrop);
 export const editSave = (path: string, p: EditParams, mode: 'copy' | 'temp'): Promise<string> => native().editSave(path, JSON.stringify(p), mode);
+export interface VideoParams {
+  startMs: number;
+  endMs: number;
+  mute: boolean;
+  /** Drehung im Uhrzeigersinn (0, 90, 180, 270). */
+  rot: number;
+}
+export interface VideoInfo {
+  durationMs: number;
+  width: number;
+  height: number;
+  rotation: number;
+  audio: boolean;
+}
+export const videoInfo = async (path: string): Promise<VideoInfo> => JSON.parse(await native().videoInfo(path));
+export const videoFrames = async (path: string, count: number, edge: number): Promise<(string | null)[]> =>
+  JSON.parse(await native().videoFrames(path, count, edge));
+export const videoSave = (path: string, p: VideoParams, mode: 'copy' | 'temp'): Promise<string> => native().videoSave(path, JSON.stringify(p), mode);
+export const videoProgress = (): Promise<number> => native().videoProgress();
+export const videoCancel = (): void => native().videoCancel();
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

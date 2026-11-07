@@ -118,6 +118,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     // Hintergrundarbeit (lokal, ohne Google-Dienste)
     implementation("androidx.work:work-runtime-ktx:2.10.1")
+    // Videobearbeitung auf dem Gerät (gleiche Media3-Version wie react-native-video)
+    implementation("androidx.media3:media3-transformer:1.8.0")
+    implementation("androidx.media3:media3-effect:1.8.0")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

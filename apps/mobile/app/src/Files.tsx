@@ -14,9 +14,9 @@ import * as core from './core';
 import { humanSize, joinPath, parentOf, request, shortDate, type DirEntry } from './core';
 import { locale, t } from './i18n';
 import type { Theme } from './theme';
-import { isMedia, Thumb } from './thumbs';
+import { isMedia, isVideo, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
-import ImageEditor from './ImageEditor';
+import Editor from './Editor';
 import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
 import Viewer from './Viewer';
@@ -616,6 +616,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         { label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } },
       ];
     }
+    if (isVideo(e.name)) {
+      return [{ label: t('Bearbeiten'), onPress: () => { done(); setEditing({ path: e.path, name: e.name }); } }];
+    }
     if (/\.pdf$/i.test(e.name) || /\.gif$/i.test(e.name)) {
       return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
     }
@@ -891,7 +894,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         />
       )}
       {editing && (
-        <ImageEditor
+        <Editor
           path={editing.path}
           name={editing.name}
           notify={(text, undo) => notify(text, undo ? () => { undo(); setTimeout(load, 300); } : undefined)}

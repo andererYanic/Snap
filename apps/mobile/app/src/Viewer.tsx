@@ -102,7 +102,7 @@ export default function Viewer({ items, start, onClose, onEdit }: {
               <Text style={styles.title} numberOfLines={1}>{item.name}</Text>
               <Text style={styles.counter}>{`${index + 1} / ${items.length}`}</Text>
             </View>
-            {onEdit && !isVideo(item.name) && (
+            {onEdit && (
               <Pressable onPress={() => onEdit(item)} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Bearbeiten')}>
                 <Text style={styles.btnSmall}>{t('Bearbeiten')}</Text>
               </Pressable>

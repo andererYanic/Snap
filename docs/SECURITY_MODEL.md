@@ -177,6 +177,11 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   privaten App-Ordner, geschützt durch die Android-Sandbox.
 - Die Oberfläche ist mitgelieferter nativer Code (React Native). Feindliche Dateinamen werden als
   Text dargestellt, nicht als HTML. Folgenreiches bestätigt die App trotzdem in nativen Dialogen.
+- Bild- und Videobearbeitung laufen nur auf dem Gerät (Android-Dekoder bzw. Media3 Transformer).
+  Pfade aus der Oberfläche werden geprüft (absolut, ohne `..`, reguläre Datei); Ergebnisse werden
+  nie über bestehende Dateien geschrieben (`createNewFile`), „Original ersetzen“ läuft über den Kern
+  (Original in den Papierkorb, nur im selben Ordner, rückgängig machbar). Feindliche Mediendateien
+  treffen dieselben Dekoder wie beim Abspielen; Bilder werden auf 24 MP begrenzt dekodiert.
 - Keine Google-Dienste und keine Tracker. Verteilung als signierte APK über GitHub.
 
 ## Betrieb in fremden Umgebungen (geprüft 2026-11-06)

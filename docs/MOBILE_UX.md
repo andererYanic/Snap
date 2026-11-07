@@ -107,6 +107,10 @@ Eigene Ergänzungen:
   rechnet (Hardware), die Vorschau folgt den Reglern nach kurzer Pause. Speichern fragt: Kopie
   (Original bleibt) oder Original ersetzen (Original in den Papierkorb, „Rückgängig“). Aufnahmedatum,
   Kamera und Ort bleiben erhalten.
+- **Videos bearbeiten:** im Menü am Finger und in der Videoanzeige. Kürzen über zwei Griffe auf einer
+  Zeitleiste aus Einzelbildern (Vorschau springt mit, Abspielen nur im gewählten Ausschnitt), Ton
+  aus, Drehen in 90°-Schritten. Export auf dem Gerät mit Media3 Transformer (ohne Google-Dienste),
+  mit Fortschritt und „Abbrechen“. Ergebnis ist MP4; „Original ersetzen“ gibt es daher nur für MP4.
 - **Suche:** Wechsel in die Suchansicht schon beim ersten Buchstaben, Ergebnisse beim Tippen (160 ms Pause), Tippfehler werden toleriert; solche
   Treffer sind mit „ähnlich“ markiert.
 - **Bewegung:** Federnde Übergänge statt harter Wechsel (Ordner gleiten seitlich herein, Einträge

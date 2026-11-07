@@ -9,7 +9,7 @@ import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { themed } from './ui';
 import { loadThumb, Thumb } from './thumbs';
-import ImageEditor from './ImageEditor';
+import Editor from './Editor';
 import Viewer from './Viewer';
 import { m } from './motion';
 
@@ -106,7 +106,7 @@ export default function Photos({ theme, notify }: { theme: Theme; notify?: (text
         />
       )}
       {editing && notify && (
-        <ImageEditor
+        <Editor
           path={editing.path}
           name={editing.name}
           notify={notify}
