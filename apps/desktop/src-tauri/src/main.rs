@@ -94,6 +94,7 @@ fn main() {
             commands::move_items,
             commands::rename,
             commands::mkdir,
+            commands::create_file,
             commands::trash,
             commands::undo,
             commands::trash_restore,

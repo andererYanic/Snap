@@ -36,6 +36,31 @@ Einstellungen einschalten.
 8. **Gleiches Verhalten wie am Desktop:** dieselben Begriffe und Übersetzungen (`locales/`), dieselben
    Symbole und Sicherheitsregeln. Wer eine App kennt, kennt die andere.
 
+## Gelernt von Spacedrive (2026-11-07)
+
+Spacedrive ist ein quelloffener Dateimanager. Übernommen wurden Muster, kein Code und keine Grafiken:
+
+- **Startseite statt Dateisystem-Wurzel:** Suchfeld oben, darunter gruppierte Einstiege. Bei Snap
+  sind das der Speicher mit Belegungsbalken und die vorhandenen Standardordner (Download, Kamera,
+  Bilder …). Der Explorer öffnet sich erst danach.
+- **Explorer-Kopfzeile:** Zurück-Pfeil, Ordnername mittig, Ansicht wechseln (Liste/Raster) und „⋯“
+  für Seltenes (Sortierung, versteckte Dateien).
+- **Flache Zeilen statt Karten:**
+  - Symbol 40 dp, Name, Metazeile „Größe • Datum“, „›“ bei Ordnern.
+  - Trennlinie ab dem Text, wie in Android-Einstellungen.
+  - Ruhiger und dichter als Karten.
+- **Großer Titel** auf der Startseite. Im Explorer übernimmt die Kopfzeile.
+- **Leerzustände** mit Symbol, Titel und Erklärung, was man hier tun kann.
+- **Rückmeldung bei jeder Berührung:** Android-Welle auf allen tippbaren Flächen.
+
+Eigene Ergänzungen:
+- Dateien öffnen mit der passenden App (FileProvider, nur Lesezugriff für die gewählte App).
+- Teilen über das Android-Menü.
+- „+“ öffnet eine Auswahl von unten: neuer Ordner, neue Textdatei.
+- Verschieben/Kopieren: Elemente auswählen, zum Ziel navigieren, dann „Hier einfügen“ in der
+  Leiste unten.
+- Dateisymbole mit farbigem Typ-Etikett (PDF, IMG, VID …).
+
 ## Aufbau
 
 ```

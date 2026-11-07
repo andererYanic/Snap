@@ -39,6 +39,11 @@ pub enum FileOp {
         parent: PathBuf,
         name: String,
     },
+    /// Leere Datei anlegen (nie überschreiben).
+    CreateFile {
+        parent: PathBuf,
+        name: String,
+    },
     /// In den Papierkorb (wiederherstellbar).
     Trash {
         paths: Vec<PathBuf>,
@@ -57,6 +62,7 @@ impl FileOp {
             FileOp::Move { sources, .. } => format!("{} Einträge verschieben", sources.len()),
             FileOp::Rename { new_name, .. } => format!("umbenennen in '{new_name}'"),
             FileOp::Mkdir { name, .. } => format!("Ordner '{name}' anlegen"),
+            FileOp::CreateFile { name, .. } => format!("Datei '{name}' anlegen"),
             FileOp::Trash { paths } => format!("{} Einträge in den Papierkorb", paths.len()),
             FileOp::Delete { paths } => format!("{} Einträge endgültig löschen", paths.len()),
         }
@@ -180,6 +186,12 @@ impl FileJobs {
                 out.done = vec![Done { from: created.clone(), to: created.clone() }];
                 Some(Undo::RemoveDir(created))
             }
+            FileOp::CreateFile { parent, name } => {
+                let created = ops::create_file(parent, name)?;
+                out.done = vec![Done { from: created.clone(), to: created.clone() }];
+                // Rückgängig: in den Papierkorb – auch wenn die Datei inzwischen bearbeitet wurde.
+                Some(Undo::TrashCopies(vec![created]))
+            }
             FileOp::Trash { paths } => {
                 p.total_files.store(paths.len() as u64, Ordering::Relaxed);
                 for path in paths {
@@ -288,6 +300,13 @@ mod tests {
         let out = jobs.run(&tr, &p).unwrap();
         assert_eq!(out.trashed.len(), 1);
         jobs.run(&FileOp::Mkdir { parent: root.clone(), name: "neu".into() }, &p).unwrap();
+        // Datei anlegen: leer, nie überschreiben, Rückgängig legt sie in den Papierkorb
+        jobs.run(&FileOp::CreateFile { parent: root.clone(), name: "notiz.txt".into() }, &p).unwrap();
+        assert_eq!(std::fs::metadata(root.join("notiz.txt")).unwrap().len(), 0);
+        assert!(jobs.run(&FileOp::CreateFile { parent: root.clone(), name: "notiz.txt".into() }, &p).is_err());
+        assert!(jobs.run(&FileOp::CreateFile { parent: root.clone(), name: "../ausbruch.txt".into() }, &p).is_err());
+        jobs.undo().unwrap();
+        assert!(!root.join("notiz.txt").exists());
 
         // Rückwärts: Ordner weg, Kopie zurück aus Papierkorb, Kopie in Papierkorb, Name, Ort
         jobs.undo().unwrap();

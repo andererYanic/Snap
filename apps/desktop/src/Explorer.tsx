@@ -202,6 +202,22 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
     }
   };
 
+  const newFile = async () => {
+    let name = `${t("Neue Textdatei")}.txt`;
+    const names = new Set(items.map((i) => i.name));
+    for (let n = 2; names.has(name); n++) name = `${t("Neue Textdatei")} (${n}).txt`;
+    try {
+      await api.createFile(tab.path, name);
+      setTimeout(() => {
+        const p = joinPath(tab.path, name);
+        setSel(new Set([p]));
+        setRenaming(p);
+      }, 300);
+    } catch (e) {
+      fail(e);
+    }
+  };
+
   const commitRename = (it: Item, name: string) => {
     setRenaming(null);
     const n = name.trim();
@@ -425,7 +441,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
           <div className="empty"><div><div className="big">{t("Ordner nicht lesbar")}</div>{error}</div></div>
         ) : !loading && sorted.length === 0 ? (
           <div className="empty">
-            <div><div className="big">{searching !== null ? "Keine Treffer" : isTrash ? "Der Papierkorb ist leer" : "Dieser Ordner ist leer"}</div></div>
+            <div><div className="big">{searching !== null ? t("Keine Treffer") : isTrash ? t("Der Papierkorb ist leer") : t("Dieser Ordner ist leer")}</div></div>
           </div>
         ) : view === "details" ? (
           <table className="details">
@@ -497,6 +513,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
           {!menu.on && !isTrash && (
             <>
               <button disabled={searching !== null} onClick={newFolder}><Icon.newfolder /> {t("Neuer Ordner")} <span className="key">{t("Strg+Umschalt+N")}</span></button>
+              <button disabled={searching !== null} onClick={newFile}><Icon.documents /> {t("Neue Textdatei")}</button>
               <button disabled={!canPaste} onClick={paste}><Icon.paste /> {t("Einfügen")} <span className="key">{t("Strg+V")}</span></button>
               <hr />
               <button onClick={undo}><Icon.undo /> {t("Rückgängig")} <span className="key">{t("Strg+Z")}</span></button>
