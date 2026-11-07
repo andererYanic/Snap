@@ -178,7 +178,9 @@ export const isVideo = (name: string) => VIDEO.includes(extOf(name));
 // ---------------------------------------------------------------- 3b: Geräte, Sicherungen, Einstellungen
 
 export interface Grant { capability: string; folder: string | null; granted_at: number }
-export interface Device { node_id: string; name: string; paired_at: number; last_sync_at: number | null; grants: Grant[] }
+/** Gemeldeter Speicher eines Geräts (Summen über die Laufwerke seiner Freigaben). */
+export interface DeviceStorage { total: number; free: number; updated_at: number }
+export interface Device { node_id: string; name: string; paired_at: number; last_sync_at: number | null; grants: Grant[]; online?: boolean; storage?: DeviceStorage }
 export interface Peer { node_id: string; status: string; last_seen: number | null }
 export interface Approval { id: number; node_id: string; summary?: string; [k: string]: unknown }
 export interface BackupJob {
