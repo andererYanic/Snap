@@ -1,0 +1,28 @@
+[package]
+name = "snap-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+rust-version = "1.91"
+description = "Snap-Kern für Mobilgeräte (Android) – eingebettet über UniFFI"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "snap_ffi"
+
+[[bin]]
+# Erzeugt die Kotlin-Anbindung: cargo run --bin uniffi-bindgen -- generate --library <libsnap_ffi.so> --language kotlin --out-dir <ziel>
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+space-core = { path = "../../../core" }
+uniffi = { version = "0.32", features = ["tokio", "cli"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

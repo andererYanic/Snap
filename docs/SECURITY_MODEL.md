@@ -139,6 +139,14 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Vorschaubild-Protokoll `thumb:`:** nur lesend, nur JPEG aus dem Cache des Dienstes.
   Pfadprüfung nach der URL-Dekodierung; kodierte Ausbrüche (`%2E%2E`) sind getestet.
 
+## Android-App
+
+- Der Kern läuft im App-Prozess (`apps/mobile/core-ffi`). Daten, Schlüssel und Socket liegen im
+  privaten App-Ordner, geschützt durch die Android-Sandbox.
+- Die Oberfläche ist mitgelieferter nativer Code (React Native). Feindliche Dateinamen werden als
+  Text dargestellt, nicht als HTML. Folgenreiches bestätigt die App trotzdem in nativen Dialogen.
+- Keine Google-Dienste und keine Tracker. Verteilung als signierte APK über GitHub.
+
 ## Betrieb in fremden Umgebungen (geprüft 2026-11-06)
 
 - **Mehrbenutzer-Rechner:**

@@ -26,6 +26,8 @@ davon über Iroh.
 | `directories` | XDG-Pfade | Klein. Update auf v6 möglich. |
 | `libc` | 6 Systemaufrufe (s. `SECURITY_MODEL.md`, `unsafe`) | Standard |
 
+| `uniffi` (nur `apps/mobile/core-ffi`) | Kotlin-Anbindung des Kerns für Android | Von Mozilla, in Firefox für Android im Einsatz. Bringt zum Erzeugen der Anbindung `askama` und `basic-toml` mit (nur Bauzeit; `basic-toml` als „unmaintained“ gemeldet, ohne bekannte Lücke). |
+
 ## Ergebnisse
 
 - Aktualisiert: `getrandom` 0.2 → 0.4 und `toml` 0.8 → 1. Das entfernt Doppelversionen im Baum
