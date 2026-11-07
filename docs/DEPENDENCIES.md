@@ -28,6 +28,14 @@ davon über Iroh.
 
 | `uniffi` (nur `apps/mobile/core-ffi`) | Kotlin-Anbindung des Kerns für Android | Von Mozilla, in Firefox für Android im Einsatz. Bringt zum Erzeugen der Anbindung `askama` und `basic-toml` mit (nur Bauzeit; `basic-toml` als „unmaintained“ gemeldet, ohne bekannte Lücke). |
 
+**Android-App (npm, Prüfung per `npm audit` in der CI):**
+
+| Paket | Zweck | Einschätzung |
+|---|---|---|
+| `react-native-reanimated`, `react-native-worklets` | Animationen auf dem UI-Thread | Von Software Mansion, Standard in React Native. Keine Netzwerkzugriffe. |
+| `react-native-gesture-handler` | Gesten (Wisch-Auswahl, Zoom, Wischen zum Schließen) | Von Software Mansion, Standard. |
+| `react-native-video` (Media3/ExoPlayer) | Videos in der App abspielen | Nur lokale Dateien. Google-IMA-Werbemodul sowie HLS/DASH/RTSP/SmoothStreaming in `gradle.properties` abgeschaltet; Media3 selbst ist quelloffen (Apache-2.0) und braucht keine Play-Dienste. |
+
 ## Ergebnisse
 
 - Aktualisiert: `getrandom` 0.2 → 0.4 und `toml` 0.8 → 1. Das entfernt Doppelversionen im Baum

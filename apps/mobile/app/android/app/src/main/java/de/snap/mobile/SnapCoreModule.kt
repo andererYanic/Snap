@@ -140,6 +140,30 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     promise.resolve(map)
   }
 
+  /** Schnelles Vorschaubild (Android-eigene Erzeugung, Cache). Pfad zur JPEG-Datei oder null. */
+  @ReactMethod
+  fun thumbnail(path: String, edge: Double, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(Thumbnails.get(ctx.applicationContext, path, edge.toInt().coerceIn(64, 1024)))
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** Kurze Vibration über das System (ohne Berechtigung): `select` beim Markieren, `tick` beim Erweitern. */
+  @ReactMethod
+  fun haptic(kind: String) {
+    val view = ctx.currentActivity?.window?.decorView ?: return
+    val c = when (kind) {
+      "tick" -> android.view.HapticFeedbackConstants.CLOCK_TICK
+      "confirm" -> if (Build.VERSION.SDK_INT >= 30) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.VIRTUAL_KEY
+      else -> android.view.HapticFeedbackConstants.LONG_PRESS
+    }
+    view.post { view.performHapticFeedback(c) }
+  }
+
   /** Hat die App Zugriff auf alle Dateien (MANAGE_EXTERNAL_STORAGE)? */
   @ReactMethod
   fun hasAllFilesAccess(promise: Promise) {

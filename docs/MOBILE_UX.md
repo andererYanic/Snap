@@ -79,14 +79,31 @@ Eigene Ergänzungen:
 └──────────────────────────────┘
 ```
 
-- **Auswahl:** Langes Drücken startet den Auswahlmodus. Die untere Leiste wird dann zur
-  Aktionsleiste (Kopieren, Verschieben, Teilen, Papierkorb, Mehr); oben stehen Anzahl und „Alle“.
+- **Auswahl (seit Feedback-Runde 1):** Lang drücken und, ohne den Finger zu heben, über weitere
+  Einträge wischen – alles Überstrichene wird markiert (am Rand scrollt die Liste mit, jede neue
+  Markierung gibt ein leichtes Haptik-Signal). Beim Loslassen öffnet sich das Kontextmenü **dort, wo
+  der Finger zuerst aufgesetzt hat** (wie bei iOS), nicht als Leiste unten. Oben zeigt die Kopfzeile
+  Anzahl, „Alle“ und „⋯“ (öffnet das Menü erneut). Das Menü deckt nichts ab: Während es offen ist,
+  lassen sich weitere Dateien antippen oder per Halten-und-Wischen dazunehmen; Scrollen schließt es.
 - **Dateien:**
   - Start ist der gemeinsame Speicher.
   - Oben eine kleine Ortsauswahl: Telefon, SD-Karte, gekoppelte Geräte.
   - Liste oder Raster umschaltbar. Zuletzt geöffnete Dateien als horizontale Leiste über der Liste.
 - **Fotos:** Zeitachse nach Monaten mit Schnellsprung am rechten Rand (Daumen). Antippen öffnet
-  Vollbild mit Wischen zwischen Bildern.
+  die eingebaute Anzeige.
+- **Unten „Dateien“ erneut antippen** führt aus jedem Ordner und jeder Suche zurück zur Startansicht.
+- **Eingebaute Anzeige:** Bilder und Videos ohne fremde App. Zwei-Finger-Zoom, Doppeltippen zoomt
+  auf die getippte Stelle, Wischen links/rechts blättert, nach unten wischen schließt. Erst
+  erscheint sofort ein 1024-px-Vorschaubild, dann das Original. Gewischt wird durch alle Dateien des
+  Ordners; was die Anzeige nicht darstellt (PDF, Text …), erscheint als Karte mit „Öffnen mit …“. Videos über Media3/ExoPlayer; was
+  nicht abspielbar ist, bietet „Mit anderer App öffnen“ an.
+- **Suche:** Wechsel in die Suchansicht schon beim ersten Buchstaben, Ergebnisse beim Tippen (160 ms Pause), Tippfehler werden toleriert; solche
+  Treffer sind mit „ähnlich“ markiert.
+- **Bewegung:** Federnde Übergänge statt harter Wechsel (Ordner gleiten seitlich herein, Einträge
+  blenden gestaffelt ein, Vorschaubilder blenden auf, Menüs zoomen vom Finger aus auf). Kurze
+  Dauern (120–250 ms), damit nichts träge wirkt. **Keine Federn, die nachschwingen:** Menüs, „+“ und
+  Dialoge klappen mit klarer Ease-out-Kurve von 92 % auf 100 % auf (`popIn` in `src/motion.ts`). Ist „Animationen entfernen“ eingeschaltet, entfallen
+  alle Ein- und Ausblendungen (`src/motion.ts`).
 - **Geräte:** Status, Koppeln per Code oder QR-Code (Kamera), Rechte. Kamera-Upload-Regel pro Gerät.
 - **Mehr:** Sicherungen, Papierkorb, Freigabelinks, Speicheranalyse, Einstellungen (inkl. Sprache und
   Material You).

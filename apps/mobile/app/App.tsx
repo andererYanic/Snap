@@ -2,6 +2,8 @@
 // Gestaltung: docs/MOBILE_UX.md (Snap-Optik, Android-Bedienung, Material You wahlweise).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Pressable, ScrollView, StatusBar, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as core from './src/core';
 import Files from './src/Files';
@@ -10,6 +12,7 @@ import { Devices, More } from './src/Pages';
 import Photos from './src/Photos';
 import { materialTheme, snapTheme, type Theme } from './src/theme';
 import { NavIcon } from './src/ui';
+import { initMotion, m, toastIn, toastOut } from './src/motion';
 
 type Tab = 'files' | 'photos' | 'devices' | 'more';
 
@@ -18,6 +21,8 @@ export default function App() {
   const [ready, setReady] = useState<'start' | 'permission' | 'ok' | string>('start');
   const [root, setRoot] = useState('/storage/emulated/0');
   const [tab, setTab] = useState<Tab>('files');
+  // Erneutes Antippen von „Dateien“ führt zur Startansicht
+  const [filesHome, setFilesHome] = useState(0);
   const [material, setMaterialState] = useState(false);
   const [materialAvailable, setMaterialAvailable] = useState(false);
   const [crash, setCrash] = useState<string | null>(null);
@@ -28,7 +33,7 @@ export default function App() {
 
   const boot = useCallback(async (force = false) => {
     try {
-      await initLanguage();
+      await Promise.all([initLanguage(), initMotion()]);
       const sdk = await core.sdkInt();
       setMaterialAvailable(sdk >= 31);
       setMaterialState((await core.getPref('material')) === '1');
@@ -83,7 +88,8 @@ export default function App() {
 
   if (ready !== 'ok') {
     return (
-      <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+    <SafeAreaProvider>
         <View style={s.bg}>
           {bar}
           <View style={s.tint} />
@@ -118,6 +124,7 @@ export default function App() {
           </SafeAreaView>
         </View>
       </SafeAreaProvider>
+    </GestureHandlerRootView>
     );
   }
 
@@ -129,27 +136,28 @@ export default function App() {
   ];
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider>
       <View style={s.bg}>
         {bar}
         <View style={s.tint} />
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab !== 'files' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
-          <View style={s.fill}>
-            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} />}
+          <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
+            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} home={filesHome} />}
             {tab === 'photos' && <Photos theme={theme} />}
             {tab === 'devices' && <Devices theme={theme} notify={notify} />}
             {tab === 'more' && <More theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} />}
-          </View>
+          </Animated.View>
           {toast && (
-            <View style={[s.toast, selecting && s.toastHigh]}>
+            <Animated.View entering={m(toastIn)} exiting={m(toastOut)} style={[s.toast, selecting && s.toastHigh]}>
               <Text style={s.toastText}>{toast.text}</Text>
               {toast.undo && (
                 <Pressable onPress={() => { toast.undo?.(); setToast(null); }} style={s.toastBtn}>
                   <Text style={s.link}>{t('Rückgängig')}</Text>
                 </Pressable>
               )}
-            </View>
+            </Animated.View>
           )}
         </SafeAreaView>
         {!selecting && (
@@ -157,7 +165,7 @@ export default function App() {
             {tabs.map((x) => {
               const on = tab === x.key;
               return (
-                <Pressable key={x.key} style={s.navItem} onPress={() => setTab(x.key)} accessibilityRole="tab" accessibilityState={{ selected: on }}>
+                <Pressable key={x.key} style={s.navItem} onPress={() => { if (tab !== x.key) { core.haptic('tick'); } else if (x.key === 'files') { setFilesHome((n) => n + 1); } setTab(x.key); }} accessibilityRole="tab" accessibilityState={{ selected: on }}>
                   <View style={[s.navPill, on && s.navPillOn]}>
                     <NavIcon name={x.key} color={(on ? theme.accent : theme.text2) as string} />
                   </View>
@@ -169,6 +177,7 @@ export default function App() {
         )}
       </View>
     </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
