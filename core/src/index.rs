@@ -283,7 +283,11 @@ impl Writer<'_> {
         let id = conn.last_insert_rowid();
         // Wurzeln (voller Pfad als Name) kommen nicht in den Suchindex.
         if self.fts_inline && parent.is_some() {
-            conn.prepare_cached("INSERT INTO nodes_fts(rowid, name) VALUES (?1, ?2)")?.execute(params![id, name])?;
+            conn.prepare_cached("INSERT INTO nodes_fts(rowid, name, ext) VALUES (?1, ?2, ?3)")?.execute(params![
+                id,
+                name,
+                ext_of(name, kind)
+            ])?;
         }
         self.tick()?;
         Ok(id)
@@ -296,8 +300,8 @@ impl Writer<'_> {
             "WITH RECURSIVE sub(id) AS (SELECT ?1 UNION ALL SELECT n.id FROM nodes n JOIN sub ON n.parent = sub.id)";
         // Externer FTS-Inhalt: nur Zeilen löschen, die auch eingetragen wurden (keine Wurzeln).
         conn.prepare_cached(&format!(
-            "{SUB} INSERT INTO nodes_fts(nodes_fts, rowid, name)
-             SELECT 'delete', n.id, n.name FROM nodes n WHERE n.id IN sub AND n.parent IS NOT NULL"
+            "{SUB} INSERT INTO nodes_fts(nodes_fts, rowid, name, ext)
+             SELECT 'delete', n.id, n.name, n.ext FROM nodes n WHERE n.id IN sub AND n.parent IS NOT NULL"
         ))?
         .execute(params![id])?;
         conn.prepare_cached(&format!("{SUB} DELETE FROM hashes WHERE node_id IN sub"))?.execute(params![id])?;
@@ -345,11 +349,24 @@ impl LocalIndex {
                 head    TEXT,
                 full    TEXT
             );
-            CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
-                name, content='nodes', content_rowid='id', tokenize='trigram'
-            );
             ",
         )?;
+        // Suchindex mit Endung (Filter „nur PDF“ direkt im Index statt danach). Ältere Indizes
+        // ohne Endungsspalte werden einmalig neu aufgebaut.
+        let fts_sql: Option<String> =
+            conn.query_row("SELECT sql FROM sqlite_master WHERE name = 'nodes_fts'", [], |r| r.get(0)).optional()?;
+        if fts_sql.as_deref().is_some_and(|s| !s.contains("ext")) {
+            tracing::info!("Suchindex wird einmalig um die Dateiendung erweitert …");
+            conn.execute_batch("DROP TABLE nodes_fts;")?;
+        }
+        if fts_sql.as_deref().is_none_or(|s| !s.contains("ext")) {
+            conn.execute_batch(
+                "CREATE VIRTUAL TABLE nodes_fts USING fts5(
+                    name, ext, content='nodes', content_rowid='id', tokenize='trigram'
+                 );
+                 INSERT INTO nodes_fts(rowid, name, ext) SELECT id, name, ext FROM nodes WHERE parent IS NOT NULL;",
+            )?;
+        }
         conn.execute_batch(&crate::photos::schema())?;
         let mut readers = Vec::new();
         for _ in 0..READERS {
@@ -448,8 +465,8 @@ impl LocalIndex {
     fn delete_root_nodes(conn: &Connection, root_id: i64) -> Result<()> {
         // Externer FTS-Inhalt: Einträge vor dem Löschen aus dem Suchindex nehmen.
         conn.execute(
-            "INSERT INTO nodes_fts(nodes_fts, rowid, name)
-             SELECT 'delete', id, name FROM nodes WHERE root_id = ?1 AND parent IS NOT NULL",
+            "INSERT INTO nodes_fts(nodes_fts, rowid, name, ext)
+             SELECT 'delete', id, name, ext FROM nodes WHERE root_id = ?1 AND parent IS NOT NULL",
             params![root_id],
         )?;
         conn.execute(
@@ -578,7 +595,7 @@ impl LocalIndex {
         self.insert_tree(&mut w, None, root, root_name, &mut stats)?;
         // Suchindex für diesen Ort in einem Rutsch aufbauen (schneller als pro Zeile).
         conn.execute(
-            "INSERT INTO nodes_fts(rowid, name) SELECT id, name FROM nodes WHERE root_id = ?1 AND parent IS NOT NULL",
+            "INSERT INTO nodes_fts(rowid, name, ext) SELECT id, name, ext FROM nodes WHERE root_id = ?1 AND parent IS NOT NULL",
             params![root_id],
         )?;
         conn.execute("UPDATE roots SET last_scan = ?2 WHERE id = ?1", params![root_id, crate::database::now_unix()])?;
@@ -811,7 +828,7 @@ impl LocalIndex {
             }
         }
         tx.execute(
-            "INSERT INTO nodes_fts(rowid, name) SELECT id, name FROM nodes WHERE root_id = ?1 AND parent IS NOT NULL",
+            "INSERT INTO nodes_fts(rowid, name, ext) SELECT id, name, ext FROM nodes WHERE root_id = ?1 AND parent IS NOT NULL",
             params![root_id],
         )?;
         tx.commit()?;
@@ -885,7 +902,13 @@ impl LocalIndex {
         // Nur geprüfte Zahlen/Endungen werden eingesetzt; der Suchbegriff geht als Parameter.
         let rows: Vec<(i64, String, i64, i64, i64)> = if q.chars().count() >= 3 {
             // FTS5-Phrase: Anführungszeichen verdoppeln, damit Sonderzeichen wörtlich gelten.
-            let phrase = format!("\"{}\"", q.replace('"', "\"\""));
+            let mut phrase = format!("name : \"{}\"", q.replace('"', "\"\""));
+            // Endungsfilter im Index (Trigramme: nur Endungen ab 3 Zeichen; die genaue Prüfung
+            // bleibt in `where_sql`).
+            if !exts.is_empty() && exts.iter().all(|e| e.chars().count() >= 3) {
+                let any = exts.iter().map(|e| format!("\"{e}\"")).collect::<Vec<_>>().join(" OR ");
+                phrase = format!("{phrase} AND ext : ({any})");
+            }
             let sql = format!(
                 "SELECT n.id, n.name, n.kind, n.size, n.mtime FROM nodes_fts f JOIN nodes n ON n.id = f.rowid
                  WHERE nodes_fts MATCH ?1 AND {where_sql} LIMIT ?2"
@@ -923,8 +946,9 @@ impl LocalIndex {
             let chunks = fuzzy::chunks(&ql, max_err);
             if !chunks.is_empty() {
                 // Kandidaten: Namen, die mindestens ein Stück wörtlich enthalten (Trigramm-Index).
-                let expr =
+                let any =
                     chunks.iter().map(|c| format!("\"{}\"", c.replace('"', "\"\""))).collect::<Vec<_>>().join(" OR ");
+                let expr = format!("name : ({any})");
                 // Höchstens SCAN Index-Zeilen lesen, erst dann filtern: Mit Filtern (z. B. nur PDF)
                 // bliebe die Arbeit sonst unbegrenzt.
                 let sql = format!(
@@ -1088,6 +1112,68 @@ mod tests {
         std::fs::write(root.join(".versteckt-urlaub"), b"x").unwrap();
         std::os::unix::fs::symlink("/etc", root.join("link-nach-etc")).unwrap();
         (dir, root)
+    }
+
+    #[test]
+    fn extension_filter_in_index_and_upgrade_of_old_index() {
+        let (dir, root) = tree();
+        std::fs::write(root.join("Bilder/strand.md"), b"md").unwrap();
+        std::fs::write(root.join("Bilder/strandpdf.txt"), b"t").unwrap();
+        let db = dir.path().join("index.db");
+        {
+            let idx = LocalIndex::open(&db, vec![]).unwrap();
+            let id = idx.add_root(&root).unwrap();
+            idx.rebuild_root(id, &root).unwrap();
+            let f = |exts: &[&str]| SearchFilter {
+                extensions: exts.iter().map(|e| e.to_string()).collect(),
+                ..Default::default()
+            };
+            let names = |exts: &[&str]| {
+                let mut v: Vec<String> =
+                    idx.search("strand", &f(exts), 50).unwrap().into_iter().map(|h| h.name).collect();
+                v.sort();
+                v
+            };
+            // Endung im Index: nur echte Endungen, nicht der Name („strandpdf.txt“ ist kein PDF)
+            assert_eq!(names(&["jpg"]), vec!["Strand.JPG"]);
+            assert!(names(&["pdf"]).is_empty());
+            assert_eq!(names(&["jpg", "txt"]), vec!["Strand.JPG", "strandpdf.txt"]);
+            // Kurze Endungen (Trigramme passen nicht) fallen auf die genaue Prüfung zurück
+            assert_eq!(names(&["md"]), vec!["strand.md"]);
+            assert_eq!(names(&["md", "jpg"]), vec!["Strand.JPG", "strand.md"]);
+            // Die Endung allein findet keinen Namen
+            assert!(idx
+                .search("jpg", &SearchFilter::default(), 50)
+                .unwrap()
+                .iter()
+                .all(|h| h.name.to_lowercase().contains("jpg")));
+        }
+        // Alter Index ohne Endungsspalte: wird beim Öffnen einmalig neu aufgebaut
+        {
+            let c = rusqlite::Connection::open(&db).unwrap();
+            c.execute_batch(
+                "DROP TABLE nodes_fts;
+                 CREATE VIRTUAL TABLE nodes_fts USING fts5(name, content='nodes', content_rowid='id', tokenize='trigram');
+                 INSERT INTO nodes_fts(rowid, name) SELECT id, name FROM nodes WHERE parent IS NOT NULL;",
+            )
+            .unwrap();
+        }
+        let idx = LocalIndex::open(&db, vec![]).unwrap();
+        let hits =
+            idx.search("strand", &SearchFilter { extensions: vec!["jpg".into()], ..Default::default() }, 50).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(idx.search("urlaub", &SearchFilter::default(), 50).unwrap().iter().any(|h| h.name == "Urlaub 2024"));
+        // Löschen nach dem Umbau hält den Index stimmig
+        let id = idx.root_id(&root).unwrap().unwrap();
+        idx.rebuild_root(id, &root).unwrap();
+        assert_eq!(
+            idx.search("strand", &SearchFilter { extensions: vec!["jpg".into()], ..Default::default() }, 50)
+                .unwrap()
+                .len(),
+            1
+        );
+        let c = rusqlite::Connection::open(&db).unwrap();
+        c.execute_batch("INSERT INTO nodes_fts(nodes_fts) VALUES('integrity-check');").unwrap();
     }
 
     #[test]

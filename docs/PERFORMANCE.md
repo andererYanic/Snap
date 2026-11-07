@@ -440,7 +440,7 @@ Messung `core/tests/perf.rs` (Release, Index mit 1 Mio. Einträgen, kalter Cache
 - Die 87 ms im letzten Fall stammen aus der **exakten** Suche, wenn ein Filter alles ausschließt.
   Das bestand schon vorher (bisher nicht gemessen) und liegt unter dem Suchbudget von 100 ms. Die
   App sucht beim Tippen mit 160 ms Pause und verwirft veraltete Antworten, die Oberfläche blockiert
-  nie. **Offen:** Filter in die FTS-Abfrage ziehen.
+  nie. ~~Offen: Filter in die FTS-Abfrage ziehen~~ – erledigt in Review 30 (87 → 24 ms).
 - Vorschaubilder auf Android erzeugt jetzt das System (`ThumbnailUtils`, nutzt eingebettete
   EXIF-Vorschauen und Hardware-Dekoder) statt der Kern. Höchstens 4 gleichzeitig, Ergebnis als JPEG
   im App-Cache (begrenzt auf 200 MB). Ein zweiter Aufruf liest nur noch die Cache-Datei; die App
@@ -580,3 +580,19 @@ Ohne Codeänderung; Messung `perf.rs::db_hot_paths` (Release) nach dem Wechsel:
 | `entries_since` (Seite 1000) | – | 1,5 ms |
 
 Keine Verschlechterung; `cargo deny check` und `cargo audit` grün.
+
+## Review 30 – Endungsfilter im Suchindex (2026-11-07)
+
+Der FTS5-Index hat jetzt eine zweite Spalte `ext`. Ein Endungsfilter („nur PDF“) wird in die
+Index-Abfrage gezogen (`name : "vertrag" AND ext : ("pdf")`), statt alle Namenstreffer zu lesen und
+danach zu filtern. Endungen unter 3 Zeichen (Trigramme) fallen auf die genaue Prüfung zurück, die
+ohnehin immer läuft. Bestehende Indizes werden beim ersten Öffnen einmalig neu aufgebaut
+(1 Mio. Einträge: einige Sekunden, nur einmal).
+
+Messung (`perf.rs::local_index_million`, Release, 1 Mio. Einträge):
+
+| Anfrage | vorher | nachher |
+|---|---|---|
+| „vertrag“ + nur PDF, keine Treffer (ungünstigster Fall) | 87 ms | **24 ms** |
+| übrige Suchen (exakt, Tippfehler) | 1–9 ms | 1–9 ms (unverändert) |
+| 1 Mio. Einträge einfügen + Index | – | 8,2 s |
