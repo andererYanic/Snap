@@ -53,6 +53,12 @@ pub enum FileOp {
     Delete {
         paths: Vec<PathBuf>,
     },
+    /// Dateien und Ordner in ein neues ZIP neben der ersten Quelle packen.
+    Compress {
+        sources: Vec<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
     /// Archiv (ZIP, tar, tar.gz) in einen neuen Ordner daneben entpacken.
     Extract {
         archive: PathBuf,
@@ -72,6 +78,7 @@ impl FileOp {
             FileOp::CreateFile { name, .. } => format!("Datei '{name}' anlegen"),
             FileOp::Trash { paths } => format!("{} Einträge in den Papierkorb", paths.len()),
             FileOp::Delete { paths } => format!("{} Einträge endgültig löschen", paths.len()),
+            FileOp::Compress { sources, .. } => format!("{} Einträge packen", sources.len()),
             FileOp::Extract { archive, .. } => format!(
                 "'{}' entpacken",
                 archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
@@ -83,6 +90,7 @@ impl FileOp {
         match self {
             FileOp::Copy { sources, .. } | FileOp::Move { sources, .. } => sources.len(),
             FileOp::Trash { paths } | FileOp::Delete { paths } => paths.len(),
+            FileOp::Compress { sources, .. } => sources.len(),
             _ => 1,
         }
     }
@@ -220,6 +228,12 @@ impl FileJobs {
                     p.done_files.fetch_add(1, Ordering::Relaxed);
                 }
                 Some(Undo::Restore(out.trashed.clone()))
+            }
+            FileOp::Compress { sources, name } => {
+                let x = archive::compress(sources, name.as_deref(), p)?;
+                out.done = vec![Done { from: sources[0].clone(), to: x.archive.clone() }];
+                out.skipped = x.skipped;
+                Some(Undo::TrashCopies(vec![x.archive]))
             }
             FileOp::Extract { archive, password } => {
                 let x = archive::extract(archive, password.as_ref(), None, p)?;

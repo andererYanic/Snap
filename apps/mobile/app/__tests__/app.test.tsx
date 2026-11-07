@@ -17,11 +17,12 @@ let crashReport: string | null = null;
 const listing = {
   DirListing: {
     path: '/storage/emulated/0',
-    total: 3,
+    total: 4,
     entries: [
       { name: 'DCIM', kind: 'Dir', size: 0, mtime: 1700000000, hidden: false },
       { name: 'brief.pdf', kind: 'File', size: 2048, mtime: 1700000000, hidden: false },
       { name: 'liste.txt', kind: 'File', size: 10, mtime: 1700000000, hidden: false },
+      { name: 'urlaub.zip', kind: 'File', size: 4096, mtime: 1700000000, hidden: false },
     ],
   },
 };
@@ -36,6 +37,16 @@ NativeModules.SnapCore = {
       return JSON.stringify({ SearchResults: { hits: [
         { path: '/storage/emulated/0/DCIM/urlaub.jpg', name: 'urlaub.jpg', kind: 'File', size: 1, mtime: 1700000000, fuzzy: true },
       ] } });
+    }
+    const ex = req.FileOp?.op?.Extract;
+    if (ex) {
+      if (ex.password !== 'geheim') {
+        return JSON.stringify({ Error: { code: 'PasswordRequired', message: ex.password ? 'Falsches Passwort.' : 'Passwort nötig.' } });
+      }
+      return JSON.stringify({ FileOpDone: { job: 2, outcome: { done: [{ from: ex.archive, to: '/storage/emulated/0/urlaub' }], trashed: [], deleted: [] } } });
+    }
+    if (req.FileOp?.op?.Compress) {
+      return JSON.stringify({ FileOpDone: { job: 3, outcome: { done: [{ from: 'x', to: '/storage/emulated/0/Archiv.zip' }], trashed: [], deleted: [] } } });
     }
     if (req.FileOp) return JSON.stringify({ FileOpDone: { job: 1 } });
     if (req === 'Undo') return JSON.stringify({ Success: { message: 'ok' } });
@@ -84,6 +95,20 @@ function byLabel(r: ReactTestRenderer.ReactTestRenderer, label: string) {
   return r.root.find((n) => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function');
 }
 
+// Jede gerenderte App nach dem Test abbauen – sonst feuern Zeitgeber (z. B. Hinweise mit
+// „Rückgängig“) noch, nachdem Jest die Umgebung abgebaut hat.
+const mounted: ReactTestRenderer.ReactTestRenderer[] = [];
+function mount(el: React.ReactElement): ReactTestRenderer.ReactTestRenderer {
+  const r = ReactTestRenderer.create(el);
+  mounted.push(r);
+  return r;
+}
+afterEach(async () => {
+  for (const r of mounted.splice(0)) {
+    await act(async () => { r.unmount(); });
+  }
+});
+
 beforeEach(() => {
   calls.length = 0;
   allFiles = true;
@@ -92,7 +117,7 @@ beforeEach(() => {
 
 test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   await flush();
   // Startseite: Speicher mit Belegung und vorhandene Standardordner
@@ -134,7 +159,7 @@ test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
 test('Ohne Dateizugriff: Hinweis und Knopf zu den Systemeinstellungen', async () => {
   allFiles = false;
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   expect(allText(r)).toContain('Zugriff erlauben');
   expect(NativeModules.SnapCore.start).not.toHaveBeenCalledTimes(99);
@@ -147,7 +172,7 @@ test('Absturz beim letzten Start: Bericht und „Erneut versuchen“ statt erneu
   crashReport = '[1] Thread snap-core: panicked at core/src/x.rs:1:1';
   NativeModules.SnapCore.start.mockClear();
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   expect(allText(r)).toContain('panicked at core/src/x.rs');
   expect(NativeModules.SnapCore.start).not.toHaveBeenCalled();
@@ -160,7 +185,7 @@ test('Absturz beim letzten Start: Bericht und „Erneut versuchen“ statt erneu
 
 test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textdatei an', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
@@ -179,7 +204,7 @@ test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textda
 
 test('Suche beim Tippen (ohne Enter), Tippfehler-Treffer markiert, Bild öffnet die eingebaute Anzeige', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   const field = r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Überall suchen');
   await act(async () => { field.props.onChangeText('urluab'); });
@@ -197,7 +222,7 @@ test('Suche beim Tippen (ohne Enter), Tippfehler-Treffer markiert, Bild öffnet 
 test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsichtbar bleibt', async () => {
   const spy = jest.spyOn(require('react-native').AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   const animated = r.root.findAll((n) => n.props && 'entering' in n.props);
   expect(animated.length).toBeGreaterThan(0);
@@ -210,7 +235,7 @@ test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsi
 
 test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt bis alles abgewählt, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
@@ -264,4 +289,77 @@ test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt b
   await act(async () => { byLabel(r, 'urlaub.jpg').props.onPress(); });
   await flush();
   expect((getByGestureTestId('viewer-pan') as any).config.enabled).toBe(false);
+});
+
+test('Suchfeld bleibt beim ersten Buchstaben dasselbe Feld (Tastatur schließt nicht)', async () => {
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  const find = () => r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Überall suchen');
+  const node = () => (find() as any)._fiber.stateNode;
+  const before = node();
+  expect(before).toBeTruthy();
+  await act(async () => { find().props.onChangeText('u'); });
+  expect(allText(r)).not.toContain('Interner Speicher'); // Ansicht hat gewechselt …
+  expect(node()).toBe(before); // … das Eingabefeld aber nicht
+  await act(async () => { await new Promise<void>((resolve) => { setTimeout(() => resolve(), 260); }); });
+  expect(node()).toBe(before);
+  // Zurück zur Startseite: weiterhin dasselbe Feld
+  await act(async () => { find().props.onChangeText(''); });
+  expect(allText(r)).toContain('Interner Speicher');
+  expect(node()).toBe(before);
+});
+
+test('ZIP: mehrere Dateien packen, Archiv mit Passwort entpacken, Rückgängig', async () => {
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  // Zwei Dateien markieren → Leiste → Mehr → „Als ZIP packen“
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+      { state: State.END, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+    ]);
+  });
+  await flush();
+  expect(allText(r)).toContain('2 ausgewählt');
+  await act(async () => { byLabel(r, 'Mehr').props.onPress(); });
+  await flush();
+  await act(async () => { await pressable(r, 'Als ZIP packen').props.onPress(); });
+  await flush();
+  expect(calls).toContainEqual({ FileOp: { op: { Compress: { sources: ['/storage/emulated/0/brief.pdf', '/storage/emulated/0/liste.txt'] } }, wait: true } });
+  expect(allText(r)).toContain('„Archiv.zip“ erstellt.');
+  expect(allText(r)).toContain('Rückgängig');
+
+  // ZIP lange drücken (eine Datei) → Menü am Finger zeigt „Entpacken“
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 212, absoluteX: 100, absoluteY: 400 },
+      { state: State.ACTIVE, x: 100, y: 212, absoluteX: 100, absoluteY: 400 },
+      { state: State.END, x: 100, y: 212, absoluteX: 100, absoluteY: 400 },
+    ]);
+  });
+  await flush();
+  expect(allText(r)).toContain('1 ausgewählt');
+  await act(async () => { await pressable(r, 'Entpacken').props.onPress(); });
+  await flush();
+  // Ohne Passwort: Abfrage erscheint
+  expect(allText(r)).toContain('„urlaub.zip“ ist mit einem Passwort geschützt.');
+  const pw = () => r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Passwort');
+  expect(pw().props.secureTextEntry).toBe(true);
+  await act(async () => { pw().props.onChangeText('falsch'); });
+  await act(async () => { await pw().props.onSubmitEditing(); });
+  await flush();
+  expect(allText(r)).toContain('Falsches Passwort.');
+  await act(async () => { pw().props.onChangeText('geheim'); });
+  await act(async () => { await pw().props.onSubmitEditing(); });
+  await flush();
+  expect(calls).toContainEqual({ FileOp: { op: { Extract: { archive: '/storage/emulated/0/urlaub.zip', password: 'geheim' } }, wait: true } });
+  expect(allText(r)).toContain('Entpackt nach „urlaub“.');
+  // Passwort taucht nirgends sichtbar auf
+  expect(allText(r)).not.toContain('geheim');
 });

@@ -74,6 +74,29 @@ export interface TimelineItem {
   size: number;
 }
 
+const numFmt = new Map<string, Intl.NumberFormat>();
+const dateFmt = new Map<string, Intl.DateTimeFormat>();
+function fmt<T>(m: Map<string, T>, key: string, make: () => T): T {
+  let f = m.get(key);
+  if (!f) {
+    f = make();
+    m.set(key, f);
+  }
+  return f;
+}
+
+/** Datum kurz (z. B. 7.11.2026), mit zwischengespeichertem Format. */
+export function shortDate(unixSecs: number, loc: string, utc = false): string {
+  const f = fmt(dateFmt, `${loc}|${utc}`, () => new Intl.DateTimeFormat(loc, utc ? { timeZone: 'UTC' } : undefined));
+  return f.format(new Date(unixSecs * 1000));
+}
+
+/** Monat und Jahr (z. B. „November 2026“). */
+export function monthYear(unixSecs: number, loc: string): string {
+  const f = fmt(dateFmt, `${loc}|my`, () => new Intl.DateTimeFormat(loc, { month: 'long', year: 'numeric', timeZone: 'UTC' }));
+  return f.format(new Date(unixSecs * 1000));
+}
+
 export function humanSize(n: number, loc: string): string {
   if (n < 1024) {
     return `${n} B`;
@@ -85,7 +108,9 @@ export function humanSize(n: number, loc: string): string {
     v /= 1024;
     i++;
   }
-  return `${v.toLocaleString(loc, { maximumFractionDigits: v < 10 ? 1 : 0 })} ${u[i]}`;
+  const digits = v < 10 ? 1 : 0;
+  const f = fmt(numFmt, `${loc}|${digits}`, () => new Intl.NumberFormat(loc, { maximumFractionDigits: digits }));
+  return `${f.format(v)} ${u[i]}`;
 }
 
 export const joinPath = (dir: string, name: string) => (dir.endsWith('/') ? dir + name : `${dir}/${name}`);
