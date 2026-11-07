@@ -1,0 +1,36 @@
+[package]
+name = "snap-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+rust-version = "1.91"
+
+[dependencies]
+space-core = { path = "../../../core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+directories = "5"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# Eigener Workspace: Die App braucht WebKitGTK; der Haupt-Workspace (Daemon/CLI) bleibt ohne.
+[workspace]
+members = ["."]
+
+[features]
+# Von `tauri build` gesetzt: Oberfläche aus dem eingebetteten `dist/` statt vom Entwicklungsserver.
+custom-protocol = ["tauri/custom-protocol"]

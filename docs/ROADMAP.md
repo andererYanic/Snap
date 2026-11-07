@@ -56,6 +56,9 @@ Abstriche bei der Sicherheit.
 | 2026-11-06 | **Veröffentlichung als neues Repository** (statt Historie umschreiben) | Keine alten Datenbankdateien in der öffentlichen Historie; private Historie bleibt unverändert als Archiv. |
 | 2026-11-06 | **Relais: vorerst n0, eigenes Relais vorbereitet** (`relay_urls`, `relay_fallback_n0`, Docker unter `gateway/relay/`) | Wechsel ohne Codeänderung möglich; eigenes Relais nur für eigene Geräte (Allowlist). |
 | 2026-11-06 | **Nächste Phase: Desktop-App (Tauri v2 + React)** | Backend weitgehend fertig; die App macht es im Alltag nutzbar und testbar. |
+| 2026-11-06 | **App-Brücke: nur typisierte Befehle, native Bestätigung für Folgenreiches** (endgültig löschen, Papierkorb leeren, ausführbare Dateien öffnen); strenge CSP, minimale Tauri-Rechte | Ein XSS über feindliche Dateinamen bekäme sonst volle Adminrechte. |
+| 2026-11-06 | **App ist Client eines eigenständigen Dienstes** (systemd-Benutzerdienst), startet ihn bei Bedarf | Sicherungen, Uploads und Abgleich laufen weiter, wenn das Fenster zu ist. |
+| 2026-11-06 | **Gestaltung: Fluent-Designsprache** (Mica-Hintergrund, Acryl, Tabs in der Titelleiste) nach dem Vorbild der Explorer-Alternative „Files“ – eigene Umsetzung ohne fremde Grafiken | Wunsch des Nutzers: klar, modern, durchscheinend. |
 | 2026-11-06 | **Eigene PRs bei grüner CI selbst mergen** | Freigabe des Nutzers; Designs sicherheitsrelevanter Systeme werden weiterhin vorher vorgelegt. |
 | 2026-11-05 | E2EE für eigene Geräte nicht nötig (QUIC/TLS) | **Wird wieder relevant** für Cloud-Backup-Ziele und Freigaben an Dritte (Phase 5/6). |
 
@@ -80,7 +83,7 @@ Abstriche bei der Sicherheit.
 | **0b** | **API-Schicht**: Fehlercodes, API-Version, Ereignis-Stream, seitenweiser Katalog, Rechte pro Gerät mit Audit-Log, Modulaufteilung | ✅ |
 | **1 – Drive-Kern** (1a Shares + Rechte ✅ PR #4 · 1b Live ✅ PR #6 · 1c Pinning ✅ PR #7) | Ordner freigeben und beobachten (Watcher), relative Pfade im Ledger, **Smart-Pinning mit mehreren Quellen** (Server springt ein), kein doppelter Speicher (`TryReference`), Anzeige der Kopien, **Live-Verbindungen** zwischen gekoppelten Geräten | offen |
 | **2 – Explorer-Kern** (2a Index & Suche ✅ PR #8 · 2b Dateioperationen ✅ PR #9 · 2c Vorschaubilder & Metadaten ✅ PR #10) | Index des lokalen Dateisystems, FTS5-Suche, Ordner live lesen, Dateioperationen mit Papierkorb, Vorschaubilder, Metadaten | offen |
-| **3 – Desktop-App** | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
+| **3 – Desktop-App** (3a Gerüst, sichere Brücke, Explorer, Fotos ✅) | Tauri v2 + React im Explorer-Stil: Geräte mit Status, `space://`-Adressleiste, Speicher- und Pinning-Einstellungen | offen |
 | **4 – Mobile-App** | React Native (Expo) mit eingebettetem Rust-Core, Android-Speicherzugriff, akkuschonend, Kamera-Upload | offen |
 | **5 – Medien & Teilen** (5a Streaming + Fern-Vorschaubilder ✅ PR #11 · 5b Hochladen + Kamera-Upload ✅ PR #13 · 5c Freigabelinks ✅ PR #14 · 5d Foto-Zeitachse ✅ PR #18 · eigenes Relais vorbereitet ✅) | Streaming über Byte-Bereiche, Foto-Zeitachse, Freigabelinks mit Ablauf und Widerruf, eigenes Iroh-Relais | ✅ |
 | **6 – Schutz** (6a Speicheranalyse + Duplikate ✅ PR #15 · 6b-1 Sicherungs-Engine ✅ PR #16 · 6b-2 Zeitplan, Aufbewahrung, R2 ✅ PR #17) | Versionen und Snapshots, verschlüsselte Backup-Ziele, Duplikat-Bereinigung, Speicheranalyse | ✅ |

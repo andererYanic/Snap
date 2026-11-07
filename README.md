@@ -37,6 +37,14 @@ space-daemon list                 # eigene Dateien + Dateien aller gekoppelten G
 space-daemon download urlaub.jpg  # per Dateiname, Hash oder Ticket
 ```
 
+## Desktop-App
+
+Unter `apps/desktop/` liegt die Explorer-Oberfläche (Tauri v2 + React) im Fluent-Stil mit
+Mica-Hintergrund, Acryl und Tabs. Sie bietet Ordner und Suche, Dateioperationen mit Rückgängig,
+Papierkorb, Vorschau und die Foto-Zeitachse. Die App spricht nur über typisierte Befehle mit dem
+Dienst. Folgenreiche Aktionen bestätigt ein nativer Dialog. Details, Sicherheitsmodell und Build:
+[`apps/desktop/README.md`](apps/desktop/README.md).
+
 ## Befehle
 
 | Befehl | Zweck |

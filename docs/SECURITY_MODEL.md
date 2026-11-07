@@ -120,6 +120,24 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.
 
+## Desktop-App (Tauri)
+
+- **Angreifer:** feindliche Dateinamen oder Metadaten, z. B. von gekoppelten Geräten oder aus
+  Downloads, die in der Web-Ansicht landen (XSS).
+- **Schutz in Schichten:**
+  1. React stellt Namen nur als Text dar.
+  2. Strenge CSP: nur eigene Skripte, keine Inline-Skripte, kein `eval`, keine Frames, `connect-src`
+     nur zur App.
+  3. Tauri-Rechte minimal: Ereignisse und Fensterleiste; keine Datei-, Shell- oder Dialogrechte.
+  4. Keine allgemeine Durchreiche zum Daemon. Es gibt nur typisierte Befehle mit Eingabeprüfung
+     (absolute Pfade ohne `..`, Längen, Mengen).
+  5. Folgenreiches (endgültig löschen, Papierkorb leeren, ausführbare oder riskante Dateien öffnen)
+     bestätigt ein **nativer** Dialog des Rust-Teils.
+- Selbst ein gelungenes XSS kann daher höchstens rückgängig machbare Aktionen auslösen
+  (Papierkorb, Verschieben, Umbenennen) und keine Daten nach außen senden.
+- **Vorschaubild-Protokoll `thumb:`:** nur lesend, nur JPEG aus dem Cache des Dienstes.
+  Pfadprüfung nach der URL-Dekodierung; kodierte Ausbrüche (`%2E%2E`) sind getestet.
+
 ## Betrieb in fremden Umgebungen (geprüft 2026-11-06)
 
 - **Mehrbenutzer-Rechner:**
