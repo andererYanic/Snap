@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { BackHandler, Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanimated';
 import type { Theme } from './theme';
+import { m } from './motion';
 
 export interface MenuAction {
   label: string;
@@ -37,12 +38,12 @@ export default function ContextMenu({ x, y, actions, onClose, theme }: {
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <Animated.View entering={FadeIn.duration(120)} exiting={FadeOut.duration(120)} style={StyleSheet.absoluteFill}>
+      <Animated.View entering={m(FadeIn.duration(120))} exiting={m(FadeOut.duration(120))} style={StyleSheet.absoluteFill}>
         <Pressable style={[StyleSheet.absoluteFill, styles.scrim]} onPress={onClose} accessibilityLabel="Menü schließen" />
       </Animated.View>
       <Animated.View
-        entering={ZoomIn.springify().damping(18).stiffness(260)}
-        exiting={ZoomOut.duration(110)}
+        entering={m(ZoomIn.springify().damping(18).stiffness(260))}
+        exiting={m(ZoomOut.duration(110))}
         style={[
           styles.menu,
           { left, top, width: WIDTH, backgroundColor: theme.dark ? '#2b2d36' : '#ffffff', borderColor: theme.stroke },

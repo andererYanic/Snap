@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Image, StyleSheet, type ImageStyle, type StyleProp } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { thumbnail } from './core';
+import { m } from './motion';
 
 const MEDIA = /\.(jpe?g|png|gif|webp|heic|heif|bmp|avif|mp4|mkv|mov|webm|3gp|m4v)$/i;
 const VIDEO = /\.(mp4|mkv|mov|webm|3gp|m4v)$/i;
@@ -56,7 +57,7 @@ export function Thumb({ path, edge = 256, style }: { path: string; edge?: number
     return null;
   }
   return (
-    <Animated.View entering={FadeIn.duration(180)} style={StyleSheet.absoluteFill}>
+    <Animated.View entering={m(FadeIn.duration(180))} style={StyleSheet.absoluteFill}>
       <Image source={{ uri }} style={style} fadeDuration={0} />
     </Animated.View>
   );

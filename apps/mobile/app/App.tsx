@@ -12,6 +12,7 @@ import { Devices, More } from './src/Pages';
 import Photos from './src/Photos';
 import { materialTheme, snapTheme, type Theme } from './src/theme';
 import { NavIcon } from './src/ui';
+import { initMotion, m } from './src/motion';
 
 type Tab = 'files' | 'photos' | 'devices' | 'more';
 
@@ -30,7 +31,7 @@ export default function App() {
 
   const boot = useCallback(async (force = false) => {
     try {
-      await initLanguage();
+      await Promise.all([initLanguage(), initMotion()]);
       const sdk = await core.sdkInt();
       setMaterialAvailable(sdk >= 31);
       setMaterialState((await core.getPref('material')) === '1');
@@ -140,14 +141,14 @@ export default function App() {
         <View style={s.tint} />
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab !== 'files' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
-          <Animated.View key={tab} entering={FadeIn.duration(180)} style={s.fill}>
+          <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
             {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} />}
             {tab === 'photos' && <Photos theme={theme} />}
             {tab === 'devices' && <Devices theme={theme} notify={notify} />}
             {tab === 'more' && <More theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} />}
           </Animated.View>
           {toast && (
-            <Animated.View entering={FadeInDown.springify().damping(18)} exiting={FadeOutDown.duration(150)} style={[s.toast, selecting && s.toastHigh]}>
+            <Animated.View entering={m(FadeInDown.springify().damping(18))} exiting={m(FadeOutDown.duration(150))} style={[s.toast, selecting && s.toastHigh]}>
               <Text style={s.toastText}>{toast.text}</Text>
               {toast.undo && (
                 <Pressable onPress={() => { toast.undo?.(); setToast(null); }} style={s.toastBtn}>

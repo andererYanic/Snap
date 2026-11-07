@@ -98,7 +98,8 @@ Eigene Ergänzungen:
   Treffer sind mit „ähnlich“ markiert.
 - **Bewegung:** Federnde Übergänge statt harter Wechsel (Ordner gleiten seitlich herein, Einträge
   blenden gestaffelt ein, Vorschaubilder blenden auf, Menüs zoomen vom Finger aus auf). Kurze
-  Dauern (120–250 ms), damit nichts träge wirkt.
+  Dauern (120–250 ms), damit nichts träge wirkt. Ist „Animationen entfernen“ eingeschaltet, entfallen
+  alle Ein- und Ausblendungen (`src/motion.ts`).
 - **Geräte:** Status, Koppeln per Code oder QR-Code (Kamera), Rechte. Kamera-Upload-Regel pro Gerät.
 - **Mehr:** Sicherungen, Papierkorb, Freigabelinks, Speicheranalyse, Einstellungen (inkl. Sprache und
   Material You).

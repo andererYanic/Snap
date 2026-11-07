@@ -12,6 +12,7 @@ import Video from 'react-native-video';
 import * as core from './core';
 import { t } from './i18n';
 import { isVideo, useThumb } from './thumbs';
+import { m } from './motion';
 
 export interface MediaItem {
   path: string;
@@ -78,7 +79,7 @@ export default function Viewer({ items, start, onClose }: { items: MediaItem[]; 
           </Animated.View>
         </GestureDetector>
         {chrome && item && (
-          <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(150)} style={styles.top}>
+          <Animated.View entering={m(FadeIn.duration(150))} exiting={m(FadeOut.duration(150))} style={styles.top}>
             <Pressable onPress={onClose} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Schließen')}>
               <Text style={styles.btnText}>✕</Text>
             </Pressable>

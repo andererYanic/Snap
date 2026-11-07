@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  FadeIn, FadeOut, LinearTransition, runOnJS, SlideInLeft, SlideInRight, ZoomIn, ZoomOut,
+  FadeIn, LinearTransition, runOnJS, SlideInLeft, SlideInRight, ZoomIn, ZoomOut,
 } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
 import * as core from './core';
@@ -20,6 +20,7 @@ import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, type SheetAction } from './ui';
 import Viewer from './Viewer';
+import { m } from './motion';
 
 interface Props {
   theme: Theme;
@@ -368,7 +369,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
   if (path === null && !hits) {
     const used = storage ? storage.total - storage.free : 0;
     return (
-      <Animated.View entering={dir === 'back' ? SlideInLeft.duration(220) : FadeIn.duration(200)} style={s.fill}>
+      <Animated.View entering={m(dir === 'back' ? SlideInLeft.duration(220) : FadeIn.duration(200))} style={s.fill}>
         <ScrollView contentContainerStyle={s.landing} keyboardShouldPersistTaps="handled">
           <Text style={s.bigTitle}>{t('Dateien')}</Text>
           <SearchField theme={theme} value={query} onChange={setQuery} />
@@ -388,7 +389,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
                 {storage && (
                   <View style={[s.usage, { backgroundColor: theme.accentSoft }]}>
                     <Animated.View
-                      entering={FadeIn.duration(400)}
+                      entering={m(FadeIn.duration(400))}
                       style={[s.usageFill, { backgroundColor: theme.accent, width: `${Math.min(100, (used / storage.total) * 100)}%` }]}
                     />
                   </View>
@@ -400,7 +401,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
           {folders.length > 0 && <Text style={s.section}>{t('Standardordner')}</Text>}
           <View style={s.folderGrid}>
             {folders.map(([d, label], i) => (
-              <Animated.View key={d} entering={FadeIn.delay(i * 40).duration(220)} style={s.folderCell}>
+              <Animated.View key={d} entering={m(FadeIn.delay(i * 40).duration(220))} style={s.folderCell}>
                 <Tap theme={theme} onPress={() => go(joinPath(root, d), 'forward')} style={s.folderTile} label={t(label)}>
                   <Glyph name={d} dir theme={theme} size={44} />
                   <Text style={s.folderLabel} numberOfLines={1}>{t(label)}</Text>
@@ -438,13 +439,13 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
     const enter = FadeIn.delay(Math.min(index, 12) * 18).duration(180);
     if (grid) {
       return (
-        <Animated.View entering={enter} style={{ width: tile, height: tileH }}>
+        <Animated.View entering={m(enter)} style={{ width: tile, height: tileH }}>
           <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
             <View style={[s.tileThumb, { width: tile - 12, height: tile - 12 }]}>
               <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
               {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
               {on && (
-                <Animated.View entering={ZoomIn.duration(140)} exiting={ZoomOut.duration(100)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
+                <Animated.View entering={m(ZoomIn.duration(140))} exiting={m(ZoomOut.duration(100))} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
                   <Text style={{ color: theme.onAccent }}>✓</Text>
                 </Animated.View>
               )}
@@ -455,13 +456,13 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
       );
     }
     return (
-      <Animated.View entering={enter}>
+      <Animated.View entering={m(enter)}>
         <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
           <View style={s.iconBox}>
             <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
             {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
             {on && (
-              <Animated.View entering={ZoomIn.duration(140)} exiting={ZoomOut.duration(100)} style={[s.check, { backgroundColor: theme.accent }]}>
+              <Animated.View entering={m(ZoomIn.duration(140))} exiting={m(ZoomOut.duration(100))} style={[s.check, { backgroundColor: theme.accent }]}>
                 <Text style={{ color: theme.onAccent }}>✓</Text>
               </Animated.View>
             )}
@@ -483,7 +484,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
     <View style={s.fill}>
       {/* Kopfzeile */}
       {sel.size > 0 ? (
-        <Animated.View entering={FadeIn.duration(150)} style={s.header}>
+        <Animated.View entering={m(FadeIn.duration(150))} style={s.header}>
           <Tap theme={theme} onPress={() => { setSel(new Set()); setMenu(null); }} style={s.iconBtn} label={t('Auswahl aufheben')}>
             <Text style={s.iconText}>✕</Text>
           </Tap>
@@ -522,7 +523,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
       <GestureDetector gesture={selectGesture}>
         <Animated.View
           key={`${path}|${view}|${hits ? 'q' : ''}`}
-          entering={hits ? FadeIn.duration(150) : dir === 'forward' ? SlideInRight.duration(220) : SlideInLeft.duration(220)}
+          entering={m(hits ? FadeIn.duration(150) : dir === 'forward' ? SlideInRight.duration(220) : SlideInLeft.duration(220))}
           style={s.fill}
           onLayout={(e) => (listH.current = e.nativeEvent.layout.height)}
         >
@@ -535,7 +536,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
             contentContainerStyle={grid ? s.gridList : s.list}
             columnWrapperStyle={grid ? s.gridRow : undefined}
             getItemLayout={grid ? undefined : (_: unknown, i: number) => ({ length: ROW, offset: ROW * i, index: i })}
-            itemLayoutAnimation={LinearTransition.duration(180)}
+            itemLayoutAnimation={m(LinearTransition.duration(180))}
             scrollEnabled={scrollEnabled}
             onScroll={(e: any) => (scrollY.current = e.nativeEvent.contentOffset.y)}
             scrollEventThrottle={16}
@@ -543,7 +544,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
             refreshing={false}
             keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
-              <Animated.View entering={FadeIn.duration(200)} style={s.empty}>
+              <Animated.View entering={m(FadeIn.duration(200))} style={s.empty}>
                 <View style={[s.emptyIcon, { backgroundColor: theme.accentSoft }]}>
                   <Text style={[s.emptyPlus, { color: theme.accent }]}>{hits ? '∅' : '+'}</Text>
                 </View>
@@ -558,7 +559,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
 
       {/* Unten: „Hier einfügen“ oder „+“ */}
       {clip ? (
-        <Animated.View entering={SlideInRight.duration(200)} style={s.bar}>
+        <Animated.View entering={m(SlideInRight.duration(200))} style={s.bar}>
           <Text style={s.clipText} numberOfLines={2}>
             {clip.mode === 'copy' ? t('{n} zum Kopieren ausgewählt', { n: clip.paths.length }) : t('{n} zum Verschieben ausgewählt', { n: clip.paths.length })}
           </Text>
@@ -566,7 +567,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
           <BarBtn theme={theme} label={t('Hier einfügen')} strong disabled={!!hits || path === null} onPress={paste} />
         </Animated.View>
       ) : !hits && sel.size === 0 ? (
-        <Animated.View entering={ZoomIn.springify().damping(16)} exiting={ZoomOut.duration(120)} style={s.fabBox}>
+        <Animated.View entering={m(ZoomIn.springify().damping(16))} exiting={m(ZoomOut.duration(120))} style={s.fabBox}>
           <Pressable style={s.fab} onPress={() => setSheet('create')} android_ripple={{ color: 'rgba(255,255,255,0.3)' }} accessibilityLabel={t('Neu')}>
             <Text style={s.fabText}>+</Text>
           </Pressable>
@@ -589,7 +590,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
 
       <Modal visible={!!naming} transparent animationType="fade" onRequestClose={() => setNaming(null)}>
         <View style={s.modalBg}>
-          <Animated.View entering={ZoomIn.springify().damping(18)} style={s.modal}>
+          <Animated.View entering={m(ZoomIn.springify().damping(18))} style={s.modal}>
             <Text style={s.modalTitle}>
               {naming?.mode === 'folder' ? t('Neuer Ordner') : naming?.mode === 'file' ? t('Neue Textdatei') : t('Umbenennen')}
             </Text>

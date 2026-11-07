@@ -8,6 +8,7 @@ import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { loadThumb, Thumb } from './thumbs';
 import Viewer from './Viewer';
+import { m } from './motion';
 
 const COLS = 4;
 
@@ -74,7 +75,7 @@ export default function Photos({ theme }: { theme: Theme }) {
         ListEmptyComponent={loading ? undefined : <Text style={s.empty}>{t('Noch keine Fotos')}</Text>}
         renderItem={({ item: r }) =>
           'head' in r ? (
-            <Animated.Text entering={FadeIn.duration(200)} style={s.head}>{r.head}</Animated.Text>
+            <Animated.Text entering={m(FadeIn.duration(200))} style={s.head}>{r.head}</Animated.Text>
           ) : (
             <View style={s.row}>
               {r.cells.map((it, k) => (

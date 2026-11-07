@@ -191,3 +191,17 @@ test('Suche beim Tippen (ohne Enter), Tippfehler-Treffer markiert, Bild öffnet 
   expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
   expect(allText(r)).toContain('1 / 1');
 });
+
+test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsichtbar bleibt', async () => {
+  const spy = jest.spyOn(require('react-native').AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await flush();
+  const animated = r.root.findAll((n) => n.props && 'entering' in n.props);
+  expect(animated.length).toBeGreaterThan(0);
+  expect(animated.every((n) => n.props.entering === undefined)).toBe(true);
+  expect(allText(r)).toContain('Interner Speicher');
+  spy.mockResolvedValue(false);
+  await act(async () => { r.unmount(); });
+  await require('../src/motion').initMotion();
+});
