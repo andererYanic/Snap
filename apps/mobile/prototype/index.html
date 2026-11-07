@@ -165,6 +165,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 /* Untere Leiste */
 .nav { position: absolute; left: 0; right: 0; bottom: 0; height: 72px; display: flex; padding: 6px 8px 10px; background: color-mix(in srgb, var(--card) 80%, transparent); border-top: 1px solid var(--stroke); backdrop-filter: blur(24px); transition: transform var(--dur-page) var(--ease); z-index: 4; }
 .nav.hidden { transform: translateY(100%); }
+/* Aktionsleiste bei Mehrfachauswahl: sitzt an der Stelle der unteren Leiste */
+.abar { position: absolute; left: 0; right: 0; bottom: 0; height: 72px; display: flex; padding: 6px 8px 10px; background: var(--menu); border-top: 1px solid var(--stroke); z-index: 6;
+  box-shadow: 0 -6px 20px rgba(0,0,0,0.08); transform: translateY(100%); transition: transform var(--dur-page) var(--ease); }
+.abar.show { transform: none; }
+.has-bar .toast { bottom: 88px; }
+.abar button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 12px; color: var(--text); border-radius: 14px; }
+.abar button i { font-style: normal; font-size: 19px; height: 26px; display: flex; align-items: center; }
+.abar button:active { background: var(--accent-soft); }
+.abar button.danger { color: var(--danger); }
 .nav button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 12px; color: var(--text2); }
 .nav button i { font-style: normal; font-size: 18px; width: 56px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; transition: background var(--dur-fade) var(--ease); }
 .nav button.on { color: var(--text); font-weight: 600; }
@@ -234,6 +243,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   <div class="status"><span id="clock">9:41</span><span>▴ ◔ ▮</span></div>
   <div class="screen" id="screen"></div>
   <nav class="nav" id="nav"></nav>
+  <div class="abar" id="abar" role="toolbar" aria-label="Aktionen für die Auswahl"></div>
 </div>
 
 <button class="gear" id="gear" aria-label="Designregler öffnen">⚙</button>
@@ -267,7 +277,7 @@ const CURVES = {
 const DEFAULTS = {
   mode: 'light', accent: '#3b6fe0', curve: 'standard', custom: '0.2, 0, 0, 1', speed: 1,
   popMs: 180, popScale: 0.92, pageMs: 220, pageStyle: 'slide', stagger: true,
-  menuStyle: 'pass', row: 64, radius: 18, longPress: 320, vibrate: true, motion: true,
+  menuStyle: 'pass', multiStyle: 'bar', row: 64, radius: 18, longPress: 320, vibrate: true, motion: true,
   swipeThreshold: 0.25,
 };
 let cfg = { ...DEFAULTS };
@@ -291,7 +301,8 @@ const CONTROLS = [
   ['check', 'stagger', 'Einträge gestaffelt einblenden'],
   ['check', 'motion', 'Animationen an (aus = „Animationen entfernen“)'],
   ['h', 'Bedienung'],
-  ['seg', 'menuStyle', 'Kontextmenü', [['pass', 'Liste bleibt bedienbar'], ['scrim', 'Mit Abdunkelung']]],
+  ['seg', 'multiStyle', 'Mehrere markiert: Aktionen', [['bar', 'Leiste unten'], ['menu', 'Menü am Finger']]],
+  ['seg', 'menuStyle', 'Menü am Finger', [['pass', 'Liste bleibt bedienbar'], ['scrim', 'Mit Abdunkelung']]],
   ['range', 'longPress', 'Langes Drücken bis Auswahl', 180, 700, 10, 'ms'],
   ['range', 'swipeThreshold', 'Anzeige: Wischweg bis zum Blättern', 0.1, 0.5, 0.01, '', 'pct'],
   ['check', 'vibrate', 'Vibration (falls das Gerät es erlaubt)'],
@@ -553,6 +564,7 @@ function renderNav() {
   const tabs = [['files', '▤', 'Dateien'], ['photos', '◫', 'Fotos'], ['devices', '⌁', 'Geräte'], ['more', '⋯', 'Mehr']];
   nav.innerHTML = tabs.map(([k, i, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''}" role="tab" aria-selected="${S.tab === k}"><i>${i}</i>${l}</button>`).join('');
   nav.classList.toggle('hidden', S.sel.size > 0);
+  renderBar();
   nav.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.tab;
     if (t === S.tab) {
@@ -563,6 +575,34 @@ function renderNav() {
     S.tab = t; S.sel.clear(); closeMenu();
     render('tab');
   }));
+}
+
+// ---------- Aktionsleiste unten (ab zwei markierten Dateien)
+const useBar = () => cfg.multiStyle === 'bar' && S.sel.size > 1;
+function renderBar() {
+  const bar = document.getElementById('abar');
+  const show = useBar();
+  if (show && !bar.childElementCount) {
+    const acts = [['⇪', 'Teilen', () => toast(`${S.sel.size} Dateien teilen (System-Dialog)`)], ['⧉', 'Kopieren', () => toast('Ziel wählen, dann „Hier einfügen“')],
+      ['➜', 'Verschieben', () => toast('Ziel wählen, dann „Hier einfügen“')], ['🗑', 'Papierkorb', trash, true], ['⋯', 'Mehr', () => openSheet('multi')]];
+    bar.innerHTML = '';
+    for (const [i, l, fn, danger] of acts) {
+      const b = document.createElement('button');
+      b.innerHTML = `<i>${i}</i>${l}`; if (danger) b.className = 'danger';
+      b.addEventListener('click', fn);
+      bar.appendChild(b);
+    }
+  }
+  bar.classList.toggle('show', show);
+  phone.classList.toggle('has-bar', show);
+}
+function selectionChanged() { // Menü am Finger nur bei genau einer Datei; ab zwei die Leiste
+  if (useBar()) closeMenu();
+  if (S.sel.size === 0) closeMenu();
+  const h = screen.querySelector('.page:not(.leaving) .header');
+  const more = h?.querySelector('[data-act="menu-top"]');
+  if (more) more.style.visibility = useBar() ? 'hidden' : '';
+  renderBar();
 }
 
 // ---------- Hauptdarstellung mit Übergang
@@ -626,7 +666,7 @@ function buildFiles(page) {
 function headHTML(node, q) {
   if (S.sel.size) {
     return `<div class="header anim-fade"><button class="icon-btn" data-act="unselect" aria-label="Auswahl aufheben">✕</button><h1>${S.sel.size} ausgewählt</h1>
-      <button class="text-btn" data-act="all">Alle</button><button class="icon-btn" data-act="menu-top" aria-label="Aktionen">⋯</button></div>`;
+      <button class="text-btn" data-act="all">Alle</button><button class="icon-btn" data-act="menu-top" aria-label="Aktionen" style="${useBar() ? 'visibility:hidden' : ''}">⋯</button></div>`;
   }
   if (q) return `<div class="search-head"><button class="icon-btn" data-act="clear-search" aria-label="Zurück">‹</button>${searchField(true)}</div>`;
   return `<div class="header"><button class="icon-btn" data-act="up" aria-label="Zurück">‹</button><h1>${esc(LABEL[node.name] && S.stack.length === 1 ? LABEL[node.name] : node.name)}</h1>
@@ -682,7 +722,7 @@ function wireCommon(page) {
     else if (a === 'up') { S.stack.pop(); S.sel.clear(); render('back'); }
     else if (a === 'clear-search') { S.query = ''; S.sel.clear(); closeMenu(); render(S.stack.length ? 'update' : 'search'); }
     else if (a === 'unselect') { S.sel.clear(); closeMenu(); render('update'); }
-    else if (a === 'all') { items().forEach((e) => S.sel.add(e.node.id)); render('update'); if (S.menu) openMenu(S.menu.x, S.menu.y, true); }
+    else if (a === 'all') { items().forEach((e) => S.sel.add(e.node.id)); render('update'); selectionChanged(); }
     else if (a === 'menu-top') { const r = phone.getBoundingClientRect(); openMenu(r.right - 24, r.top + 36 + 48); }
     else if (a === 'view') { S.view = S.view === 'list' ? 'grid' : 'list'; render('update'); }
     else if (a === 'more') openSheet('more');
@@ -762,7 +802,7 @@ function wireList(el, list) {
   const endDrag = () => {
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     const d = drag; drag = null;
-    if (d) openMenu(d.x, d.y);
+    if (d) { if (useBar()) selectionChanged(); else openMenu(d.x, d.y); }
   };
 
   el.addEventListener('pointerdown', (e) => {
@@ -803,7 +843,7 @@ function tap(list, i) {
     const c = row.querySelector('.check');
     if (on && !c) row.insertAdjacentHTML('beforeend', '<span class="check">✓</span>'); else if (!on && c) c.remove();
     const h = screen.querySelector('.page:not(.leaving) .header h1'); if (h) h.textContent = `${S.sel.size} ausgewählt`;
-    if (S.menu) openMenu(S.menu.x, S.menu.y, true);
+    selectionChanged();
     return;
   }
   if (e.node.dir) {
@@ -904,6 +944,13 @@ function openSheet(kind) {
   const sh = document.createElement('div'); sh.className = 'sheet';
   const close = () => { sc.classList.add('out'); sh.classList.add('out'); setTimeout(() => { sc.remove(); sh.remove(); }, ms(cfg.popMs * 0.66) + 40); };
   sc.addEventListener('click', close);
+  if (kind === 'multi') {
+    sh.innerHTML = `<div class="grab"></div><h3>${S.sel.size} ausgewählt</h3>
+      <button data-m="zip">Als ZIP packen</button><button data-m="info">Eigenschaften</button><button data-m="del" style="color:var(--danger)">Endgültig löschen</button>`;
+    sh.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { close(); toast(b.textContent + ' (im Labor nur angedeutet)'); }));
+    phone.append(sc, sh);
+    return;
+  }
   if (kind === 'create') {
     sh.innerHTML = `<div class="grab"></div><h3>Neu in „${esc(cur().name || 'Interner Speicher')}“</h3>
       <button data-k="folder">${glyphHTML({ dir: true, name: '' }, 28)} Neuer Ordner</button>
