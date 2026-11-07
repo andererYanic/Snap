@@ -238,6 +238,9 @@ pub enum Request {
         #[serde(default)]
         offset: u32,
         limit: u32,
+        /// Fortsetzung hinter diesem Eintrag (`next` der vorigen Seite); hat Vorrang vor `offset`.
+        #[serde(default)]
+        after: Option<String>,
     },
     /// Word-Datei (DOCX) als einfache Leseansicht lesen. Bilder landen in `image_dir`. Nur lokal.
     ReadDocx {
@@ -574,6 +577,9 @@ pub enum Response {
         entries: Vec<DirEntryInfo>,
         /// Gesamtzahl (nach Filter „versteckt“), für die Seitenanzeige.
         total: u64,
+        /// Cursor für die nächste Seite (`after`), `None` = letzte Seite.
+        #[serde(default)]
+        next: Option<String>,
     },
     FileOpStarted {
         job: u64,

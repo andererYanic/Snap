@@ -694,7 +694,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             limit,
         },
         Commands::Ls { path, all } => {
-            Request::ListDir { path: absolute(&path)?, show_hidden: all, offset: 0, limit: 1_000 }
+            Request::ListDir { path: absolute(&path)?, show_hidden: all, offset: 0, limit: 1_000, after: None }
         }
         Commands::Index { action: IndexAction::List } => Request::IndexRoots,
         Commands::Index { action: IndexAction::Add { path } } => Request::IndexAdd { path: absolute(&path)? },
@@ -1158,7 +1158,7 @@ fn print_response(res: Response) -> ExitCode {
                 println!("{} {:>10}  {}", kind_icon(h.kind), size, h.path);
             }
         }
-        Response::DirListing { path, entries, total } => {
+        Response::DirListing { path, entries, total, .. } => {
             println!("📂 {}", path.display());
             for e in &entries {
                 let size = if e.kind == NodeKind::File { human_size(e.size) } else { String::new() };

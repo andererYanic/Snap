@@ -440,7 +440,7 @@ Messung `core/tests/perf.rs` (Release, Index mit 1 Mio. Einträgen, kalter Cache
 - Die 87 ms im letzten Fall stammen aus der **exakten** Suche, wenn ein Filter alles ausschließt.
   Das bestand schon vorher (bisher nicht gemessen) und liegt unter dem Suchbudget von 100 ms. Die
   App sucht beim Tippen mit 160 ms Pause und verwirft veraltete Antworten, die Oberfläche blockiert
-  nie. **Offen:** Filter in die FTS-Abfrage ziehen.
+  nie. ~~Offen: Filter in die FTS-Abfrage ziehen~~ – erledigt in Review 30 (87 → 24 ms).
 - Vorschaubilder auf Android erzeugt jetzt das System (`ThumbnailUtils`, nutzt eingebettete
   EXIF-Vorschauen und Hardware-Dekoder) statt der Kern. Höchstens 4 gleichzeitig, Ergebnis als JPEG
   im App-Cache (begrenzt auf 200 MB). Ein zweiter Aufruf liest nur noch die Cache-Datei; die App
@@ -567,3 +567,51 @@ Einträge. Alle Seiten liegen weit unter 16 ms.
   Läuft in `spawn_blocking`, blockiert weder Netz noch Oberfläche.
 - Das Entpacken selbst ist der bestehende Dateiauftrag (Review 20), höchstens einer je Gerät.
 - Die App fragt nur einmal (Fernoperation) und wartet auf das Ergebnis; nichts läuft im UI-Thread.
+
+## Review 29 – rusqlite 0.32 → 0.41 (SQLite 3.5x, 2026-11-07)
+
+Ohne Codeänderung; Messung `perf.rs::db_hot_paths` (Release) nach dem Wechsel:
+
+| Messung | vorher | nachher |
+|---|---|---|
+| `is_shared` | 7–9 µs | 4,0 µs |
+| Lesen während Schreiblast p50 / p99 / max | – / 0,06 ms / 0,8 ms | 4,1 µs / 0,02 ms / 1,0 ms |
+| `apply_remote_entries` (10k) | – | 11,4 µs je Eintrag |
+| `entries_since` (Seite 1000) | – | 1,5 ms |
+
+Keine Verschlechterung; `cargo deny check` und `cargo audit` grün.
+
+## Review 30 – Endungsfilter im Suchindex (2026-11-07)
+
+Der FTS5-Index hat jetzt eine zweite Spalte `ext`. Ein Endungsfilter („nur PDF“) wird in die
+Index-Abfrage gezogen (`name : "vertrag" AND ext : ("pdf")`), statt alle Namenstreffer zu lesen und
+danach zu filtern. Endungen unter 3 Zeichen (Trigramme) fallen auf die genaue Prüfung zurück, die
+ohnehin immer läuft. Bestehende Indizes werden beim ersten Öffnen einmalig neu aufgebaut
+(1 Mio. Einträge: einige Sekunden, nur einmal).
+
+Messung (`perf.rs::local_index_million`, Release, 1 Mio. Einträge):
+
+| Anfrage | vorher | nachher |
+|---|---|---|
+| „vertrag“ + nur PDF, keine Treffer (ungünstigster Fall) | 87 ms | **24 ms** |
+| übrige Suchen (exakt, Tippfehler) | 1–9 ms | 1–9 ms (unverändert) |
+| 1 Mio. Einträge einfügen + Index | – | 8,2 s |
+
+## Review 31 – Große Ordner: Cursor und Zwischenspeicher (2026-11-07)
+
+`ListDir` kennt jetzt einen Cursor (`after`/`next`): Seiten bleiben stabil, auch wenn sich der
+Ordner zwischen zwei Seiten ändert. Gemessen zeigte sich, dass bei sehr großen Ordnern nicht das
+Sortieren, sondern `readdir` die Zeit kostet. Daher werden Ordner ab 5 000 (bis 200 000) Einträgen
+sortiert zwischengespeichert (höchstens 4), gültig solange die Änderungszeit des Ordners gleich
+bleibt; frisch geänderte Ordner (< 3 s, grobe Zeitstempel z. B. auf FAT) werden nicht gespeichert.
+
+Messung (`perf.rs::explorer_paging_large_folder`, Release, 100 000 Dateien):
+
+| Seite | vorher | nachher |
+|---|---|---|
+| erste Seite (kalt) | 56 ms | 49–73 ms (readdir, schwankt mit dem Datenträger) |
+| Seite ab 50 000, per Position | 44 ms | 0,13 ms aus dem Zwischenspeicher |
+| Folgeseite per Cursor | – | **0,13 ms** |
+
+Die erste Seite eines riesigen Ordners bleibt eine asynchrone Abfrage im Hintergrund (die
+Oberfläche blockiert nicht); erneutes Öffnen und Weiterblättern sind sofort da.

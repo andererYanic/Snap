@@ -1205,3 +1205,42 @@ fn remote_dir_tree() {
         assert_eq!(p.files.len(), 200);
     });
 }
+
+#[test]
+#[ignore]
+fn explorer_paging_large_folder() {
+    // Ordner mit 100 000 Dateien: Seite 1 und eine späte Seite, per Position und per Cursor
+    use space_core::api::explorer::{read_dir_from, read_dir_page, Start};
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("riesig");
+    std::fs::create_dir(&big).unwrap();
+    for i in 0..100_000 {
+        std::fs::File::create(big.join(format!("Bild_{i}.jpg"))).unwrap();
+    }
+    let n = 10;
+    let t = Instant::now();
+    for _ in 0..n {
+        read_dir_page(&big, false, 0, 200).unwrap();
+    }
+    report("explorer: 100k Dateien, erste Seite", n, t.elapsed());
+    let t = Instant::now();
+    for _ in 0..n {
+        read_dir_page(&big, false, 50_000, 200).unwrap();
+    }
+    report("explorer: 100k Dateien, Seite ab 50 000 (Position)", n, t.elapsed());
+    let (_, _, cursor) = read_dir_from(&big, false, Start::Offset(49_800), 200).unwrap();
+    let c = cursor.unwrap();
+    let t = Instant::now();
+    for _ in 0..n {
+        read_dir_from(&big, false, Start::After(&c), 200).unwrap();
+    }
+    report("explorer: 100k Dateien, Seite ab 50 000 (Cursor)", n, t.elapsed());
+    // Zwischenspeicher greift erst bei „beruhigten“ Ordnern (Änderungszeit ≥ 3 s alt)
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    read_dir_page(&big, false, 0, 200).unwrap();
+    let t = Instant::now();
+    for _ in 0..n {
+        read_dir_from(&big, false, Start::After(&c), 200).unwrap();
+    }
+    report("explorer: 100k Dateien, Folgeseite (Cursor, Zwischenspeicher)", n, t.elapsed());
+}

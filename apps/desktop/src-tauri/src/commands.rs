@@ -63,7 +63,7 @@ pub async fn info(d: State<'_, Daemon>) -> UiResult<Value> {
 
 #[tauri::command]
 pub async fn list_dir(d: State<'_, Daemon>, path: String, show_hidden: bool, offset: u32) -> UiResult<Value> {
-    d.request(Request::ListDir { path: ui_path(&path)?, show_hidden, offset, limit: 1000 }).await
+    d.request(Request::ListDir { path: ui_path(&path)?, show_hidden, offset, limit: 1000, after: None }).await
 }
 
 #[tauri::command]

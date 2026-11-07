@@ -1,6 +1,7 @@
 //! Explorer-Operationen: lokale Suche, Ordner live lesen, indexierte Orte verwalten.
 //! Alles nur lokal – gekoppelte Geräte haben keinen Zugriff (siehe `auth`).
 
+use crate::api::error::{ApiError, ErrorCode};
 use crate::api_bail;
 use crate::daemon::*;
 use crate::index::{NodeKind, SearchFilter};
@@ -38,19 +39,60 @@ pub(crate) async fn search(
     Ok(Response::SearchResults { hits })
 }
 
-/// Sortierung wie in Dateimanagern: Ordner zuerst, dann Name ohne Groß-/Kleinschreibung;
-/// bei Gleichstand entscheidet der Originalname (eindeutige Reihenfolge).
-fn sort_entries(entries: Vec<DirEntryInfo>) -> Vec<DirEntryInfo> {
-    let mut keyed: Vec<(bool, String, DirEntryInfo)> =
-        entries.into_iter().map(|e| (e.kind != NodeKind::Dir, e.name.to_lowercase(), e)).collect();
-    keyed.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.name.cmp(&b.2.name)));
-    keyed.into_iter().map(|k| k.2).collect()
-}
-
 /// Liest eine Seite eines Ordners direkt vom Dateisystem (immer aktuell, unabhängig vom
 /// Index). Zum Sortieren genügen Name und Typ aus `readdir`; Größe und Datum (`stat`) werden
 /// nur für die Einträge der angeforderten Seite gelesen. Gibt (Seite, Gesamtzahl) zurück.
 pub fn read_dir_page(path: &Path, show_hidden: bool, offset: usize, limit: usize) -> Result<(Vec<DirEntryInfo>, u64)> {
+    let (page, total, _) = read_dir_from(path, show_hidden, Start::Offset(offset), limit)?;
+    Ok((page, total))
+}
+
+/// Wo eine Seite beginnt: nach Position oder hinter einem Eintrag (Cursor `next` der vorigen
+/// Seite – stabil, auch wenn sich der Ordner zwischen zwei Seiten ändert).
+pub enum Start<'a> {
+    Offset(usize),
+    After(&'a str),
+}
+
+/// Sortierschlüssel: Ordner zuerst, Name ohne Groß-/Kleinschreibung, dann Originalname.
+type Key = (bool, String, String);
+
+fn key_of(e: &DirEntryInfo) -> Key {
+    (e.kind != NodeKind::Dir, e.name.to_lowercase(), e.name.clone())
+}
+
+/// Cursor-Text eines Eintrags: "0/<name>" für Ordner, sonst "1/<name>" ('/' kommt in Namen nie vor).
+fn cursor_of(e: &DirEntryInfo) -> String {
+    format!("{}/{}", if e.kind == NodeKind::Dir { 0 } else { 1 }, e.name)
+}
+
+fn parse_cursor(c: &str) -> Result<Key> {
+    let (k, name) = c.split_once('/').ok_or_else(|| ApiError::new(ErrorCode::InvalidInput, "Ungültiger Cursor"))?;
+    if !(k == "0" || k == "1") || name.is_empty() || name.contains('/') || name.len() > 4096 {
+        api_bail!(InvalidInput, "Ungültiger Cursor");
+    }
+    Ok((k == "1", name.to_lowercase(), name.to_string()))
+}
+
+/// Ab so vielen Einträgen wird die sortierte Liste eines Ordners kurz zwischengespeichert.
+const CACHE_FROM: usize = 5_000;
+
+type Listing = Arc<Vec<(Key, DirEntryInfo)>>;
+
+/// Zuletzt gelesene große Ordner: (Pfad, versteckte?, Änderungszeit des Ordners) → Liste.
+/// Ändert sich der Ordnerinhalt, ändert sich seine Änderungszeit – der Eintrag gilt dann nicht mehr.
+type CacheKey = (PathBuf, bool, std::time::SystemTime);
+static DIR_CACHE: std::sync::Mutex<Vec<(CacheKey, Listing)>> = std::sync::Mutex::new(Vec::new());
+
+/// Vollständige, sortierte Liste eines Ordners (Name und Typ aus `readdir`).
+fn listing(path: &Path, show_hidden: bool) -> Result<Listing> {
+    let stamp = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    if let Some(t) = stamp {
+        let cache = DIR_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, l)) = cache.iter().find(|(k, _)| k.0 == path && k.1 == show_hidden && k.2 == t) {
+            return Ok(l.clone());
+        }
+    }
     let rd = match std::fs::read_dir(path) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -79,10 +121,54 @@ pub fn read_dir_page(path: &Path, show_hidden: bool, offset: usize, limit: usize
         } else {
             NodeKind::File
         };
-        all.push(DirEntryInfo { name, kind, size: 0, mtime: 0, hidden });
+        let info = DirEntryInfo { name, kind, size: 0, mtime: 0, hidden };
+        all.push((key_of(&info), info));
     }
-    let total = all.len() as u64;
-    let mut page: Vec<DirEntryInfo> = sort_entries(all).into_iter().skip(offset).take(limit).collect();
+    // Sortierung wie in Dateimanagern: Ordner zuerst, dann Name ohne Groß-/Kleinschreibung;
+    // bei Gleichstand entscheidet der Originalname (eindeutige Reihenfolge).
+    all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let listing = Arc::new(all);
+    // Nur wenn sich der Ordner während des Lesens nicht geändert hat
+    let still = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    // Nicht bei gerade geänderten Ordnern (grobe Zeitstempel, z. B. FAT: 2 s) und nicht bei
+    // riesigen (Speicher).
+    let settled = stamp.and_then(|t| t.elapsed().ok()).is_some_and(|d| d.as_secs() >= 3);
+    let size_ok = (CACHE_FROM..=200_000).contains(&listing.len());
+    if let (Some(t), true) = (stamp, size_ok && settled && still == stamp) {
+        let mut cache = DIR_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.retain(|(k, _)| !(k.0 == path && k.1 == show_hidden));
+        cache.push(((path.to_path_buf(), show_hidden, t), listing.clone()));
+        if cache.len() > 4 {
+            cache.remove(0);
+        }
+    }
+    Ok(listing)
+}
+
+/// Wie [`read_dir_page`], mit Cursor. Große Ordner (ab 5 000 Einträgen) werden sortiert
+/// zwischengespeichert, solange sich ihre Änderungszeit nicht ändert; Folgeseiten kosten dann
+/// nur eine Binärsuche. Ergebnis: (Seite, Gesamtzahl, Cursor der nächsten Seite).
+pub fn read_dir_from(
+    path: &Path,
+    show_hidden: bool,
+    start: Start<'_>,
+    limit: usize,
+) -> Result<(Vec<DirEntryInfo>, u64, Option<String>)> {
+    let after = match start {
+        Start::After(c) => Some(parse_cursor(c)?),
+        Start::Offset(_) => None,
+    };
+    let listing = listing(path, show_hidden)?;
+    let total = listing.len() as u64;
+    // Sortierte Liste: Beginn per Binärsuche hinter dem Cursor bzw. ab der Position.
+    let from = match (&after, start) {
+        (Some(a), _) => listing.partition_point(|(k, _)| k <= a),
+        (None, Start::Offset(o)) => o.min(listing.len()),
+        (None, Start::After(_)) => 0,
+    };
+    let end = from.saturating_add(limit).min(listing.len());
+    let mut page: Vec<DirEntryInfo> = listing[from..end].iter().map(|(_, e)| e.clone()).collect();
+    let next = if end < listing.len() { page.last().map(cursor_of) } else { None };
     for e in &mut page {
         // symlink_metadata folgt keinen Symlinks.
         if let Ok(m) = std::fs::symlink_metadata(path.join(&e.name)) {
@@ -97,18 +183,30 @@ pub fn read_dir_page(path: &Path, show_hidden: bool, offset: usize, limit: usize
                 .unwrap_or(0);
         }
     }
-    Ok((page, total))
+    Ok((page, total, next))
 }
 
-pub(crate) async fn list_dir(path: PathBuf, show_hidden: bool, offset: u32, limit: u32) -> Result<Response> {
+pub(crate) async fn list_dir(
+    path: PathBuf,
+    show_hidden: bool,
+    offset: u32,
+    limit: u32,
+    after: Option<String>,
+) -> Result<Response> {
     if !path.is_absolute() {
         api_bail!(InvalidInput, "Pfad muss absolut sein: {}", path.display());
     }
     let limit = limit.clamp(1, LIST_DIR_MAX) as usize;
     let p = path.clone();
-    let (entries, total) =
-        tokio::task::spawn_blocking(move || read_dir_page(&p, show_hidden, offset as usize, limit)).await??;
-    Ok(Response::DirListing { path, entries, total })
+    let (entries, total, next) = tokio::task::spawn_blocking(move || {
+        let start = match after.as_deref() {
+            Some(c) => Start::After(c),
+            None => Start::Offset(offset as usize),
+        };
+        read_dir_from(&p, show_hidden, start, limit)
+    })
+    .await??;
+    Ok(Response::DirListing { path, entries, total, next })
 }
 
 pub(crate) fn index_roots(inner: &DaemonInner) -> Result<Response> {
@@ -270,5 +368,44 @@ mod tests {
         assert_eq!((link.kind, link.size), (NodeKind::Symlink, 0), "Symlink wird nicht verfolgt");
         let err = read_dir_page(&dir.path().join("fehlt"), false, 0, 10).unwrap_err();
         assert_eq!(crate::api::error::code_of(&err), crate::api::error::ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn cursor_pages_are_complete_ordered_and_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..57 {
+            std::fs::write(dir.path().join(format!("Datei {i:02}.txt")), b"x").unwrap();
+        }
+        for i in 0..5 {
+            std::fs::create_dir(dir.path().join(format!("ordner{i}"))).unwrap();
+        }
+        let (full, total) = read_dir_page(dir.path(), false, 0, 1000).unwrap();
+        assert_eq!(total, 62);
+        // Seiten über den Cursor ergeben genau die vollständige, sortierte Liste
+        let mut got = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let start = cursor.as_deref().map(Start::After).unwrap_or(Start::Offset(0));
+            let (page, t, next) = read_dir_from(dir.path(), false, start, 10).unwrap();
+            assert_eq!(t, 62);
+            got.extend(page.into_iter().map(|e| e.name));
+            match next {
+                Some(n) => cursor = Some(n),
+                None => break,
+            }
+        }
+        assert_eq!(got, full.iter().map(|e| e.name.clone()).collect::<Vec<_>>());
+        assert!(got[..5].iter().all(|n| n.starts_with("ordner")), "Ordner zuerst");
+        // Stabil: Entsteht vor dem Cursor eine neue Datei, verschiebt sich die nächste Seite nicht
+        let (p1, _, next) = read_dir_from(dir.path(), false, Start::Offset(0), 10).unwrap();
+        std::fs::write(dir.path().join("Datei 00a.txt"), b"x").unwrap();
+        let (p2, _, _) = read_dir_from(dir.path(), false, Start::After(next.as_deref().unwrap()), 10).unwrap();
+        assert!(p2[0].name > p1.last().unwrap().name || p2[0].kind != p1.last().unwrap().kind);
+        assert!(!p2.iter().any(|e| p1.iter().any(|f| f.name == e.name)), "keine Doppelten");
+        // Ungültige Cursor
+        for bad in ["", "2/x", "1/", "0/a/b", "kein-cursor"] {
+            let err = read_dir_from(dir.path(), false, Start::After(bad), 10).unwrap_err();
+            assert_eq!(crate::api::error::code_of(&err), crate::api::error::ErrorCode::InvalidInput, "{bad}");
+        }
     }
 }
