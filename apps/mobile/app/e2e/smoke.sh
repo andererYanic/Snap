@@ -56,3 +56,5 @@ if ! grep -qE "Documents|Dokumente" "$OUT/ui-texts.txt" || ! grep -qE "Interner 
   exit 1
 fi
 echo "OK: App läuft (PID $PID) und zeigt die Dateien."
+# Ruckel-Messung (nur Bericht, kein Abbruch)
+"$(dirname "$0")/perf.sh" || echo "Ruckel-Messung fehlgeschlagen"
