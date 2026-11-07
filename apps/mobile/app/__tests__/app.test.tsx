@@ -439,3 +439,32 @@ test('Textdatei öffnet die eingebaute Anzeige statt einer fremden App', async (
   expect(NativeModules.SnapCore.readText).toHaveBeenCalled();
   expect(allText(r)).toContain('Zeile eins');
 });
+
+test('Untere Leiste behält beim Markieren ihren Platz (Liste rutscht nicht)', async () => {
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  const slot = () => r.root.findAll((n) => Array.isArray(n.props.edges) && n.props.edges.length === 1 && n.props.edges[0] === 'bottom')[0];
+  const tabs = () => r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function');
+  const before = slot();
+  expect(tabs().length).toBe(4);
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+      { state: State.END, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+    ]);
+  });
+  await flush();
+  // Gleicher Platz, nur der Inhalt wechselt: statt der Tabs die Aktionsleiste
+  expect(slot()).toBe(before);
+  expect(tabs()).toHaveLength(0);
+  expect(r.root.findAll((n) => n.props.accessibilityRole === 'toolbar' && typeof n.type !== 'string').length).toBeGreaterThan(0);
+  await act(async () => { byLabel(r, 'Auswahl aufheben').props.onPress(); });
+  await flush();
+  expect(slot()).toBe(before);
+  expect(tabs().length).toBe(4);
+});

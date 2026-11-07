@@ -27,6 +27,11 @@ interface Props {
   root: string;
   notify: (text: string, undo?: () => void) => void;
   selectionChanged: (active: boolean) => void;
+  /**
+   * Platz der unteren Leiste (feste Höhe): Files stellt dort die Aktionsleiste bzw. „Hier
+   * einfügen“ hinein; `null` = Hauptmenü. So ändert sich die Höhe der Liste nie.
+   */
+  bottomSlot?: (node: React.ReactNode) => void;
   /** Zähler: ändert er sich, geht es zurück zur Startansicht (erneutes Antippen von „Dateien“). */
   home?: number;
 }
@@ -47,7 +52,7 @@ const FOLDERS: [string, string][] = [
   ['Movies', 'Videos'],
 ];
 
-export default function Files({ theme, root, notify, selectionChanged, home = 0 }: Props) {
+export default function Files({ theme, root, notify, selectionChanged, bottomSlot, home = 0 }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [items, setItems] = useState<Item[]>([]);
@@ -606,6 +611,35 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: hidden ? t('Versteckte Dateien ausblenden') : t('Versteckte Dateien anzeigen'), onPress: () => setHidden(!hidden) },
   ];
 
+  // Untere Leiste: Aktionsleiste (ab zwei Dateien) oder „Hier einfügen“ im festen Platz der App
+  const bottomNode = onLanding ? null : showBar ? (
+    <View style={s.actionBar} accessibilityRole="toolbar">
+      {barActions.map((a) => (
+        <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
+          <Text style={[s.actionIcon, a.danger && { color: theme.danger }]}>{a.icon}</Text>
+          <Text style={[s.actionText, a.danger && { color: theme.danger }]} numberOfLines={1}>{a.label}</Text>
+        </Tap>
+      ))}
+    </View>
+  ) : clip ? (
+    <View style={s.bar}>
+      <Text style={s.clipText} numberOfLines={2}>
+        {clip.mode === 'copy' ? t('{n} zum Kopieren ausgewählt', { n: clip.paths.length }) : t('{n} zum Verschieben ausgewählt', { n: clip.paths.length })}
+      </Text>
+      <BarBtn theme={theme} label={t('Abbrechen')} onPress={() => setClip(null)} />
+      <BarBtn theme={theme} label={t('Hier einfügen')} strong disabled={!!hits || path === null} onPress={paste} />
+    </View>
+  ) : null;
+  const slotRef = useRef(bottomSlot);
+  slotRef.current = bottomSlot;
+  // Nur neu setzen, wenn sich Auswahl, Ablage oder Ansicht ändern (sonst Endlosschleife über die App)
+  const nodeRef = useRef(bottomNode);
+  nodeRef.current = bottomNode;
+  useEffect(() => {
+    slotRef.current?.(nodeRef.current);
+  }, [showBar, clip, onLanding, sel, hits, path, theme, shown]);
+  useEffect(() => () => slotRef.current?.(null), []);
+
   return (
     <View style={s.fill}>
       {/* Kopfzeile */}
@@ -700,25 +734,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       )}
 
       {/* Unten: Aktionsleiste (ab zwei Dateien), „Hier einfügen“ oder „+“ */}
-      {onLanding ? null : showBar ? (
-        <Animated.View entering={m(toastIn)} style={s.actionBar} accessibilityRole="toolbar">
-          {barActions.map((a) => (
-            <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
-              <Text style={[s.actionIcon, a.danger && { color: theme.danger }]}>{a.icon}</Text>
-              <Text style={[s.actionText, a.danger && { color: theme.danger }]} numberOfLines={1}>{a.label}</Text>
-            </Tap>
-          ))}
-        </Animated.View>
-      ) : clip ? (
-        <Animated.View entering={m(toastIn)} style={s.bar}>
-          <Text style={s.clipText} numberOfLines={2}>
-            {clip.mode === 'copy' ? t('{n} zum Kopieren ausgewählt', { n: clip.paths.length }) : t('{n} zum Verschieben ausgewählt', { n: clip.paths.length })}
-          </Text>
-          <BarBtn theme={theme} label={t('Abbrechen')} onPress={() => setClip(null)} />
-          <BarBtn theme={theme} label={t('Hier einfügen')} strong disabled={!!hits || path === null} onPress={paste} />
-        </Animated.View>
-      ) : !hits && sel.size === 0 ? (
-        <Animated.View entering={m(popIn)} exiting={m(popOut)} style={s.fabBox}>
+      {onLanding || showBar || clip ? null : !hits && sel.size === 0 ? (        <Animated.View entering={m(popIn)} exiting={m(popOut)} style={s.fabBox}>
           <Pressable style={s.fab} onPress={() => setSheet('create')} android_ripple={{ color: 'rgba(255,255,255,0.3)' }} accessibilityLabel={t('Neu')}>
             <Text style={s.fabText}>+</Text>
           </Pressable>
@@ -971,17 +987,11 @@ const styles = themed((th: Theme) =>
     emptyIcon: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
     emptyPlus: { fontSize: 30 },
     emptyTitle: { color: th.text, fontSize: 18, fontWeight: '700', marginBottom: 6, textAlign: 'center' },
-    bar: {
-      position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', borderRadius: 18,
-      backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke, elevation: 6, overflow: 'hidden',
-    },
+    bar: { flex: 1, flexDirection: 'row', alignItems: 'center' },
     barBtn: { flex: 1, minHeight: 56, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
     barText: { color: th.text, fontSize: 13, fontWeight: '600' },
     clipText: { flex: 1.6, color: th.text2, fontSize: 13, paddingLeft: 16 },
-    actionBar: {
-      position: 'absolute', left: 0, right: 0, bottom: 0, height: 72, flexDirection: 'row', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 10,
-      backgroundColor: th.dark ? '#2b2d36' : '#ffffff', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.stroke, elevation: 12,
-    },
+    actionBar: { flex: 1, flexDirection: 'row', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 6 },
     actionBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 14, overflow: 'hidden' },
     actionIcon: { color: th.text, fontSize: 19, lineHeight: 24 },
     actionText: { color: th.text, fontSize: 12, marginTop: 2 },
