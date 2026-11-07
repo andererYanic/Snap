@@ -4,6 +4,7 @@
 
 mod bridge;
 mod commands;
+mod i18n;
 
 use bridge::{percent_decode, Daemon};
 use space_core::ipc::{read_frame, write_frame, Envelope, Request, Response};
@@ -101,6 +102,27 @@ fn main() {
             commands::open_path,
             commands::start_daemon,
             commands::places,
+            commands::set_language,
+            commands::devices,
+            commands::peers,
+            commands::pair_invite,
+            commands::pair_invite_wait,
+            commands::pair_join,
+            commands::pair_remove,
+            commands::pair_grant,
+            commands::pair_revoke,
+            commands::ops_pending,
+            commands::ops_approve,
+            commands::ops_reject,
+            commands::backups,
+            commands::backup_create,
+            commands::backup_run,
+            commands::backup_snapshots,
+            commands::backup_browse,
+            commands::backup_restore,
+            commands::backup_remove,
+            commands::settings,
+            commands::setting_set,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -27,15 +27,43 @@ nicht, bietet die App an, ihn zu starten: zuerst als systemd-Benutzerdienst `sna
 - **Vorschau:** Bilder groß, Videos über den lokalen Streaming-Server.
 - **Fotos:** Zeitachse nach Aufnahmedatum, nach Monaten gruppiert, mit Sprungleiste.
 
-Geplant (3b): Geräte und Kopplung, Sicherungen, Einstellungen, Freigabelinks, Speicheranalyse.
+## Funktionen (Phase 3b)
+
+- **Geräte:**
+  - Gekoppelte Geräte mit Verbindungsstatus.
+  - Koppeln per Code in beide Richtungen.
+  - Rechte je Gerät sehen, gewähren (mit nativer Bestätigung) und entziehen.
+  - Entkoppeln.
+  - Wartende Fernänderungen anderer Geräte zulassen oder ablehnen.
+- **Sicherungen:**
+  - Einrichten: externe Platte/Ordner oder Cloudflare R2, Passwort.
+  - Der Wiederherstellungsschlüssel wird einmal angezeigt.
+  - Jetzt sichern, Versionen mit Statistik.
+  - Wiederherstellen neben das Original, nie überschreiben.
+  - Entfernen.
+- **Einstellungen:** alle Grenzen (Massenschutz, Upload-Kontingent, Sicherungsplan und
+  -aufbewahrung, Caches …) zur Laufzeit ändern oder auf den Standard zurücksetzen.
+
+Geplant: Freigabelinks, Speicheranalyse und Duplikate in der App.
+
+## Sprachen
+
+Die Oberfläche ist auf Deutsch geschrieben und liegt zusätzlich auf Englisch vor. Gewählt wird die
+Systemsprache, umstellen lässt sie sich unter **Einstellungen → Sprache**. Eine eigene Sprache ist
+eine JSON-Datei in `locales/`, ohne Codeänderung; sie gilt auch für die nativen Dialoge.
+Anleitung: [`docs/TRANSLATING.md`](../../docs/TRANSLATING.md).
 
 ## Sicherheit
 
 - **Keine allgemeine Brücke:** Die Web-Ansicht kann nur die typisierten Befehle in
   `src-tauri/src/commands.rs` aufrufen. Jeder Befehl baut genau eine Daemon-Anfrage und prüft
   seine Eingaben: absolute Pfade ohne `..`, begrenzte Längen und Mengen.
-- **Native Bestätigung:** Endgültiges Löschen, Papierkorb leeren und das Öffnen ausführbarer oder
-  riskanter Dateien (`.desktop`, Skripte, Programme …) bestätigt ein nativer Dialog. Der wird vom
+- **Native Bestätigung:** Diese Aktionen bestätigt ein nativer Dialog:
+  - endgültig löschen und Papierkorb leeren;
+  - ausführbare oder riskante Dateien öffnen (`.desktop`, Skripte, Programme …);
+  - einem Gerät ein Recht gewähren, ein Gerät entkoppeln;
+  - eine Fernänderung zulassen;
+  - eine Sicherung entfernen. Der wird vom
   Rust-Teil angezeigt und kann von Skript in der Web-Ansicht weder ausgelöst noch weggeklickt
   werden.
 - **Feindliche Dateinamen:** Namen werden nur als Text dargestellt (React escapt). Eine strenge
