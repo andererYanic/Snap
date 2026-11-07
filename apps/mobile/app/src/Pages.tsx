@@ -1,16 +1,25 @@
-// Geräte (Status, Koppeln per Code) und „Mehr“ (Papierkorb, Einstellungen).
+// Unterseiten der Einstellungen: Geräte (Status, Speicher, Koppeln), Papierkorb, Allgemein.
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { Text, TextInput } from './text';
 import * as core from './core';
-import { request, shortDate } from './core';
+import { humanSize, request, shortDate } from './core';
 import { LANGUAGES, lang, locale, setLanguage, t } from './i18n';
 import type { Theme } from './theme';
 import { themed } from './ui';
 
-interface Device { node_id: string; name: string; paired_at: number; grants: { capability: string; folder: string | null }[] }
+export interface Device {
+  node_id: string;
+  name: string;
+  paired_at: number;
+  grants: { capability: string; folder: string | null }[];
+  online?: boolean;
+  /** Gemeldeter Speicher (Summen der Freigaben des Geräts). */
+  storage?: { total: number; free: number; updated_at: number };
+}
 
 export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) => void }) {
+  // Geräte: Status, Speicher, Koppeln (Unterseite der Einstellungen)
   const s = styles(theme);
   const [devices, setDevices] = useState<Device[]>([]);
   const [online, setOnline] = useState<Set<string>>(new Set());
@@ -64,7 +73,7 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
 
   return (
     <ScrollView contentContainerStyle={s.page}>
-      <Text style={s.h2}>{t('Gekoppelte Geräte')}</Text>
+      <Text style={[s.h2, s.first]}>{t('Gekoppelte Geräte')}</Text>
       {devices.length === 0 && <Text style={s.muted}>{t('Noch keine Geräte gekoppelt.')}</Text>}
       {devices.map((d) => (
         <Pressable key={d.node_id} style={s.card} onLongPress={() => unpair(d)}>
@@ -73,6 +82,7 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
             <Text style={s.strong}>{d.name}</Text>
             <Text style={s.muted}>
               {online.has(d.node_id) ? t('Verbunden') : t('Nicht verbunden')} · {t('gekoppelt am {date}', { date: shortDate(d.paired_at, locale()) })}
+              {d.storage ? ` · ${t('{free} von {total} frei', { free: humanSize(d.storage.free, locale()), total: humanSize(d.storage.total, locale()) })}` : ''}
             </Text>
           </View>
           <Pressable onPress={() => unpair(d)} style={s.btnSmall} accessibilityLabel={t('Entkoppeln')}>
@@ -102,19 +112,16 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
 
 interface TrashEntry { id: string; name: string; original_path: string; deleted_at: string }
 
-export function More({ theme, notify, material, setMaterial, materialAvailable, fontName, onFont }: {
-  theme: Theme; notify: (t: string) => void; material: boolean; setMaterial: (v: boolean) => void; materialAvailable: boolean;
-  /** Name der eigenen Schrift oder null (= Inconsolata). */
-  fontName?: string | null;
-  onFont?: (name: string | null) => void;
-}) {
+/** Papierkorb (Unterseite der Einstellungen): Einträge ansehen und wiederherstellen. */
+export function TrashPage({ theme, notify }: { theme: Theme; notify: (t: string) => void }) {
   const s = styles(theme);
   const [trash, setTrash] = useState<TrashEntry[] | null>(null);
-  const loadTrash = () => request<{ entries: TrashEntry[] }>('TrashList').then((r) => setTrash(r.entries)).catch((e) => notify(e.message));
-
+  const loadTrash = useCallback(() => request<{ entries: TrashEntry[] }>('TrashList').then((r) => setTrash(r.entries)).catch((e) => notify(e.message)), [notify]);
+  useEffect(() => {
+    loadTrash();
+  }, [loadTrash]);
   return (
     <ScrollView contentContainerStyle={s.page}>
-      <Text style={s.h2}>{t('Papierkorb')}</Text>
       <View style={s.card}>
         <View style={s.grow}>
           {trash === null ? (
@@ -134,7 +141,20 @@ export function More({ theme, notify, material, setMaterial, materialAvailable, 
         </View>
       </View>
 
-      <Text style={s.h2}>{t('Einstellungen')}</Text>
+    </ScrollView>
+  );
+}
+
+/** Allgemein (Unterseite der Einstellungen): Sprache, Material You, Schriftart. */
+export function General({ theme, notify, material, setMaterial, materialAvailable, fontName, onFont }: {
+  theme: Theme; notify: (t: string) => void; material: boolean; setMaterial: (v: boolean) => void; materialAvailable: boolean;
+  /** Name der eigenen Schrift oder null (= Inconsolata). */
+  fontName?: string | null;
+  onFont?: (name: string | null) => void;
+}) {
+  const s = styles(theme);
+  return (
+    <ScrollView contentContainerStyle={s.page}>
       <View style={s.card}>
         <View style={s.grow}>
           <Text style={s.strong}>{t('Sprache')}</Text>
@@ -191,6 +211,7 @@ export function More({ theme, notify, material, setMaterial, materialAvailable, 
 const styles = themed((th: Theme) =>
   StyleSheet.create({
     page: { padding: 16, paddingBottom: 40 },
+    first: { marginTop: 0 },
     h2: { color: th.text, fontSize: 18, fontWeight: '600', marginTop: 12, marginBottom: 8 },
     card: {
       flexDirection: 'row', alignItems: 'center', padding: 16, marginBottom: 10, borderRadius: 18,

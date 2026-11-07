@@ -226,9 +226,11 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
 
   /** Schrift registrieren; Ergebnis: Name der eigenen Schrift oder null (Inconsolata). */
   @ReactMethod
-  fun applyFont(promise: Promise) {
+  fun applyFont(family: String, promise: Promise) {
     try {
-      Fonts.apply(ctx.applicationContext)
+      // Nur eigene, harmlose Namen zulassen
+      val name = if (Regex("^SnapFont(-\\d{1,6})?$").matches(family)) family else Fonts.FAMILY
+      Fonts.apply(ctx.applicationContext, name)
       promise.resolve(Fonts.customName(ctx.applicationContext))
     } catch (e: Throwable) {
       promise.resolve(null)

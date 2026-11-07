@@ -2,20 +2,20 @@
 // Gestaltung: docs/MOBILE_UX.md (Snap-Optik, Android-Bedienung, Material You wahlweise).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Pressable, ScrollView, StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
-import { Text } from './src/text';
+import { FontContext, Text } from './src/text';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as core from './src/core';
 import Files from './src/Files';
 import { initLanguage, t } from './src/i18n';
-import { Devices, More } from './src/Pages';
+import Settings from './src/Settings';
 import Photos from './src/Photos';
 import { materialTheme, snapTheme, type Theme } from './src/theme';
 import { NavIcon, themed } from './src/ui';
 import { fadeIn, initMotion, m, toastIn, toastOut } from './src/motion';
 
-type Tab = 'files' | 'photos' | 'devices' | 'more';
+type Tab = 'files' | 'photos' | 'settings';
 
 export default function App() {
   const dark = useColorScheme() === 'dark';
@@ -24,6 +24,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('files');
   // Erneutes Antippen von „Dateien“ führt zur Startansicht
   const [filesHome, setFilesHome] = useState(0);
+  const [settingsHome, setSettingsHome] = useState(0);
   const [material, setMaterialState] = useState(false);
   const [materialAvailable, setMaterialAvailable] = useState(false);
   const [crash, setCrash] = useState<string | null>(null);
@@ -34,8 +35,14 @@ export default function App() {
   const [fontVersion, setFontVersion] = useState(0);
   const fontChanged = useCallback((name: string | null) => {
     setFontName(name);
-    setFontVersion((v) => v + 1);
+    // Neuer Schriftname → alle Texte übernehmen die Schrift, ohne dass man die Seite verlässt
+    setFontVersion((v) => {
+      const next = v + 1;
+      core.applyFont(`SnapFont-${next}`).catch(() => {});
+      return next;
+    });
   }, []);
+  const fontFamily = fontVersion === 0 ? 'SnapFont' : `SnapFont-${fontVersion}`;
   // Inhalt des unteren Platzes von „Dateien“ (Aktionsleiste, „Hier einfügen“); null = Hauptmenü
   const [bottomBar, setBottomBar] = useState<React.ReactNode>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -142,23 +149,24 @@ export default function App() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'files', label: t('Dateien') },
     { key: 'photos', label: t('Fotos') },
-    { key: 'devices', label: t('Geräte') },
-    { key: 'more', label: t('Mehr') },
+    { key: 'settings', label: t('Einstellungen') },
   ];
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider>
-      <View style={s.bg} key={`font-${fontVersion}`}>
+      <FontContext.Provider value={fontFamily}>
+      <View style={s.bg}>
         {bar}
         <View style={s.tint} />
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
-          {tab !== 'files' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
+          {tab === 'photos' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
             {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} onFont={fontChanged} />}
             {tab === 'photos' && <Photos theme={theme} />}
-            {tab === 'devices' && <Devices theme={theme} notify={notify} />}
-            {tab === 'more' && <More theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} fontName={fontName} onFont={fontChanged} />}
+            {tab === 'settings' && (
+              <Settings theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} fontName={fontName} onFont={fontChanged} home={settingsHome} />
+            )}
           </Animated.View>
           {toast && (
             <Animated.View entering={m(toastIn)} exiting={m(toastOut)} style={s.toast}>
@@ -180,7 +188,7 @@ export default function App() {
             tabs.map((x) => {
               const on = tab === x.key;
               return (
-                <Pressable key={x.key} style={s.navItem} onPress={() => { if (tab !== x.key) { core.haptic('tick'); } else if (x.key === 'files') { setFilesHome((n) => n + 1); } setTab(x.key); }} accessibilityRole="tab" accessibilityState={{ selected: on }}>
+                <Pressable key={x.key} style={s.navItem} onPress={() => { if (tab !== x.key) { core.haptic('tick'); } else if (x.key === 'files') { setFilesHome((n) => n + 1); } else if (x.key === 'settings') { setSettingsHome((n) => n + 1); } setTab(x.key); }} accessibilityRole="tab" accessibilityState={{ selected: on }}>
                   <View style={[s.navPill, on && s.navPillOn]}>
                     <NavIcon name={x.key} color={(on ? theme.accent : theme.text2) as string} />
                   </View>
@@ -191,6 +199,7 @@ export default function App() {
           )}
         </SafeAreaView>
       </View>
+      </FontContext.Provider>
     </SafeAreaProvider>
     </GestureHandlerRootView>
   );

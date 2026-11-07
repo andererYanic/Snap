@@ -461,7 +461,7 @@ test('Untere Leiste behält beim Markieren ihren Platz (Liste rutscht nicht)', a
   const slot = () => r.root.findAll((n) => Array.isArray(n.props.edges) && n.props.edges.length === 1 && n.props.edges[0] === 'bottom')[0];
   const tabs = () => r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function');
   const before = slot();
-  expect(tabs().length).toBe(4);
+  expect(tabs().length).toBe(3);
   await act(async () => {
     fireGestureHandler(getByGestureTestId('files-select'), [
       { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
@@ -478,7 +478,7 @@ test('Untere Leiste behält beim Markieren ihren Platz (Liste rutscht nicht)', a
   await act(async () => { byLabel(r, 'Auswahl aufheben').props.onPress(); });
   await flush();
   expect(slot()).toBe(before);
-  expect(tabs().length).toBe(4);
+  expect(tabs().length).toBe(3);
 });
 
 test('DOCX öffnet die Leseansicht (Kern liest, App zeigt Überschrift, Tabelle, Liste)', async () => {
@@ -514,20 +514,89 @@ test('Schrift: Standard Inconsolata, eigene TTF über Einstellungen und Dateimen
   await flush();
   expect(NativeModules.SnapCore.applyFont).toHaveBeenCalled();
   // Texte der App nutzen die registrierte Schrift
-  const t = r.root.findAll((n) => (n.type as any) === 'Text' && Array.isArray(n.props.style));
-  expect(t.length).toBeGreaterThan(0);
-  expect(t.every((n) => JSON.stringify(n.props.style).includes(FONT))).toBe(true);
+  const fam = () => r.root.findAll((n) => (n.type as any) === 'Text' && Array.isArray(n.props.style)).map((n) => n.props.style[0]?.fontFamily);
+  expect(fam().length).toBeGreaterThan(0);
+  expect(fam().every((f) => f === FONT)).toBe(true);
   expect(AppText).toBeTruthy();
   // Einstellungen → „TTF-Datei wählen …“
-  await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[3].props.onPress(); });
+  // Einstellungen → Allgemein
+  await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[2].props.onPress(); });
+  await flush();
+  await act(async () => { byLabel(r, 'Allgemein').props.onPress(); });
   await flush();
   expect(allText(r)).toContain('Inconsolata (Standard)');
   await act(async () => { await pressable(r, 'TTF-Datei wählen').props.onPress(); });
   await flush();
   expect(NativeModules.SnapCore.pickFont).toHaveBeenCalled();
   expect(allText(r)).toContain('Fira Code');
+  // Neuer Schriftname wird registriert und von allen Texten übernommen – man bleibt auf der Seite
+  expect(NativeModules.SnapCore.applyFont).toHaveBeenLastCalledWith('SnapFont-1');
+  expect(fam().every((f) => f === 'SnapFont-1')).toBe(true);
+  expect(allText(r)).toContain('Schriftart');
   await act(async () => { await pressable(r, 'Zurück zu Inconsolata').props.onPress(); });
   await flush();
   expect(NativeModules.SnapCore.resetFont).toHaveBeenCalled();
   expect(allText(r)).toContain('Inconsolata (Standard)');
+});
+
+test('Unten Dateien/Fotos/Einstellungen; Geräte in den Einstellungen; Startseite zeigt Gerätespeicher; Menü ohne „Öffnen“', async () => {
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'PairList') {
+      calls.push(req);
+      return JSON.stringify({ Devices: { devices: [
+        { node_id: 'aaa', name: 'Laptop', paired_at: 1700000000, last_sync_at: null, grants: [], online: true, storage: { total: 512e9, free: 200e9, updated_at: 1 } },
+        { node_id: 'bbb', name: 'Tablet', paired_at: 1700000000, last_sync_at: null, grants: [], online: false },
+      ] } });
+    }
+    if (req === 'Peers') return JSON.stringify({ Peers: { peers: [{ node_id: 'aaa', status: 'online' }] } });
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    const tabs = r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function');
+    expect(tabs.map((n) => n.props.children?.[1]?.props?.children ?? '')).toEqual(['Dateien', 'Fotos', 'Einstellungen']);
+    // Startseite: Laptop mit Belegung, Tablet nicht verbunden
+    const home = allText(r);
+    expect(home).toContain('Laptop');
+    expect(home).toContain('von 477 GB belegt');
+    expect(home).toContain('Tablet');
+    expect(home).toContain('Nicht verbunden');
+    // Einstellungen: Liste der Unterkategorien, Geräte als Unterseite
+    await act(async () => { tabs[2].props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('2 gekoppelt · 1 verbunden');
+    await act(async () => { byLabel(r, 'Geräte').props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Gekoppelte Geräte');
+    expect(allText(r)).toContain('von 477 GB frei');
+    // Erneutes Antippen des Tabs: zurück zur Liste
+    await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[2].props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Über Snap');
+    expect(allText(r)).not.toContain('Gekoppelte Geräte');
+    // Kontextmenü am Finger ohne „Öffnen“
+    await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[0].props.onPress(); });
+    await flush();
+    await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+    await flush();
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('files-select'), [
+        { state: State.BEGAN, x: 100, y: 148, absoluteX: 100, absoluteY: 300 },
+        { state: State.ACTIVE, x: 100, y: 148, absoluteX: 100, absoluteY: 300 },
+        { state: State.END, x: 100, y: 148, absoluteX: 100, absoluteY: 300 },
+      ]);
+    });
+    await flush();
+    const menu = r.root
+      .findAll((n) => n.props.accessibilityRole === 'menuitem' && typeof n.type !== 'string')
+      .map((n) => n.findAll((c) => (c.type as any) === 'Text').map((c) => [c.props.children].flat().join('')).join(''));
+    expect(menu.length).toBeGreaterThan(0);
+    expect(menu).not.toContain('Öffnen');
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
 });

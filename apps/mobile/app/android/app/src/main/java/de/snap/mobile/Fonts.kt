@@ -20,23 +20,27 @@ object Fonts {
   private fun custom(context: Context) = File(dir(context), "eigene.ttf")
   private fun nameFile(context: Context) = File(dir(context), "eigene.name")
 
-  /** Aktuelle Schrift registrieren (beim Start und nach jeder Änderung). */
-  fun apply(context: Context) {
+  /**
+   * Aktuelle Schrift unter `family` registrieren (beim Start und nach jeder Änderung). Ein neuer
+   * Name je Änderung lässt alle Texte die neue Schrift übernehmen, ohne die Oberfläche neu
+   * aufzubauen.
+   */
+  fun apply(context: Context, family: String = FAMILY) {
     val fm = ReactFontManager.getInstance()
     val own = custom(context)
     val regular: Typeface
     val bold: Typeface
     if (own.isFile) {
-      regular = try { Typeface.createFromFile(own) } catch (_: Throwable) { own.delete(); return apply(context) }
+      regular = try { Typeface.createFromFile(own) } catch (_: Throwable) { own.delete(); return apply(context, family) }
       bold = Typeface.create(regular, Typeface.BOLD)
     } else {
       regular = Typeface.createFromAsset(context.assets, "fonts/Inconsolata-Regular.ttf")
       bold = Typeface.createFromAsset(context.assets, "fonts/Inconsolata-Bold.ttf")
     }
-    fm.setTypeface(FAMILY, Typeface.NORMAL, regular)
-    fm.setTypeface(FAMILY, Typeface.BOLD, bold)
-    fm.setTypeface(FAMILY, Typeface.ITALIC, Typeface.create(regular, Typeface.ITALIC))
-    fm.setTypeface(FAMILY, Typeface.BOLD_ITALIC, Typeface.create(bold, Typeface.BOLD_ITALIC))
+    fm.setTypeface(family, Typeface.NORMAL, regular)
+    fm.setTypeface(family, Typeface.BOLD, bold)
+    fm.setTypeface(family, Typeface.ITALIC, Typeface.create(regular, Typeface.ITALIC))
+    fm.setTypeface(family, Typeface.BOLD_ITALIC, Typeface.create(bold, Typeface.BOLD_ITALIC))
   }
 
   /** Name der eigenen Schrift oder null (= Inconsolata). */

@@ -1,16 +1,19 @@
 // Text und Eingabefelder der App mit der gewählten Schrift (Standard: Inconsolata). Android
-// registriert die Schrift unter „SnapFont“ (siehe Fonts.kt); eigene Angaben im `style` (z. B.
-// `fontFamily: 'monospace'` für Code) haben Vorrang. `ref` wird (React 19) normal durchgereicht.
-import type { ComponentProps } from 'react';
-import { StyleSheet, Text as RNText, TextInput as RNTextInput } from 'react-native';
+// registriert die Schrift unter einem Namen (siehe Fonts.kt); bei jeder Änderung gibt es einen
+// neuen Namen, den alle Texte über den Kontext übernehmen – ohne die Oberfläche neu aufzubauen.
+// Eigene Angaben im `style` (z. B. `fontFamily: 'monospace'` für Code) haben Vorrang.
+import { createContext, useContext, type ComponentProps } from 'react';
+import { Text as RNText, TextInput as RNTextInput } from 'react-native';
 
 export const FONT = 'SnapFont';
-const base = StyleSheet.create({ font: { fontFamily: FONT } });
+export const FontContext = createContext<string>(FONT);
 
 export function Text({ style, ...rest }: ComponentProps<typeof RNText>) {
-  return <RNText {...rest} style={[base.font, style]} />;
+  const fontFamily = useContext(FontContext);
+  return <RNText {...rest} style={[{ fontFamily }, style]} />;
 }
 
 export function TextInput({ style, ...rest }: ComponentProps<typeof RNTextInput>) {
-  return <RNTextInput {...rest} style={[base.font, style]} />;
+  const fontFamily = useContext(FontContext);
+  return <RNTextInput {...rest} style={[{ fontFamily }, style]} />;
 }

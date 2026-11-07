@@ -61,7 +61,7 @@ export const readText = (path: string, maxBytes = 2 * 1024 * 1024): Promise<{ te
 /** Ordner für Bilder aus Word-Dateien (App-Cache). */
 export const docxImageDir = (): Promise<string> => native().docxImageDir();
 /** Schrift registrieren (beim Start); Name der eigenen Schrift oder null (= Inconsolata). */
-export const applyFont = (): Promise<string | null> => native().applyFont?.() ?? Promise.resolve(null);
+export const applyFont = (family = 'SnapFont'): Promise<string | null> => native().applyFont?.(family) ?? Promise.resolve(null);
 /** Eigene Schrift aus einer Datei bzw. über den Auswahldialog; Ergebnis: Name oder null (abgebrochen). */
 export const setFontFromFile = (path: string): Promise<string | null> => native().setFontFromFile(path);
 export const pickFont = (): Promise<string | null> => native().pickFont();

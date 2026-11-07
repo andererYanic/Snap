@@ -80,6 +80,16 @@ export function NavIcon({ name, color }: { name: string; color: string }) {
           <View style={[g.phone, b]} />
         </View>
       );
+    case 'settings':
+      // Zahnrad: Ring mit vier Zähnen
+      return (
+        <View style={g.nav}>
+          {[0, 45, 90, 135].map((deg) => (
+            <View key={deg} style={[g.tooth, { backgroundColor: color, transform: [{ rotate: `${deg}deg` }] }]} />
+          ))}
+          <View style={[g.gear, b]} />
+        </View>
+      );
     default:
       return (
         <View style={[g.nav, g.dots]}>
@@ -170,6 +180,8 @@ const g = StyleSheet.create({
   badge: { alignItems: 'center' },
   badgeText: { color: '#fff', fontWeight: '800' },
   nav: { width: 24, height: 24, justifyContent: 'center', alignItems: 'center' },
+  gear: { width: 16, height: 16, borderRadius: 8, borderWidth: 2.5, backgroundColor: 'transparent' },
+  tooth: { position: 'absolute', width: 4, height: 22, borderRadius: 1.5 },
   navFolderTab: { position: 'absolute', top: 4, left: 2, width: 9, height: 5, borderWidth: 2, borderBottomWidth: 0, borderTopLeftRadius: 2, borderTopRightRadius: 2 },
   navFolder: { width: 22, height: 15, borderWidth: 2, borderRadius: 3, marginTop: 4 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 3, padding: 1 },
