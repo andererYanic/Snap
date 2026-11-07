@@ -9,7 +9,7 @@ davon über Iroh.
 |---|---|---|
 | `iroh`, `iroh-blobs`, `n0-future` | P2P-Verbindungen (QUIC), Blob-Übertragung | Kern des Projekts. Aktiv gepflegt (n0). Größter Teil des Baums. |
 | `tokio` | Laufzeit | Standard, sehr gut gepflegt |
-| `rusqlite` (bundled SQLite) | Datenbank, Index, FTS5 | Gut gepflegt. SQLite wird mitgebaut, damit Versionsstand und FTS5 garantiert sind. Update von 0.32 möglich (bringt `hashbrown`-Duplikat weg). |
+| `rusqlite` (bundled SQLite) | Datenbank, Index, FTS5 | Gut gepflegt. SQLite wird mitgebaut, damit Versionsstand und FTS5 garantiert sind. Seit 2026-11-07 auf 0.41. |
 | `ring` | AES-GCM, HKDF, HMAC, PBKDF2, SHA-256 | Etabliert und geprüft. Bewusst keine eigene Kryptografie. |
 | `rustls`, `webpki-roots`, `reqwest` | HTTPS zu S3/R2 | Standard. Nur HTTPS, eigene Wurzelzertifikate (kein System-Store). |
 | `hyper`, `hyper-util`, `http-body-util` | Lokaler Streaming-Server (127.0.0.1) | Standard |
@@ -49,5 +49,4 @@ davon über Iroh.
 - Bekannte, erlaubte Warnungen (`deny.toml`): `atomic-polyfill`, `paste` und `proc-macro-error`
   sind ungepflegt. Sie kommen nur indirekt (über Iroh bzw. Build-Makros) und sind ohne bekannte
   Lücke.
-- **Offen:** `rusqlite` auf die aktuelle Version heben (Schema-Tests decken das ab).
   Doppelversionen der Netlink-Crates entstehen innerhalb von Iroh und lassen sich nur dort lösen.
