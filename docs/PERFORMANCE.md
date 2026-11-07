@@ -529,3 +529,22 @@ Anlass: Der Nutzer meldete starke Bildeinbrüche und träge Menüs. Neue Messung
   Fortschritt ab (eine Zahl über die Brücke).
 - Ein Export zur Zeit (Sperre); Abbrechen löscht die halbfertige Datei.
 - **Offen:** Exportzeit je Minute Video auf echter Hardware messen.
+
+## Review 26 – Ordneransicht anderer Geräte (2026-11-07)
+
+Neue Abfrage `RemoteDir` (Startseite → Gerät). Statt alle Einträge unter einem Ordner zu lesen und
+in Rust zu gruppieren, springt sie im neuen Teilindex `idx_ledger_tree (origin, share, rel_path)
+WHERE deleted = 0` von Kind zu Kind: ein Unterordner kostet einen Indexzugriff, egal wie groß er ist.
+
+Messung (`perf.rs::remote_dir_tree`, Release, 105k Katalogeinträge eines Geräts):
+
+| Abfrage | vorher (Obergrenze als `?4 IS NULL OR …`) | jetzt |
+|---|---|---|
+| Wurzel (Freigaben) | 0,05 ms | 0,05 ms |
+| Freigabe: 20 Ordner + 180 Dateien | 0,68 ms | 0,69 ms |
+| Unterordner mit 3 Monatsordnern | 3,0 ms | 0,013 ms |
+| Blattordner, Seite mit 200 Dateien | 0,95 ms | 0,84 ms |
+
+Lehre: Die Obergrenze muss als echte Bereichsbedingung in der Abfrage stehen; mit `?4 IS NULL OR`
+nutzt SQLite sie nicht für den Indexbereich und liest nach dem letzten Kind alle folgenden
+Einträge. Alle Seiten liegen weit unter 16 ms.

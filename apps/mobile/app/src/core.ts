@@ -99,6 +99,7 @@ export const videoFrames = async (path: string, count: number, edge: number): Pr
 export const videoSave = (path: string, p: VideoParams, mode: 'copy' | 'temp'): Promise<string> => native().videoSave(path, JSON.stringify(p), mode);
 export const videoProgress = (): Promise<number> => native().videoProgress();
 export const videoCancel = (): void => native().videoCancel();
+export const cacheDir = (): Promise<string> => native().cacheDir();
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

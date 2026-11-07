@@ -1159,3 +1159,49 @@ fn docx_read() {
     }
     report(&format!("docx: {} KB XML → {blocks} Blöcke", xml.len() / 1024), n, t.elapsed());
 }
+
+#[test]
+#[ignore]
+fn remote_dir_tree() {
+    // Ordneransicht eines fremden Geräts: 100k Einträge, 20 Jahre × 12 Monate + 5000 lose Dateien
+    let dir = tempfile::tempdir().unwrap();
+    let db = DatabaseManager::open(&dir.path().join("bench.db")).unwrap();
+    let key = SecretKey::generate();
+    let origin = key.public().to_string();
+    let mut entries = signed_entries(&key, 105_000);
+    for (i, e) in entries.iter_mut().enumerate() {
+        e.share = "Fotos".into();
+        e.rel_path = if i < 100_000 {
+            format!("jahr-{}/monat-{}/datei-{i}.jpg", i % 20, i % 12)
+        } else {
+            format!("lose-{i}.jpg")
+        };
+        e.signature = e.sign(&key);
+    }
+    for chunk in entries.chunks(5000) {
+        db.apply_remote_entries(chunk).unwrap();
+    }
+    let measure = |name: &str, f: &dyn Fn()| {
+        f();
+        let t = Instant::now();
+        for _ in 0..20 {
+            f();
+        }
+        report(name, 20, t.elapsed());
+    };
+    measure("remote_dir Wurzel (Freigaben)", &|| {
+        db.remote_dir(&origin, None, "", None, 200).unwrap();
+    });
+    measure("remote_dir Freigabe (20 Ordner + 180 Dateien)", &|| {
+        let p = db.remote_dir(&origin, Some("Fotos"), "", None, 200).unwrap();
+        assert_eq!(p.dirs.len(), 20);
+    });
+    measure("remote_dir Unterordner (je 3 Monatsordner)", &|| {
+        let p = db.remote_dir(&origin, Some("Fotos"), "jahr-3", None, 200).unwrap();
+        assert_eq!(p.dirs.len(), 3);
+    });
+    measure("remote_dir Blattordner (Seite 200 Dateien)", &|| {
+        let p = db.remote_dir(&origin, Some("Fotos"), "jahr-4/monat-4", None, 200).unwrap();
+        assert_eq!(p.files.len(), 200);
+    });
+}

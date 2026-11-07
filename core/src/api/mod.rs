@@ -89,6 +89,9 @@ pub(crate) async fn handle_request(
         Request::Peers => inner.db.list_peers().map(|peers| Response::Peers { peers }),
         Request::Info => info(inner),
         Request::Browse(q) => files::browse(inner, q),
+        Request::RemoteDir { device, share, dir, after, limit } => {
+            files::remote_dir(inner, &device, share, &dir, after, limit)
+        }
         Request::Search { query, filter, limit } => explorer::search(inner, query, filter, limit).await,
         Request::ReadDocx { path, image_dir } => read_docx(path, image_dir).await,
         Request::ListDir { path, show_hidden, offset, limit } => {
@@ -232,6 +235,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::Peers => "peers",
         Request::Info => "info",
         Request::Browse(_) => "browse",
+        Request::RemoteDir { .. } => "remote.dir",
         Request::Subscribe => "subscribe",
         Request::Sync => "sync",
         Request::PairInvite => "pair.invite",

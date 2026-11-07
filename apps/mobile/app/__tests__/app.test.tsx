@@ -76,6 +76,7 @@ NativeModules.SnapCore = {
   videoSave: jest.fn(async (_p: string, _j: string, mode: string) => (mode === 'temp' ? '/storage/emulated/0/DCIM/.snap-edit-2.mp4' : '/storage/emulated/0/DCIM/clip (bearbeitet).mp4')),
   videoProgress: jest.fn(async () => 42),
   videoCancel: jest.fn(),
+  cacheDir: jest.fn(async () => '/data/cache'),
   editSave: jest.fn(async (_p: string, _j: string, mode: string) => (mode === 'temp' ? '/storage/emulated/0/DCIM/.snap-edit-1.jpg' : '/storage/emulated/0/DCIM/urlaub (bearbeitet).jpg')),
   lastCrash: jest.fn(async () => crashReport),
   requestAllFilesAccess: jest.fn(),
@@ -700,5 +701,71 @@ test('Videobearbeitung: Zeitangaben, Einpassen, Ton aus, Drehen, Speichern', asy
     }
     await act(async () => { r.unmount(); });
     mounted.length = 0;
+  }
+});
+
+test('Anderes Gerät durchsuchen: Freigaben, Ordner, Öffnen über den Cache, Video streamen', async () => {
+  const { safeName, cachePath } = require('../src/RemoteBrowser');
+  expect(safeName('../../etc/passwd')).toBe('.._.._etc_passwd');
+  expect(safeName('..')).toBe('Datei');
+  const H = 'a'.repeat(64);
+  expect(cachePath('/c', { hash: H, name: 'x/../y.pdf' })).toBe(`/c/remote/${'a'.repeat(32)}/x_.._y.pdf`);
+  expect(cachePath('/c', { hash: '../x', name: 'y' })).toBeNull();
+
+  const RemoteBrowser = require('../src/RemoteBrowser').default;
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  const file = (name: string, n: number) => ({ origin: 'aaa', origin_name: 'Laptop', hash: String(n).repeat(64).slice(0, 64), name, size: 2048, created_at: 0, path: null, share: 'Fotos', rel_path: name });
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    calls.push(req);
+    const rd = req.RemoteDir;
+    if (rd) {
+      if (!rd.share) return JSON.stringify({ RemoteDir: { dirs: ['Musik', 'Fotos'], files: [], next: null } });
+      if (rd.dir === '') return JSON.stringify({ RemoteDir: { dirs: ['2024'], files: [file('bericht.pdf', 1), file('clip.mp4', 2)], next: null } });
+      return JSON.stringify({ RemoteDir: { dirs: [], files: [], next: null } });
+    }
+    if (req.Download) return JSON.stringify({ Downloaded: { path: req.Download.output ?? '/storage/emulated/0/Download/Snap/bericht.pdf' } });
+    if (req.StreamUrl) return JSON.stringify({ StreamUrl: { url: 'http://127.0.0.1:4321/s/abc', name: 'clip.mp4', mime: 'video/mp4' } });
+    return origRequest(json);
+  });
+  try {
+    const opened: [string, string][] = [];
+    const streamed: string[] = [];
+    let closed = false;
+    const th = require('../src/theme').snapTheme(false);
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      r = mount(<RemoteBrowser device={{ node_id: 'aaa', name: 'Laptop', online: true }} theme={th} notify={() => {}} onClose={() => { closed = true; }} onOpen={(p: string, n: string) => opened.push([p, n])} onStream={(u: string) => streamed.push(u)} />);
+    });
+    await flush();
+    // Wurzel: Freigaben sortiert
+    const root = allText(r);
+    expect(root.indexOf('Fotos')).toBeLessThan(root.indexOf('Musik'));
+    await act(async () => { byLabel(r, 'Fotos').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ RemoteDir: { device: 'aaa', share: 'Fotos', dir: '', after: null, limit: 300 } });
+    // Ordner vor Dateien
+    const inShare = allText(r);
+    expect(inShare.indexOf('2024')).toBeLessThan(inShare.indexOf('bericht.pdf'));
+    await act(async () => { byLabel(r, 'bericht.pdf').props.onPress(); });
+    await flush();
+    expect(opened).toEqual([[`/data/cache/remote/${'1'.repeat(32)}/bericht.pdf`, 'bericht.pdf']]);
+    await act(async () => { byLabel(r, 'clip.mp4').props.onPress(); });
+    await flush();
+    expect(streamed).toEqual(['http://127.0.0.1:4321/s/abc']);
+    // Unterordner und zurück bis zum Schließen
+    await act(async () => { byLabel(r, '2024').props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Dieser Ordner ist leer.');
+    await act(async () => { byLabel(r, 'Zurück').props.onPress(); });
+    await flush();
+    await act(async () => { byLabel(r, 'Zurück').props.onPress(); });
+    await flush();
+    await act(async () => { byLabel(r, 'Zurück').props.onPress(); });
+    expect(closed).toBe(true);
+    await act(async () => { r.unmount(); });
+    mounted.length = 0;
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });

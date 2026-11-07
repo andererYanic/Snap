@@ -117,6 +117,7 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::Search { .. }
         | Request::ListDir { .. }
         | Request::ReadDocx { .. }
+        | Request::RemoteDir { .. }
         | Request::IndexRoots
         | Request::IndexAdd { .. }
         | Request::IndexRemove { .. }

@@ -107,6 +107,12 @@ Eigene Ergänzungen:
   rechnet (Hardware), die Vorschau folgt den Reglern nach kurzer Pause. Speichern fragt: Kopie
   (Original bleibt) oder Original ersetzen (Original in den Papierkorb, „Rückgängig“). Aufnahmedatum,
   Kamera und Ort bleiben erhalten.
+- **Andere Geräte öffnen:** Auf der Startseite ein Gerät antippen → seine Freigaben als Ordner,
+  darin Unterordner und Dateien (aus dem abgeglichenen Katalog, also auch ohne Verbindung
+  durchsuchbar). Antippen öffnet: Datei wird in den Cache geladen und in der eingebauten Anzeige
+  gezeigt (Bild, PDF, Text, DOCX), Videos werden gestreamt. ⤓ bzw. langes Drücken lädt eine Kopie in
+  den Download-Ordner. Zurück-Taste bzw. ‹ geht eine Ebene hoch, erneutes Antippen von „Dateien“
+  führt zur Startseite.
 - **Videos bearbeiten:** im Menü am Finger und in der Videoanzeige. Kürzen über zwei Griffe auf einer
   Zeitleiste aus Einzelbildern (Vorschau springt mit, Abspielen nur im gewählten Ausschnitt), Ton
   aus, Drehen in 90°-Schritten. Export auf dem Gerät mit Media3 Transformer (ohne Google-Dienste),
