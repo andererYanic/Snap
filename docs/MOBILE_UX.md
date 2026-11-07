@@ -92,6 +92,10 @@ Eigene Ergänzungen:
   - Liste oder Raster umschaltbar. Zuletzt geöffnete Dateien als horizontale Leiste über der Liste.
 - **Fotos:** Zeitachse nach Monaten mit Schnellsprung am rechten Rand (Daumen). Antippen öffnet
   die eingebaute Anzeige.
+- **Untere Leiste: Dateien, Fotos, Einstellungen.** Die Geräte stehen in den Einstellungen
+  (Unterkategorien: Allgemein – Sprache, Material You, Schriftart; Geräte – Status, Speicher,
+  Koppeln; Papierkorb; Über Snap). Die Startseite zeigt unter „Interner Speicher“ alle
+  gekoppelten Geräte mit ihrem gemeldeten Speicher. Schrift: Inconsolata, eigene TTF/OTF wählbar.
 - **Unten „Dateien“ erneut antippen** führt aus jedem Ordner und jeder Suche zurück zur Startansicht.
 - **Eingebaute Anzeige:** Bilder und Videos ohne fremde App. Zwei-Finger-Zoom, Doppeltippen zoomt
   auf die getippte Stelle, Wischen links/rechts blättert, nach unten wischen schließt. Erst
