@@ -1,7 +1,8 @@
 // Fotos: Zeitachse nach Monaten. Vorschaubilder erzeugt Android (schnell, mit Cache) und blendet
 // sie ein; Antippen öffnet die eingebaute Anzeige (Zoomen, Wischen, Videos).
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Dimensions, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './text';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { monthYear, request, shortDate, type TimelineItem } from './core';
 import { locale, t } from './i18n';
@@ -76,7 +77,7 @@ export default function Photos({ theme }: { theme: Theme }) {
         ListEmptyComponent={loading ? undefined : <Text style={s.empty}>{t('Noch keine Fotos')}</Text>}
         renderItem={({ item: r }) =>
           'head' in r ? (
-            <Animated.Text entering={m(FadeIn.duration(200))} style={s.head}>{r.head}</Animated.Text>
+            <Animated.View entering={m(FadeIn.duration(200))}><Text style={s.head}>{r.head}</Text></Animated.View>
           ) : (
             <View style={s.row}>
               {r.cells.map((it, k) => (

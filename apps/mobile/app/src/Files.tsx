@@ -5,9 +5,8 @@
 //   erscheint das Menü dort, wo der Finger zuerst lag (wie bei iOS).
 // - Bilder und Videos öffnen in der eingebauten Anzeige, alles andere mit der passenden App.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './text';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
@@ -32,6 +31,8 @@ interface Props {
    * einfügen“ hinein; `null` = Hauptmenü. So ändert sich die Höhe der Liste nie.
    */
   bottomSlot?: (node: React.ReactNode) => void;
+  /** Schrift wurde geändert (Name oder null = Inconsolata). */
+  onFont?: (name: string | null) => void;
   /** Zähler: ändert er sich, geht es zurück zur Startansicht (erneutes Antippen von „Dateien“). */
   home?: number;
 }
@@ -52,7 +53,7 @@ const FOLDERS: [string, string][] = [
   ['Movies', 'Videos'],
 ];
 
-export default function Files({ theme, root, notify, selectionChanged, bottomSlot, home = 0 }: Props) {
+export default function Files({ theme, root, notify, selectionChanged, bottomSlot, onFont, home = 0 }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [items, setItems] = useState<Item[]>([]);
@@ -79,6 +80,8 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [viewer, setViewer] = useState<{ items: Item[]; start: number } | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
   const [folders, setFolders] = useState<[string, string][]>([]);
+  // Gekoppelte Geräte mit gemeldetem Speicher (Startseite)
+  const [remote, setRemote] = useState<{ node_id: string; name: string; online?: boolean; storage?: { total: number; free: number } }[]>([]);
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const listRef = useRef<FlatList<Item>>(null);
   const scrollY = useRef(0);
@@ -140,6 +143,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       return;
     }
     core.storageInfo().then(setStorage).catch(() => {});
+    request<{ devices: typeof remote }>('PairList').then((r) => setRemote(r.devices ?? [])).catch(() => {});
     request<{ entries: DirEntry[] }>({ ListDir: { path: root, show_hidden: false, offset: 0, limit: 1000 } })
       .then((r) => {
         const names = new Set(r.entries.filter((e) => e.kind === 'Dir').map((e) => e.name));
@@ -541,6 +545,34 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
               <Text style={s.chev}>›</Text>
             </View>
           </Tap>
+          {remote.map((d) => {
+            const used = d.storage ? d.storage.total - d.storage.free : 0;
+            return (
+              <View key={d.node_id} style={[s.card, s.deviceCard, !d.online && s.dim]} accessibilityLabel={d.name}>
+                <View style={s.cardRow}>
+                  <View style={[s.driveIcon, s.deviceIcon, { backgroundColor: theme.accentSoft }]}>
+                    <Text style={[s.deviceGlyph, { color: theme.accent }]}>⌁</Text>
+                  </View>
+                  <View style={s.grow}>
+                    <View style={s.nameRow}>
+                      <Text style={s.cardTitle} numberOfLines={1}>{d.name}</Text>
+                      <View style={[s.onlineDot, { backgroundColor: d.online ? '#2fae63' : theme.stroke }]} />
+                    </View>
+                    <Text style={s.meta}>
+                      {d.storage
+                        ? t('{used} von {total} belegt', { used: humanSize(used, locale()), total: humanSize(d.storage.total, locale()) })
+                        : d.online ? t('Verbunden') : t('Nicht verbunden')}
+                    </Text>
+                    {d.storage && (
+                      <View style={[s.usage, { backgroundColor: theme.accentSoft }]}>
+                        <View style={[s.usageFill, { backgroundColor: theme.accent, width: `${Math.min(100, (used / d.storage.total) * 100)}%` }]} />
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </View>
+            );
+          })}
           {folders.length > 0 && <Text style={s.section}>{t('Standardordner')}</Text>}
           <View style={s.folderGrid}>
             {folders.map(([d, label]) => (
@@ -561,7 +593,6 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const single = selected.length === 1 ? selected[0] : null;
   const zips = selected.filter((e) => e.kind === 'File' && ARCHIVE.test(e.name)).map((e) => e.path);
   const menuActions: MenuAction[] = [
-    ...(single && single.kind === 'File' ? [{ label: t('Öffnen'), onPress: () => open({ ...single }) }] : []),
     // Je nach Dateiformat
     ...(single && single.kind === 'File' ? formatActions(single) : []),
     { label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
@@ -579,6 +610,21 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     }
     if (/\.pdf$/i.test(e.name) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(e.name)) {
       return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
+    }
+    if (/\.(ttf|otf)$/i.test(e.name)) {
+      return [{
+        label: t('Als Schriftart verwenden'),
+        onPress: () => {
+          done();
+          core
+            .setFontFromFile(e.path)
+            .then((name) => {
+              onFont?.(name);
+              notify(t('Schriftart „{name}“ wird verwendet.', { name: name ?? e.name }));
+            })
+            .catch(fail);
+        },
+      }];
     }
     if (/\.(docx?|odt|rtf|xlsx?|ods|pptx?|odp)$/i.test(e.name)) {
       return [{ label: t('Mit Office-App öffnen'), onPress: () => { done(); core.openFile(e.path).catch(fail); } }];
@@ -947,6 +993,11 @@ const styles = themed((th: Theme) =>
     driveBar: { height: 6, borderRadius: 3 },
     usage: { height: 6, borderRadius: 3, marginTop: 8, overflow: 'hidden' },
     usageFill: { height: 6, borderRadius: 3 },
+    deviceCard: { marginTop: 10 },
+    deviceIcon: { justifyContent: 'center', alignItems: 'center', padding: 0 },
+    deviceGlyph: { fontSize: 20 },
+    nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    onlineDot: { width: 8, height: 8, borderRadius: 4 },
     folderGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
     folderCell: { width: '31%' },
     folderTile: {

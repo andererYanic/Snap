@@ -1,7 +1,8 @@
 // Kontextmenü am Finger (wie bei iOS): öffnet sich federnd am Berührungspunkt, wird an den
 // Bildschirmrändern nach innen geschoben, schließt beim Tippen daneben oder mit „Zurück“.
 import { useEffect } from 'react';
-import { BackHandler, Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Dimensions, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './text';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import type { Theme } from './theme';
 import { m, popIn, popOut } from './motion';

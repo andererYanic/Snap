@@ -2,7 +2,8 @@
 // (`PdfRenderer`, Teil des Systems). Seiten erscheinen beim Scrollen, Doppeltippen zoomt eine
 // Seite in voller Schärfe heran.
 import { memo, useEffect, useState } from 'react';
-import { ActivityIndicator, Dimensions, FlatList, Image, Modal, PixelRatio, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Dimensions, FlatList, Image, Modal, PixelRatio, Pressable, StatusBar, StyleSheet, View } from 'react-native';
+import { Text } from './text';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import * as core from './core';

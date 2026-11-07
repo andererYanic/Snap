@@ -4,7 +4,8 @@
 //   Dateien (PDF, Text …) erscheinen als Karte mit „Öffnen mit …“.
 // - Nach unten wischen schließt; Videos laufen über Media3/ExoPlayer (lokal, ohne Google-Dienste).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Dimensions, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, View } from 'react-native';
+import { Text } from './text';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withTiming,

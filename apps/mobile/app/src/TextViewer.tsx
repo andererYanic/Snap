@@ -2,7 +2,8 @@
 // Markdown nativ dargestellt – ohne HTML oder WebView. Links öffnen nur nach Antippen und nur
 // http(s).
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, View } from 'react-native';
+import { Text } from './text';
 import * as core from './core';
 import { t } from './i18n';
 import { fromDocx, parseMarkdown, type Block, type Inline } from './markdown';
