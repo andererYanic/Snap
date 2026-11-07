@@ -90,6 +90,7 @@ pub(crate) async fn handle_request(
         Request::Info => info(inner),
         Request::Browse(q) => files::browse(inner, q),
         Request::Search { query, filter, limit } => explorer::search(inner, query, filter, limit).await,
+        Request::ReadDocx { path, image_dir } => read_docx(path, image_dir).await,
         Request::ListDir { path, show_hidden, offset, limit } => {
             explorer::list_dir(path, show_hidden, offset, limit).await
         }
@@ -250,6 +251,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::PinRemove { .. } => "pin.remove",
         Request::Search { .. } => "search",
         Request::ListDir { .. } => "listdir",
+        Request::ReadDocx { .. } => "docx.read",
         Request::IndexRoots => "index.roots",
         Request::IndexAdd { .. } => "index.add",
         Request::IndexRemove { .. } => "index.remove",
@@ -297,4 +299,12 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::BackupRemove { .. } => "backup.remove",
         Request::RemoteThumbnail { .. } => "thumb.remote",
     })
+}
+
+/// DOCX-Leseansicht (blockierend lesen, außerhalb der Laufzeit-Threads).
+async fn read_docx(path: std::path::PathBuf, image_dir: Option<std::path::PathBuf>) -> anyhow::Result<Response> {
+    let doc = tokio::task::spawn_blocking(move || crate::docx::read_docx(&path, image_dir.as_deref()))
+        .await
+        .map_err(|e| anyhow::anyhow!("Lesen abgebrochen: {e}"))??;
+    Ok(Response::Docx(doc))
 }

@@ -1122,3 +1122,40 @@ fn archive_extract() {
     report("entpacken: ZIP 1 Datei 200 MB", 1, d);
     println!("entpacken: {:.0} MB/s", x.bytes as f64 / 1e6 / d.as_secs_f64());
 }
+
+#[test]
+#[ignore]
+fn docx_read() {
+    use std::io::Write;
+    // Typisches langes Dokument: 3 000 Absätze, 200 Überschriften, 50 Tabellen à 20 Zeilen
+    let mut xml = String::from(r#"<w:document xmlns:w="w"><w:body>"#);
+    for i in 0..3000 {
+        if i % 15 == 0 {
+            xml.push_str(&format!(
+                r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Kapitel {i}</w:t></w:r></w:p>"#
+            ));
+        }
+        xml.push_str(r#"<w:p><w:r><w:t xml:space="preserve">Ein ganz normaler Absatz mit etwas Text, </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>fett</w:t></w:r><w:r><w:t> und weiter.</w:t></w:r></w:p>"#);
+        if i % 60 == 0 {
+            xml.push_str("<w:tbl>");
+            for r in 0..20 {
+                xml.push_str(&format!("<w:tr><w:tc><w:p><w:r><w:t>Zeile {r}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Wert</w:t></w:r></w:p></w:tc></w:tr>"));
+            }
+            xml.push_str("</w:tbl>");
+        }
+    }
+    xml.push_str("</w:body></w:document>");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lang.docx");
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    w.start_file("word/document.xml", zip::write::SimpleFileOptions::default()).unwrap();
+    w.write_all(xml.as_bytes()).unwrap();
+    std::fs::write(&path, w.finish().unwrap().into_inner()).unwrap();
+    let n = 10;
+    let t = Instant::now();
+    let mut blocks = 0;
+    for _ in 0..n {
+        blocks = space_core::docx::read_docx(&path, None).unwrap().blocks.len();
+    }
+    report(&format!("docx: {} KB XML → {blocks} Blöcke", xml.len() / 1024), n, t.elapsed());
+}

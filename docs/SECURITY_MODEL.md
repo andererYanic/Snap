@@ -128,6 +128,13 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   `archive_extract` prüft die Invarianten. Vorerst nur lokal; Entpacken auf anderen Geräten folgt
   mit eigenen Angriffstests. **Restrisiko:** ZipCrypto (altes ZIP-Verfahren) ist kryptografisch
   schwach – betrifft nur die Vertraulichkeit solcher Archive, nicht Snap.
+- **Word-Leseansicht** (`docx.rs`): DOCX gilt als feindlich. Jeder ZIP-Teil höchstens 64 MiB
+  (beim Lesen gemessen), höchstens 20 000 Blöcke und 16 MiB Text; kaputtes XML zeigt nur den
+  lesbaren Anfang. XML ohne DTD und ohne eigene Entitäten (nur `&amp;` usw. und Zeichencodes) –
+  kein XXE, kein „Billion Laughs“ (getestet). Bilder nur aus `word/`, nur Bildendungen, je
+  ≤ 20 MiB, höchstens 100, unter eigenen Namen im App-Cache; Pfade mit `..`/absolut/URL werden
+  verworfen. Links nur `http(s)`/`mailto`. Nur lokal (keine Anfrage für Geräte). Fuzz-Ziel
+  `docx_read` prüft die Invarianten.
 - **Eingaben von außen:** Größenlimits (IPC 1 MiB, Ledger-Seite 1000 Einträge / 8 MiB,
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.
