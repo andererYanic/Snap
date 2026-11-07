@@ -216,6 +216,7 @@
     "zuletzt abgeglichen {date}": "last synced {date}",
     "zuletzt erfolgreich {date}": "last successful {date}",
     "{ext}-Datei": "{ext} file",
+    "{free} von {total} frei": "{free} of {total} free",
     "{n} Archive entpacken": "Extract {n} archives",
     "{n} Archive entpackt.": "{n} archives extracted.",
     "{n} Dateien wiederhergestellt nach {path}": "{n} files restored to {path}",

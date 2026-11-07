@@ -44,6 +44,8 @@ pub(crate) fn pair_list(inner: &DaemonInner) -> Result<Response> {
     let mut devices = inner.db.list_devices()?;
     for d in &mut devices {
         d.grants = inner.db.grants_of(&d.node_id)?;
+        d.online = inner.live.is_connected(&d.node_id);
+        d.storage = inner.live.storage_of(&d.node_id);
     }
     Ok(Response::Devices { devices })
 }

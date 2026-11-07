@@ -11,6 +11,10 @@
 //! - Lebenszeichen alle 20 s; 60 s Stille gelten als Verbindungsverlust.
 //! - Schutz: Frames max. 4 KiB, max. 50 Nachrichten/s, unbekannte Nachrichten beenden
 //!   die Verbindung.
+//! - Ab Protokoll 2 meldet jede Seite den **Speicher ihrer Freigaben** (nur Summen: gesamt und
+//!   frei, je Laufwerk einmal gezählt) – und nur an Geräte, die bei ihr `catalog.read` haben.
+//!   Keine Ordner- oder Laufwerksnamen. Gemeldete Werte werden geprüft (frei ≤ gesamt ≤ 1 EiB)
+//!   und höchstens alle [`STORAGE_MIN_GAP`] übernommen; Unsinn beendet die Verbindung.
 
 use crate::api::auth::{authorize, Caller, Capability};
 use crate::events::Event;
@@ -29,7 +33,15 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 pub const LIVE_ALPN: &[u8] = b"snap/live/1";
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
+/// Älteste Gegenstelle, mit der noch gesprochen wird (ohne Speichermeldung).
+const MIN_PROTOCOL_VERSION: u32 = 1;
+/// So oft wird der eigene Speicher neu bestimmt und bei Änderung gemeldet.
+const STORAGE_EVERY: Duration = Duration::from_secs(300);
+/// Meldungen einer Gegenstelle werden höchstens so oft übernommen.
+pub const STORAGE_MIN_GAP: Duration = Duration::from_secs(5);
+/// Obergrenze für gemeldete Größen (1 EiB) – alles darüber ist manipuliert.
+const STORAGE_MAX: u64 = 1 << 60;
 const MAX_FRAME: u32 = 4096;
 const HEARTBEAT: Duration = Duration::from_secs(20);
 const DEAD_AFTER: Duration = Duration::from_secs(60);
@@ -46,9 +58,19 @@ const HINT_DEBOUNCE: Duration = Duration::from_millis(300);
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "t", deny_unknown_fields)]
 enum LiveMsg {
-    Hello { v: u32, total: i64 },
-    Version { total: i64 },
+    Hello {
+        v: u32,
+        total: i64,
+    },
+    Version {
+        total: i64,
+    },
     Heartbeat,
+    /// Speicher der eigenen Freigaben (ab Protokoll 2).
+    Storage {
+        total: u64,
+        free: u64,
+    },
 }
 
 struct PeerConn {
@@ -72,6 +94,8 @@ pub struct LiveManager {
     self_id: String,
     peers: Mutex<HashMap<String, PeerConn>>,
     sync: Mutex<HashMap<String, SyncState>>,
+    /// Gemeldeter Speicher je Gerät und Zeitpunkt der letzten Übernahme.
+    storage: Mutex<HashMap<String, (crate::database::DeviceStorage, Instant)>>,
     dialers: Mutex<HashMap<String, JoinHandle<()>>>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -85,6 +109,7 @@ impl LiveManager {
             self_id,
             peers: Mutex::new(HashMap::new()),
             sync: Mutex::new(HashMap::new()),
+            storage: Mutex::new(HashMap::new()),
             dialers: Mutex::new(HashMap::new()),
             tasks: Mutex::new(Vec::new()),
         })
@@ -115,6 +140,37 @@ impl LiveManager {
     /// Ist das Gerät gerade live verbunden?
     pub fn is_connected(&self, node_id: &str) -> bool {
         self.peers.lock().unwrap().contains_key(node_id)
+    }
+
+    /// Zuletzt gemeldeter Speicher eines Geräts.
+    pub fn storage_of(&self, node_id: &str) -> Option<crate::database::DeviceStorage> {
+        self.storage.lock().unwrap().get(node_id).map(|(s, _)| *s)
+    }
+
+    /// Übernimmt eine Speichermeldung (geprüft, ratenbegrenzt). Fehler = manipulierte Werte.
+    fn on_storage(&self, peer: &str, total: u64, free: u64) -> Result<()> {
+        if total == 0 || total > STORAGE_MAX || free > total {
+            bail!("ungültige Speichermeldung");
+        }
+        let mut map = self.storage.lock().unwrap();
+        if let Some((_, at)) = map.get(peer) {
+            if at.elapsed() < STORAGE_MIN_GAP {
+                return Ok(()); // zu häufig: still verwerfen
+            }
+        }
+        let s = crate::database::DeviceStorage { total, free, updated_at: chrono::Utc::now().timestamp() };
+        map.insert(peer.to_string(), (s, Instant::now()));
+        Ok(())
+    }
+
+    /// Eigener Speicher – nur, wenn die Gegenstelle bei uns `catalog.read` hat.
+    fn storage_for(&self, peer: &str) -> Option<LiveMsg> {
+        let caller = Caller::Device(peer.to_string());
+        authorize(&self.ctx.db, &[], &caller, Capability::CatalogRead, None, "live.storage").ok()?;
+        let roots: Vec<std::path::PathBuf> =
+            self.ctx.db.list_shares().ok()?.into_iter().map(|s| std::path::PathBuf::from(s.root)).collect();
+        let (total, free) = shared_storage(&roots)?;
+        Some(LiveMsg::Storage { total, free })
     }
 
     pub fn connected_count(&self) -> usize {
@@ -158,6 +214,7 @@ impl LiveManager {
                         h.abort();
                     }
                     self.disconnect(&node_id, b"unpaired");
+                    self.storage.lock().unwrap().remove(&node_id);
                 }
                 // Wurde catalog.read entzogen, endet die Live-Verbindung sofort.
                 Event::GrantsChanged { node_id } if !self.may_see_us(&node_id) => {
@@ -298,6 +355,10 @@ impl LiveManager {
                 .await?;
             let mut heartbeat = tokio::time::interval(HEARTBEAT);
             heartbeat.tick().await;
+            let mut storage_tick = tokio::time::interval(STORAGE_EVERY);
+            storage_tick.tick().await;
+            let mut peer_v = 0u32;
+            let mut sent_storage: Option<(u64, u64)> = None;
             let mut last_rx = Instant::now();
             let mut window = (Instant::now(), 0u32);
             loop {
@@ -314,16 +375,37 @@ impl LiveManager {
                         }
                         match msg {
                             LiveMsg::Hello { v, total } => {
-                                if v != PROTOCOL_VERSION {
+                                if !(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&v) {
                                     bail!("Protokollversion {v} nicht unterstützt");
                                 }
+                                peer_v = v;
                                 self.on_total(&peer, total);
+                                if v >= 2 {
+                                    if let Some(msg @ LiveMsg::Storage { total, free }) = self.storage_for(&peer) {
+                                        sent_storage = Some((total, free));
+                                        write_frame_max(&mut send, &msg, MAX_FRAME).await?;
+                                    }
+                                }
                             }
                             LiveMsg::Version { total } => self.on_total(&peer, total),
                             LiveMsg::Heartbeat => {}
+                            LiveMsg::Storage { total, free } => self.on_storage(&peer, total, free)?,
                         }
                     }
                     Some(out) = rx.recv() => write_frame_max(&mut send, &out, MAX_FRAME).await?,
+                    _ = storage_tick.tick(), if peer_v >= 2 => {
+                        // Nur bei spürbarer Änderung melden (> 0,5 % oder > 100 MB)
+                        if let Some(msg @ LiveMsg::Storage { total, free }) = self.storage_for(&peer) {
+                            let changed = match sent_storage {
+                                None => true,
+                                Some((t, f)) => t != total || f.abs_diff(free) > (100 << 20).max(total / 200),
+                            };
+                            if changed {
+                                sent_storage = Some((total, free));
+                                write_frame_max(&mut send, &msg, MAX_FRAME).await?;
+                            }
+                        }
+                    }
                     _ = heartbeat.tick() => {
                         if last_rx.elapsed() > DEAD_AFTER {
                             bail!("keine Lebenszeichen");
@@ -389,6 +471,31 @@ impl LiveManager {
             }
         });
     }
+}
+
+/// Summen über die Laufwerke der freigegebenen Ordner (jedes Laufwerk einmal). `None`, wenn
+/// nichts freigegeben oder nichts lesbar ist.
+pub fn shared_storage(roots: &[std::path::PathBuf]) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+    let mut seen = std::collections::HashSet::new();
+    let (mut total, mut free) = (0u64, 0u64);
+    for root in roots {
+        let Ok(meta) = std::fs::metadata(root) else { continue };
+        if !seen.insert(meta.dev()) {
+            continue;
+        }
+        let Ok(c) = std::ffi::CString::new(root.as_os_str().as_bytes()) else { continue };
+        // SAFETY: statvfs ist ein reines C-Struct; Nullen sind ein gültiger Wert.
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: gültiger, NUL-terminierter Pfad; `st` wird vollständig beschrieben.
+        if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+            continue;
+        }
+        total = total.saturating_add(st.f_blocks as u64 * st.f_frsize as u64);
+        free = free.saturating_add(st.f_bavail as u64 * st.f_frsize as u64);
+    }
+    (total > 0).then(|| (total.min(STORAGE_MAX), free.min(total).min(STORAGE_MAX)))
 }
 
 /// Nur für Fuzzing: Dekodiert eine Live-Nachricht wie der Empfänger.
