@@ -90,6 +90,77 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .usage i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .meta { color: var(--text2); font-size: 13px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chev { color: var(--text2); font-size: 22px; margin-left: 8px; }
+.devices .dev + .dev { border-top: 1px solid var(--stroke); }
+.dev .drive { align-items: center; justify-content: center; padding: 0; font-size: 20px; color: var(--accent); }
+.dev-name { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 4px; background: var(--text2); opacity: 0.5; }
+.dot.on { background: #2fae63; opacity: 1; }
+.dev.off { opacity: 0.55; }
+.set-list { padding: 4px 16px 40px; display: flex; flex-direction: column; gap: 14px; }
+.set-row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 60px; padding: 10px 16px; text-align: left; }
+.set-row + .set-row { border-top: 1px solid var(--stroke); }
+.set-row .ic { width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 17px; flex: none; }
+.set-row .tx { flex: 1; min-width: 0; }
+.set-row .tx b { display: block; font-size: 16px; font-weight: 500; }
+.switch { width: 46px; height: 28px; border-radius: 14px; background: var(--stroke); position: relative; flex: none; transition: background var(--dur-fade) var(--ease); }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 11px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform var(--dur-fade) var(--ease); }
+.switch.on { background: var(--accent); }
+.switch.on::after { transform: translateX(18px); }
+.pill { font-size: 12px; padding: 3px 9px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.pill.off { background: var(--stroke); color: var(--text2); }
+.big-btn { display: block; width: 100%; min-height: 52px; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 16px; font-weight: 600; }
+.code-box { text-align: center; padding: 22px; }
+.code-box .code { font: 700 30px ui-monospace, monospace; letter-spacing: 4px; margin: 10px 0; color: var(--text); }
+/* Editoren (dunkel, Vollbild) */
+.editor { position: absolute; inset: 0; z-index: 42; background: #0e0f12; color: #f1f1f4; display: flex; flex-direction: column; animation: fade-in var(--dur-page) var(--ease) both; touch-action: none; }
+.editor.out { animation: fade-out var(--dur-pop-out) var(--ease-in) both; }
+.ed-top { display: flex; align-items: center; height: 56px; padding: 0 6px; flex: none; }
+.ed-top h1 { flex: 1; font-size: 16px; font-weight: 600; margin: 0; text-align: center; }
+.ed-top .text-btn { color: #9fbcff; }
+.ed-stage { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; padding: 18px; }
+.ed-img { position: relative; max-width: 100%; max-height: 100%; transition: transform var(--dur-page) var(--ease); }
+.ed-img img { display: block; max-width: 100%; max-height: 52vh; }
+.crop { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 9999px rgba(0,0,0,0.55); transition: all var(--dur-page) var(--ease); }
+.crop::before, .crop::after { content: ""; position: absolute; inset: 33.33% 0; border-top: 1px solid rgba(255,255,255,0.4); border-bottom: 1px solid rgba(255,255,255,0.4); }
+.crop::after { inset: 0 33.33%; border: 0; border-left: 1px solid rgba(255,255,255,0.4); border-right: 1px solid rgba(255,255,255,0.4); }
+.crop i { position: absolute; width: 22px; height: 22px; border: 4px solid #fff; }
+.crop i:nth-child(1) { left: -4px; top: -4px; border-right: 0; border-bottom: 0; }
+.crop i:nth-child(2) { right: -4px; top: -4px; border-left: 0; border-bottom: 0; }
+.crop i:nth-child(3) { left: -4px; bottom: -4px; border-right: 0; border-top: 0; }
+.crop i:nth-child(4) { right: -4px; bottom: -4px; border-left: 0; border-top: 0; }
+.ed-tools { flex: none; padding: 6px 12px 14px; }
+.chips { display: flex; gap: 8px; overflow-x: auto; padding: 4px 4px 10px; scrollbar-width: none; }
+.chip { flex: none; min-height: 38px; padding: 0 16px; border-radius: 19px; background: rgba(255,255,255,0.1); color: #f1f1f4; font-size: 14px; }
+.chip.on { background: #f1f1f4; color: #0e0f12; font-weight: 600; }
+.ed-tabs { display: flex; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; }
+.ed-tabs button { flex: 1; min-height: 48px; color: #b4b6be; font-size: 13px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.ed-tabs button i { font-style: normal; font-size: 18px; }
+.ed-tabs button.on { color: #9fbcff; font-weight: 600; }
+.ed-slider { display: grid; grid-template-columns: 90px 1fr 36px; align-items: center; gap: 10px; font-size: 14px; padding: 6px 4px; }
+.ed-slider input { width: 100%; accent-color: #9fbcff; }
+.ed-slider output { text-align: right; color: #b4b6be; font-variant-numeric: tabular-nums; font-size: 13px; }
+.filters .chip { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; height: auto; border-radius: 14px; }
+.filters .chip img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; }
+.strip { position: relative; height: 64px; border-radius: 10px; overflow: hidden; display: flex; margin: 8px 4px 6px; }
+.strip img { flex: 1; min-width: 0; height: 100%; object-fit: cover; }
+.strip .shade { position: absolute; top: 0; bottom: 0; background: rgba(0,0,0,0.6); }
+.strip .handle { position: absolute; top: 0; bottom: 0; width: 18px; background: #f7c948; display: flex; align-items: center; justify-content: center; color: #0e0f12; font-weight: 800; cursor: ew-resize; touch-action: none; }
+.strip .frame { position: absolute; top: 0; bottom: 0; border-top: 3px solid #f7c948; border-bottom: 3px solid #f7c948; pointer-events: none; }
+.times { display: flex; justify-content: space-between; color: #b4b6be; font-size: 13px; padding: 0 6px; font-variant-numeric: tabular-nums; }
+.times b { color: #f1f1f4; }
+/* Druckdialog im Stil des Android-Systems */
+.print { position: absolute; inset: 0; z-index: 43; background: #eceef3; color: #1b1b1f; display: flex; flex-direction: column; animation: sheet-up var(--dur-page) var(--ease) both; }
+.print.out { animation: sheet-down var(--dur-pop-out) var(--ease-in) both; }
+.print .pbar { background: #fff; padding: 8px 12px 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+.print select { width: 100%; font: 16px var(--font); padding: 12px; border-radius: 12px; border: 1px solid #d5d8e0; background: #fff; color: #1b1b1f; }
+.print .opts { display: flex; gap: 10px; margin-top: 10px; font-size: 13px; color: #5d5f66; flex-wrap: wrap; }
+.print .opts span { background: #f2f3f7; padding: 6px 10px; border-radius: 8px; }
+.print .pages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px; }
+.print .pg { width: 70%; aspect-ratio: 1 / 1.414; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.12); padding: 14% 10%; display: flex; flex-direction: column; gap: 6px; }
+.print .pg i { display: block; height: 6px; border-radius: 3px; background: #d9dbe2; }
+.print .pg i.h { height: 10px; width: 60%; background: #b9bcc6; margin-bottom: 8px; }
+.print .go { position: absolute; right: 22px; bottom: 26px; width: 60px; height: 60px; border-radius: 30px; background: #3b6fe0; color: #fff; font-size: 24px; box-shadow: 0 8px 20px rgba(59,111,224,0.45); }
+.print small.sys { text-align: center; color: #8a8f9c; font-size: 12px; padding: 6px; }
 .folders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .folder-tile { display: flex; flex-direction: column; align-items: center; padding: 14px 4px; border-radius: 16px; background: var(--card); border: 1px solid var(--stroke); transition: transform 120ms var(--ease); }
 .folder-tile:active, .pressable:active { transform: scale(0.97); }
@@ -432,6 +503,28 @@ const ROOT = D('', [
 const LABEL = { DCIM: 'Kamera', Documents: 'Dokumente', Download: 'Downloads', Pictures: 'Bilder', Music: 'Musik', Movies: 'Videos' };
 const STD = ['DCIM', 'Documents', 'Download', 'Pictures', 'Music', 'Movies'];
 const TOTAL = 128e9, USED = 71.4e9;
+ROOT.label = 'Interner Speicher';
+const LAPTOP = D('', [
+  D('Dokumente', [D('Uni', [F('Bachelorarbeit.docx', 2.1e6, 30), F('Literatur.zip', 48e6, 60)]), F('Steuererklärung 2025.pdf', 900e3, 15), F('Haushaltsbuch.xlsx', 120e3, 3)]),
+  D('Projekte', [D('snap', [F('README.md', 9e3, 0), F('Logo.png', 220e3, 40)]), F('Präsentation.pdf', 4.2e6, 9)]),
+  D('Bilder', [F('Urlaub Lissabon 01.jpg', 4.1e6, 120), F('Urlaub Lissabon 02.jpg', 3.8e6, 120), F('Familienfeier.mp4', 620e6, 80)]),
+]);
+LAPTOP.label = 'Laptop';
+const SERVER = D('', [
+  D('Backups', [F('handy-2026-11-01.snapbak', 12e9, 6), F('laptop-2026-11-05.snapbak', 48e9, 2)]),
+  D('Filme', [F('Hochzeit Schnitt final.mp4', 3.4e9, 200), F('Drohnenflug Alpen.mp4', 1.8e9, 300)]),
+  D('Musik', [F('Sammlung 2010-2020.zip', 22e9, 400)]),
+  D('Archiv', [F('Scans Verträge.zip', 310e6, 500), F('Rechnungen 2024.zip', 85e6, 330)]),
+]);
+SERVER.label = 'Server';
+// Gekoppelte Geräte mit freigegebenem Speicher (nur was das Gerät freigibt)
+const DEVICES = [
+  { id: 'phone', name: 'Interner Speicher', kind: 'phone', root: ROOT, total: TOTAL, used: USED, online: true, self: true },
+  { id: 'laptop', name: 'Laptop', kind: 'laptop', root: LAPTOP, total: 512e9, used: 318e9, online: true, seen: 'jetzt' },
+  { id: 'server', name: 'Server', kind: 'server', root: SERVER, total: 4e12, used: 2.61e12, online: true, seen: 'jetzt' },
+  { id: 'tablet', name: 'Tablet', kind: 'tablet', root: D('', []), total: 64e9, used: 41e9, online: false, seen: 'vor 3 Tagen' },
+];
+const DEV_ICON = { phone: '▯', laptop: '⌨', server: '▤', tablet: '▭' };
 
 const ext = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i + 1).toLowerCase() : ''; };
 const isImg = (n) => /^(jpe?g|png|gif|webp|heic)$/.test(ext(n));
@@ -493,7 +586,8 @@ function substringDistance(q, t, max) {
   const d = Math.min(...prev);
   return d <= max ? d : null;
 }
-function allFiles(node = ROOT, path = '') {
+function allFiles(node, path = '') {
+  if (!node) return DEVICES.filter((d) => d.online).flatMap((d) => allFiles(d.root, d.self ? '' : d.name + ':'));
   const out = [];
   for (const c of node.children) {
     const p = path + '/' + c.name;
@@ -561,13 +655,14 @@ function glyphHTML(n, size = 40) {
 
 // ---------- Untere Leiste
 function renderNav() {
-  const tabs = [['files', '▤', 'Dateien'], ['photos', '◫', 'Fotos'], ['devices', '⌁', 'Geräte'], ['more', '⋯', 'Mehr']];
+  const tabs = [['files', '▤', 'Dateien'], ['photos', '◫', 'Fotos'], ['settings', '⚙', 'Einstellungen']];
   nav.innerHTML = tabs.map(([k, i, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''}" role="tab" aria-selected="${S.tab === k}"><i>${i}</i>${l}</button>`).join('');
   nav.classList.toggle('hidden', S.sel.size > 0);
   renderBar();
   nav.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.tab;
     if (t === S.tab) {
+      if (t === 'settings' && S.sub) { S.sub = null; render('back'); return; }
       if (t === 'files' && (S.stack.length || S.query)) { S.query = ''; S.sel.clear(); closeMenu(); S.stack = []; render('back'); }
       return;
     }
@@ -578,7 +673,11 @@ function renderNav() {
 }
 
 // ---------- Aktionsleiste unten (ab zwei markierten Dateien)
-const useBar = () => cfg.multiStyle === 'bar' && S.sel.size > 1;
+const useBar = () => {
+  if (cfg.multiStyle !== 'bar' || S.sel.size === 0) return (S.barOn = false);
+  if (S.sel.size > 1) S.barOn = true; // einmal offen, bleibt sie bis zur letzten abgewählten Datei
+  return S.barOn;
+};
 function renderBar() {
   const bar = document.getElementById('abar');
   const show = useBar();
@@ -613,7 +712,7 @@ function render(how) {
   page.className = 'page';
   if (S.tab === 'files') buildFiles(page);
   else if (S.tab === 'photos') buildPhotos(page);
-  else buildPlaceholder(page);
+  else buildSettings(page);
   if (!old || !how || how === 'update') {
     if (old) {
       // Gleiche Ansicht: Scrollstand behalten, ohne Übergang
@@ -669,7 +768,7 @@ function headHTML(node, q) {
       <button class="text-btn" data-act="all">Alle</button><button class="icon-btn" data-act="menu-top" aria-label="Aktionen" style="${useBar() ? 'visibility:hidden' : ''}">⋯</button></div>`;
   }
   if (q) return `<div class="search-head"><button class="icon-btn" data-act="clear-search" aria-label="Zurück">‹</button>${searchField(true)}</div>`;
-  return `<div class="header"><button class="icon-btn" data-act="up" aria-label="Zurück">‹</button><h1>${esc(LABEL[node.name] && S.stack.length === 1 ? LABEL[node.name] : node.name)}</h1>
+  return `<div class="header"><button class="icon-btn" data-act="up" aria-label="Zurück">‹</button><h1>${esc(node.label || (LABEL[node.name] && S.stack.length === 1 ? LABEL[node.name] : node.name))}</h1>
       <button class="icon-btn small" data-act="view" aria-label="Ansicht wechseln">${S.view === 'list' ? '▦' : '☰'}</button><button class="icon-btn" data-act="more" aria-label="Mehr">⋯</button></div>`;
 }
 
@@ -698,16 +797,21 @@ function buildLanding(page) {
     <div class="big-title">Dateien</div>
     ${searchField(false)}
     <div class="section">Speicher</div>
-    <div class="card"><button class="card-row pressable" data-act="open-root">
-      <div class="drive"><i></i></div>
-      <div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:600">Interner Speicher</div>
-        <div class="meta">${human(USED)} von ${human(TOTAL)} belegt</div>
-        <div class="usage"><i style="width:${(USED / TOTAL) * 100}%"></i></div></div>
-      <span class="chev">›</span></button></div>
+    <div class="card devices">${DEVICES.map((d) => `<button class="card-row pressable dev ${d.online ? '' : 'off'}" data-dev="${d.id}" ${d.online ? '' : 'aria-disabled="true"'}>
+      <div class="drive dev-${d.kind}"><span>${DEV_ICON[d.kind]}</span></div>
+      <div style="flex:1;min-width:0"><div class="dev-name">${esc(d.name)}${d.self ? '' : `<span class="dot ${d.online ? 'on' : ''}"></span>`}</div>
+        <div class="meta">${d.online ? `${human(d.used)} von ${human(d.total)} belegt` : `Nicht verbunden · zuletzt ${d.seen}`}</div>
+        <div class="usage"><i style="width:${(d.used / d.total) * 100}%"></i></div></div>
+      <span class="chev">${d.online ? '›' : ''}</span></button>`).join('')}</div>
     <div class="section">Ordner</div>
     <div class="folders ${cfg.stagger ? 'stagger' : ''}">${present.map((d, i) => `<button class="folder-tile" data-folder="${d}" style="--i:${i}">${glyphHTML({ dir: true, name: d }, 44)}<span>${LABEL[d]}</span></button>`).join('')}</div>
   </div></div>`;
   wireCommon(page);
+  page.querySelectorAll('[data-dev]').forEach((b) => b.addEventListener('click', () => {
+    const d = DEVICES.find((x) => x.id === b.dataset.dev);
+    if (!d.online) { toast(`${d.name} ist gerade nicht verbunden`); return; }
+    S.stack = [d.root]; render('forward');
+  }));
   page.querySelectorAll('[data-folder]').forEach((b) => b.addEventListener('click', () => {
     S.stack = [ROOT.children.find((c) => c.name === b.dataset.folder)];
     render('forward');
@@ -854,7 +958,8 @@ function tap(list, i) {
     openViewer(files, files.indexOf(e.node));
   }
 }
-function pathTo(target, node = ROOT, acc = [ROOT]) {
+function pathTo(target, node, acc) {
+  if (!node) { for (const d of DEVICES) { const r = pathTo(target, d.root, [d.root]); if (r) return r; } return null; }
   for (const c of node.children) {
     if (c === target) return [...acc, c];
     if (c.dir) { const r = pathTo(target, c, [...acc, c]); if (r) return r; }
@@ -876,8 +981,11 @@ function openMenu(x, y, refresh) {
   const r = phone.getBoundingClientRect();
   const lx = x - r.left, ly = y - r.top;
   const n = S.sel.size;
+  const one = n === 1 ? selected()[0] : null;
+  const typed = one && !one.dir ? typeActions(one) : [];
   const acts = [
     ['Öffnen', () => { const f = selected()[0]; if (f && !f.dir) openViewer([f], 0); }, n !== 1],
+    ...typed,
     ['Teilen', () => toast(`${n} ${n === 1 ? 'Datei' : 'Dateien'} teilen (System-Dialog)`)],
     ['Kopieren nach …', () => toast('Ziel wählen, dann „Hier einfügen“')],
     ['Verschieben nach …', () => toast('Ziel wählen, dann „Hier einfügen“')],
@@ -886,6 +994,7 @@ function openMenu(x, y, refresh) {
     ['In den Papierkorb', trash, false, true],
   ];
   const H = acts.reduce((h, a) => h + (a[0] === '---' ? 9 : 50), 12);
+  if (refresh && phone.querySelector('.menu:not(.pop-out)')) { /* bleibt */ }
   const W = 236, PW = r.width, PH = r.height;
   const left = Math.max(12, Math.min(lx - 24, PW - W - 12));
   const below = ly + 12 + H < PH - 24;
@@ -901,11 +1010,12 @@ function openMenu(x, y, refresh) {
   const m = document.createElement('div');
   m.className = 'menu pop-in'; m.setAttribute('role', 'menu');
   m.style.cssText = `left:${left}px;top:${top}px;transform-origin:${below ? 'top' : 'bottom'} ${lx - left < W / 2 ? 'left' : 'right'}`;
-  for (const [label, fn, disabled, danger] of acts) {
+  for (const [label, fn, disabled, danger, strong] of acts) {
     if (label === '---') { m.insertAdjacentHTML('beforeend', '<hr>'); continue; }
     const b = document.createElement('button');
     b.textContent = label; b.setAttribute('role', 'menuitem');
     if (danger) b.className = 'danger';
+    if (strong) b.style.fontWeight = '600';
     if (disabled) { b.disabled = true; b.style.opacity = 0.4; }
     b.addEventListener('click', () => { closeMenu(); fn(); });
     m.appendChild(b);
@@ -945,14 +1055,16 @@ function openSheet(kind) {
   const close = () => { sc.classList.add('out'); sh.classList.add('out'); setTimeout(() => { sc.remove(); sh.remove(); }, ms(cfg.popMs * 0.66) + 40); };
   sc.addEventListener('click', close);
   if (kind === 'multi') {
+    const zips = selected().filter((n) => !n.dir && ext(n.name) === 'zip');
     sh.innerHTML = `<div class="grab"></div><h3>${S.sel.size} ausgewählt</h3>
+      ${zips.length ? `<button data-m="unzip">${zips.length === 1 ? 'Entpacken' : `${zips.length} Archive entpacken`}</button>` : ''}
       <button data-m="zip">Als ZIP packen</button><button data-m="info">Eigenschaften</button><button data-m="del" style="color:var(--danger)">Endgültig löschen</button>`;
-    sh.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { close(); toast(b.textContent + ' (im Labor nur angedeutet)'); }));
+    sh.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { close(); if (b.dataset.m === 'unzip') unzip(zips); else toast(b.textContent + ' (im Labor nur angedeutet)'); }));
     phone.append(sc, sh);
     return;
   }
   if (kind === 'create') {
-    sh.innerHTML = `<div class="grab"></div><h3>Neu in „${esc(cur().name || 'Interner Speicher')}“</h3>
+    sh.innerHTML = `<div class="grab"></div><h3>Neu in „${esc(cur().label || cur().name)}“</h3>
       <button data-k="folder">${glyphHTML({ dir: true, name: '' }, 28)} Neuer Ordner</button>
       <button data-k="file">${glyphHTML({ dir: false, name: 'a.txt' }, 28)} Neue Textdatei</button>`;
   } else {
@@ -1006,9 +1118,288 @@ function buildPhotos(page) {
     `<h2>${m}</h2><div class="pgrid">${ps.map((p) => `<button data-id="${p.id}" aria-label="${esc(p.name)}"><img alt="" src="${photo(p.seed, 160)}">${isVid(p.name) ? '<span class="play" style="position:absolute;right:6px;bottom:4px;color:#fff;text-shadow:0 0 4px #000">▶</span>' : ''}</button>`).join('')}</div>`).join('')}</div></div>`;
   page.querySelectorAll('[data-id]').forEach((b) => b.addEventListener('click', () => openViewer(all, all.findIndex((p) => p.id === Number(b.dataset.id)))));
 }
-function buildPlaceholder(page) {
-  const t = S.tab === 'devices' ? 'Geräte' : 'Mehr';
-  page.innerHTML = `<div class="header"><h1 style="text-align:left;padding-left:12px;font-size:22px">${t}</h1></div><div class="placeholder"><div class="card">Dieser Bereich ist im Designlabor nicht ausgearbeitet. Ausprobieren lassen sich „Dateien“ und „Fotos“.</div></div>`;
+const SETTINGS = { lang: 'Deutsch', material: false, appearance: 'System', cameraUpload: true, wifiOnly: true, trashDays: 30 };
+function buildSettings(page) {
+  const sub = S.sub;
+  const head = (title, back) => `<div class="header">${back ? '<button class="icon-btn" data-back aria-label="Zurück">‹</button>' : ''}<h1 style="${back ? '' : 'text-align:left;padding-left:12px;font-size:22px'}">${title}</h1>${back ? '<span style="width:48px"></span>' : ''}</div>`;
+  const row = (ic, title, meta, right = '<span class="chev">›</span>', attrs = '') => `<button class="set-row" ${attrs}><span class="ic">${ic}</span><span class="tx"><b>${title}</b>${meta ? `<span class="meta">${meta}</span>` : ''}</span>${right}</button>`;
+  const sw = (on) => `<span class="switch ${on ? 'on' : ''}"></span>`;
+  let body;
+  if (!sub) {
+    const online = DEVICES.filter((d) => !d.self && d.online).length;
+    body = head('Einstellungen') + `<div class="scroll"><div class="set-list ${cfg.stagger ? 'stagger' : ''}">
+      <div class="card">${row('⚙', 'Allgemein', 'Sprache, Erscheinung, Material You', undefined, 'data-sub="general"')}
+        ${row('⌁', 'Geräte', `${DEVICES.length - 1} gekoppelt · ${online} verbunden`, undefined, 'data-sub="devices"')}</div>
+      <div class="card">${row('⇪', 'Kamera-Upload', SETTINGS.cameraUpload ? 'An · nur im WLAN' : 'Aus', undefined, 'data-sub="upload"')}
+        ${row('⟲', 'Sicherungen', 'Letzte: heute 03:12 auf „Server“', undefined, 'data-sub="backup"')}
+        ${row('🗑', 'Papierkorb', '7 Elemente · 214 MB', undefined, 'data-sub="trash"')}</div>
+      <div class="card">${row('ℹ', 'Über Snap', 'Version 0.1 · GPL-3.0', undefined, 'data-sub="about"')}</div>
+    </div></div>`;
+  } else if (sub === 'general') {
+    body = head('Allgemein', true) + `<div class="scroll"><div class="set-list">
+      <div class="section" style="margin:8px 0 -6px 4px">Darstellung</div>
+      <div class="card">${row('◐', 'Erscheinung', SETTINGS.appearance, '<span class="chev">›</span>', 'data-cycle="appearance"')}
+        ${row('🎨', 'Material You', 'Farben aus dem Hintergrundbild', sw(SETTINGS.material), 'data-toggle="material"')}</div>
+      <div class="section" style="margin:8px 0 -6px 4px">Sprache</div>
+      <div class="card">${row('文', 'Sprache der App', SETTINGS.lang, '<span class="chev">›</span>', 'data-cycle="lang"')}</div>
+    </div></div>`;
+  } else if (sub === 'devices') {
+    body = head('Geräte', true) + `<div class="scroll"><div class="set-list">
+      <div class="card">${DEVICES.filter((d) => !d.self).map((d) => row(DEV_ICON[d.kind], d.name, d.online ? `Verbunden · ${human(d.total - d.used)} frei` : `Zuletzt ${d.seen}`, `<span class="pill ${d.online ? '' : 'off'}">${d.online ? 'online' : 'offline'}</span>`, `data-device="${d.id}"`)).join('')}</div>
+      <button class="big-btn" data-pair>Neues Gerät koppeln</button>
+      <p class="meta" style="white-space:normal;margin:0 4px">Gekoppelte Geräte sehen nur, was du freigibst. Rechte legst du pro Gerät fest.</p>
+    </div></div>`;
+  } else if (sub.startsWith('device:')) {
+    const d = DEVICES.find((x) => x.id === sub.slice(7));
+    body = head(esc(d.name), true) + `<div class="scroll"><div class="set-list">
+      <div class="card">${row(DEV_ICON[d.kind], d.name, d.online ? 'Verbunden' : `Zuletzt ${d.seen}`, `<span class="pill ${d.online ? '' : 'off'}">${d.online ? 'online' : 'offline'}</span>`)}
+        ${row('▦', 'Speicher', `${human(d.used)} von ${human(d.total)} belegt`, '')}</div>
+      <div class="section" style="margin:8px 0 -6px 4px">Darf auf dieses Telefon</div>
+      <div class="card">${row('👁', 'Dateien sehen und herunterladen', '', sw(true), 'data-sw')}${row('✎', 'Dateien ändern und löschen', '', sw(false), 'data-sw')}${row('⟲', 'Sicherungen ablegen', '', sw(d.kind === 'server'), 'data-sw')}</div>
+      <div class="card">${row('✕', '<span style="color:var(--danger)">Kopplung aufheben</span>', '', '', 'data-unpair')}</div>
+    </div></div>`;
+  } else {
+    const t = { upload: 'Kamera-Upload', backup: 'Sicherungen', trash: 'Papierkorb', about: 'Über Snap' }[sub];
+    body = head(t, true) + `<div class="placeholder"><div class="card">„${t}“ ist im Designlabor nicht ausgearbeitet. Neu sind hier „Allgemein“ und „Geräte“.</div></div>`;
+  }
+  page.innerHTML = body;
+  page.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', () => { S.sub = b.dataset.sub; render('forward'); }));
+  page.querySelectorAll('[data-device]').forEach((b) => b.addEventListener('click', () => { S.sub = 'device:' + b.dataset.device; render('forward'); }));
+  page.querySelector('[data-back]')?.addEventListener('click', () => { S.sub = sub.startsWith('device:') ? 'devices' : null; render('back'); });
+  page.querySelectorAll('[data-toggle]').forEach((b) => b.addEventListener('click', () => { SETTINGS[b.dataset.toggle] = !SETTINGS[b.dataset.toggle]; b.querySelector('.switch').classList.toggle('on'); vibrate(4); }));
+  page.querySelectorAll('[data-sw]').forEach((b) => b.addEventListener('click', () => { b.querySelector('.switch').classList.toggle('on'); vibrate(4); }));
+  page.querySelectorAll('[data-cycle]').forEach((b) => b.addEventListener('click', () => {
+    const k = b.dataset.cycle, opts = k === 'lang' ? ['Deutsch', 'English'] : ['System', 'Hell', 'Dunkel'];
+    SETTINGS[k] = opts[(opts.indexOf(SETTINGS[k]) + 1) % opts.length];
+    b.querySelector('.meta').textContent = SETTINGS[k];
+    if (k === 'appearance' && SETTINGS[k] !== 'System') { cfg.mode = SETTINGS[k] === 'Dunkel' ? 'dark' : 'light'; applyCfg(); buildControls(); }
+  }));
+  page.querySelector('[data-pair]')?.addEventListener('click', pairDialog);
+  page.querySelector('[data-unpair]')?.addEventListener('click', () => toast('Würde die Kopplung nach Bestätigung aufheben'));
+}
+
+function pairDialog() {
+  const sc = document.createElement('div'); sc.className = 'scrim';
+  const d = document.createElement('div'); d.className = 'dialog pop-in';
+  d.innerHTML = `<h2>Gerät koppeln</h2><div class="code-box"><div class="meta" style="white-space:normal">Auf dem anderen Gerät „Koppeln“ wählen und diesen Code eingeben oder den QR-Code scannen:</div><div class="code">482-913</div><div class="meta">Gültig für 10 Minuten</div></div><div class="actions"><button class="text-btn">Fertig</button></div>`;
+  const close = () => { sc.classList.add('out'); d.classList.replace('pop-in', 'pop-out'); setTimeout(() => { sc.remove(); d.remove(); }, ms(cfg.popMs * 0.66) + 40); };
+  sc.addEventListener('click', close); d.querySelector('button').addEventListener('click', close);
+  phone.append(sc, d);
+}
+
+// =====================================================================================
+// Aktionen je Dateiformat: Entpacken, Bearbeiten, Drucken, In PDF umwandeln
+// =====================================================================================
+function typeActions(f) {
+  const e = ext(f.name);
+  if (e === 'zip') return [['Entpacken', () => unzip([f]), false, false, true]];
+  if (/^(jpe?g|png|webp|heic)$/.test(e)) return [['Bearbeiten', () => imageEditor(f), false, false, true]];
+  if (/^(mp4|mov|mkv|webm)$/.test(e)) return [['Bearbeiten', () => videoEditor(f), false, false, true]];
+  if (/^(docx?|odt)$/.test(e)) return [['Drucken', () => printDialog(f), false, false, true], ['In PDF umwandeln', () => toPdf(f), false, false, true]];
+  if (e === 'pdf') return [['Drucken', () => printDialog(f), false, false, true]];
+  return [];
+}
+const parentOf = (n) => allFiles().find((x) => x.node === n)?.parent;
+function freeName(dir, name) {
+  if (!dir.children.some((c) => c.name === name)) return name;
+  const i = name.lastIndexOf('.'), base = i > 0 ? name.slice(0, i) : name, x = i > 0 ? name.slice(i) : '';
+  for (let k = 2; ; k++) if (!dir.children.some((c) => c.name === `${base} (${k})${x}`)) return `${base} (${k})${x}`;
+}
+function afterChange() { S.sel.clear(); S.barOn = false; closeMenu(); render('update'); }
+
+// Entpacken: in einen neuen Ordner neben der ZIP-Datei, mit Fortschritt und Rückgängig
+function unzip(files) {
+  let done = 0;
+  const created = [];
+  const step = () => {
+    const f = files[done];
+    const dir = parentOf(f);
+    const name = freeName(dir, f.name.replace(/\.zip$/i, ''));
+    let pct = 0;
+    const t = progressToast(`„${f.name}“ wird entpackt …`);
+    const iv = setInterval(() => {
+      pct = Math.min(100, pct + 9 + Math.random() * 14);
+      t.set(pct);
+      if (pct >= 100) {
+        clearInterval(iv);
+        const base = name.replace(/[^\wäöüÄÖÜß -]/g, '');
+        const folder = D(name, [F(`${base} 01.pdf`, 210e3, 0), F(`${base} 02.pdf`, 190e3, 0), F('Übersicht.xlsx', 40e3, 0), D('Bilder', [F('scan-01.jpg', 1.1e6, 0), F('scan-02.jpg', 1.2e6, 0)])]);
+        dir.children.push(folder); created.push([dir, folder]);
+        t.close();
+        done++;
+        if (done < files.length) step();
+        else {
+          afterChange();
+          toast(files.length === 1 ? `Entpackt nach „${name}“` : `${files.length} Archive entpackt`, () => { created.forEach(([d, fo]) => d.children.splice(d.children.indexOf(fo), 1)); render('update'); });
+        }
+      }
+    }, ms(110));
+  };
+  closeMenu();
+  step();
+}
+function progressToast(text) {
+  phone.querySelectorAll('.toast').forEach((t) => t.remove());
+  const t = document.createElement('div');
+  t.className = 'toast'; t.setAttribute('role', 'status');
+  t.innerHTML = `<span>${esc(text)}<span style="display:block;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin-top:8px;overflow:hidden"><i style="display:block;height:100%;width:0;background:#9fbcff;transition:width 120ms linear"></i></span></span><button>Abbrechen</button>`;
+  phone.appendChild(t);
+  const bar = t.querySelector('i');
+  return { set: (p) => (bar.style.width = p + '%'), close: () => t.remove() };
+}
+
+// In PDF umwandeln
+function toPdf(f) {
+  closeMenu();
+  const dir = parentOf(f);
+  const t = progressToast(`„${f.name}“ wird in PDF umgewandelt …`);
+  let p = 0;
+  const iv = setInterval(() => {
+    p += 12; t.set(Math.min(100, p));
+    if (p >= 100) {
+      clearInterval(iv); t.close();
+      const name = freeName(dir, f.name.replace(/\.(docx?|odt)$/i, '.pdf'));
+      const pdf = F(name, Math.round(f.size * 1.6), 0);
+      dir.children.push(pdf); afterChange();
+      toast(`„${name}“ erstellt`, () => { dir.children.splice(dir.children.indexOf(pdf), 1); render('update'); });
+    }
+  }, ms(120));
+}
+
+// Druckdialog des Systems (Android-Druckframework, ohne Zusatz-App)
+function printDialog(f) {
+  afterChange(); // Aktion gewählt: Auswahl endet
+  const pages = /pdf$/i.test(f.name) ? 4 : 3;
+  const el = document.createElement('div');
+  el.className = 'print';
+  el.innerHTML = `<div class="pbar"><div style="display:flex;align-items:center;margin-bottom:8px"><button class="icon-btn" data-x aria-label="Schließen" style="color:#1b1b1f">✕</button><b style="flex:1;font-size:15px">${esc(f.name)}</b></div>
+    <select aria-label="Drucker"><option>Als PDF speichern</option><option selected>Brother HL-L2350 (WLAN)</option><option>Alle Drucker …</option></select>
+    <div class="opts"><span>Kopien: 1</span><span>A4</span><span>Schwarzweiß</span><span>Beidseitig</span><span>Seiten: alle (${pages})</span></div></div>
+    <div class="pages">${Array.from({ length: pages }, (_, k) => `<div class="pg"><i class="h"></i>${Array.from({ length: 14 }, (_, j) => `<i style="width:${70 + ((k * 7 + j * 13) % 30)}%"></i>`).join('')}</div>`).join('')}</div>
+    <small class="sys">Druckdialog von Android (Druckdienst des Systems, z. B. „Standard-Druckdienst“ oder Mopria)</small>
+    <button class="go" aria-label="Drucken">⎙</button>`;
+  const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), ms(cfg.popMs) + 40); };
+  el.querySelector('[data-x]').addEventListener('click', close);
+  el.querySelector('.go').addEventListener('click', () => { close(); afterChange(); toast(`Druckauftrag gesendet: ${pages} Seiten`); });
+  phone.appendChild(el);
+}
+
+// Bildbearbeitung: Zuschneiden, Drehen, Anpassen, Filter
+function imageEditor(f) {
+  afterChange(); // Aktion gewählt: Auswahl endet
+  const st = { tab: 'crop', aspect: 'frei', rot: 0, light: 0, contrast: 0, sat: 0, warm: 0, filter: 'Original' };
+  const FILTERS = { Original: '', Klar: 'contrast(1.15) saturate(1.15)', Warm: 'sepia(0.25) saturate(1.2)', Kühl: 'hue-rotate(-12deg) saturate(1.05)', 'S/W': 'grayscale(1) contrast(1.1)', Matt: 'contrast(0.88) brightness(1.06) saturate(0.85)' };
+  const src = photo(f.seed, 900);
+  const el = document.createElement('div');
+  el.className = 'editor';
+  el.innerHTML = `<div class="ed-top"><button class="icon-btn" data-x aria-label="Abbrechen" style="color:#fff">✕</button><h1>Bearbeiten</h1><button class="text-btn" data-save>Speichern</button></div>
+    <div class="ed-stage"><div class="ed-img"><img alt="" src="${src}" draggable="false"><div class="crop"><i></i><i></i><i></i><i></i></div></div></div>
+    <div class="ed-tools"><div class="panelx"></div>
+      <div class="ed-tabs">${[['crop', '⬚', 'Zuschneiden'], ['adjust', '☼', 'Anpassen'], ['filter', '◑', 'Filter']].map(([k, i, l]) => `<button data-tab="${k}"><i>${i}</i>${l}</button>`).join('')}</div></div>`;
+  const img = el.querySelector('.ed-img img'), crop = el.querySelector('.crop'), box = el.querySelector('.ed-img'), px = el.querySelector('.panelx');
+  const apply = () => {
+    const a = { frei: null, '1:1': 1, '4:3': 4 / 3, '16:9': 16 / 9, '3:4': 3 / 4 }[st.aspect];
+    const w = img.clientWidth, h = img.clientHeight;
+    let cw = w * 0.92, ch = h * 0.92;
+    if (a) { if (cw / ch > a) cw = ch * a; else ch = cw / a; }
+    Object.assign(crop.style, { left: (w - cw) / 2 + 'px', top: (h - ch) / 2 + 'px', width: cw + 'px', height: ch + 'px', display: st.tab === 'crop' ? '' : 'none' });
+    box.style.transform = `rotate(${st.rot}deg)`;
+    img.style.filter = `brightness(${1 + st.light / 100}) contrast(${1 + st.contrast / 100}) saturate(${1 + st.sat / 100}) sepia(${Math.max(0, st.warm) / 200}) hue-rotate(${Math.min(0, st.warm) / 4}deg) ${FILTERS[st.filter]}`;
+  };
+  const tools = () => {
+    el.querySelectorAll('.ed-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === st.tab));
+    if (st.tab === 'crop') {
+      px.innerHTML = `<div class="chips">${['frei', '1:1', '4:3', '3:4', '16:9'].map((a) => `<button class="chip ${st.aspect === a ? 'on' : ''}" data-a="${a}">${a === 'frei' ? 'Frei' : a}</button>`).join('')}<button class="chip" data-rot>⟲ Drehen</button></div>`;
+      px.querySelectorAll('[data-a]').forEach((b) => b.addEventListener('click', () => { st.aspect = b.dataset.a; tools(); apply(); }));
+      px.querySelector('[data-rot]').addEventListener('click', () => { st.rot -= 90; apply(); });
+    } else if (st.tab === 'adjust') {
+      px.innerHTML = [['light', 'Helligkeit'], ['contrast', 'Kontrast'], ['sat', 'Sättigung'], ['warm', 'Wärme']].map(([k, l]) => `<label class="ed-slider"><span>${l}</span><input type="range" min="-50" max="50" value="${st[k]}" data-k="${k}"><output>${st[k]}</output></label>`).join('');
+      px.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => { st[i.dataset.k] = Number(i.value); i.nextElementSibling.textContent = i.value; apply(); }));
+    } else {
+      px.innerHTML = `<div class="chips filters">${Object.entries(FILTERS).map(([k, v]) => `<button class="chip ${st.filter === k ? 'on' : ''}" data-f="${k}"><img alt="" src="${photo(f.seed, 160)}" style="filter:${v}">${k}</button>`).join('')}</div>`;
+      px.querySelectorAll('[data-f]').forEach((b) => b.addEventListener('click', () => { st.filter = b.dataset.f; tools(); apply(); }));
+    }
+  };
+  el.querySelectorAll('.ed-tabs button').forEach((b) => b.addEventListener('click', () => { st.tab = b.dataset.tab; tools(); apply(); }));
+  const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), ms(cfg.popMs) + 40); };
+  el.querySelector('[data-x]').addEventListener('click', close);
+  el.querySelector('[data-save]').addEventListener('click', () => saveSheet(f, close, 'bearbeitet'));
+  phone.appendChild(el);
+  img.addEventListener('load', apply);
+  tools(); setTimeout(apply, 30);
+}
+
+// Video bearbeiten: Kürzen (Anfang/Ende), Ton aus, Drehen
+function videoEditor(f) {
+  afterChange(); // Aktion gewählt: Auswahl endet
+  const dur = 42 + (f.seed % 120);
+  const st = { a: 0.08, b: 0.86, mute: false, rot: 0 };
+  const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  const el = document.createElement('div');
+  el.className = 'editor';
+  el.innerHTML = `<div class="ed-top"><button class="icon-btn" data-x aria-label="Abbrechen" style="color:#fff">✕</button><h1>Video bearbeiten</h1><button class="text-btn" data-save>Speichern</button></div>
+    <div class="ed-stage"><div class="ed-img" style="position:relative"><img alt="" src="${photo(f.seed, 900)}" draggable="false"><span class="vplay" style="left:calc(50% - 36px);top:calc(50% - 36px)">▶</span></div></div>
+    <div class="ed-tools">
+      <div class="times"><span data-ta></span><b data-len></b><span data-tb></span></div>
+      <div class="strip">${Array.from({ length: 9 }, (_, k) => `<img alt="" src="${photo(f.seed + k * 3, 160)}">`).join('')}
+        <div class="shade" data-sa style="left:0"></div><div class="shade" data-sb style="right:0"></div><div class="frame"></div>
+        <div class="handle" data-h="a" aria-label="Anfang">‹</div><div class="handle" data-h="b" aria-label="Ende">›</div></div>
+      <div class="chips" style="justify-content:center"><button class="chip" data-mute>🔇 Ton aus</button><button class="chip" data-rot>⟲ Drehen</button></div>
+      <p class="meta" style="text-align:center;color:#8a8f9c;white-space:normal;margin:0">Kürzen ohne neues Kodieren, daher in Sekunden fertig (Media3)</p>
+    </div>`;
+  const strip = el.querySelector('.strip');
+  const draw = () => {
+    const W = strip.clientWidth, ha = el.querySelector('[data-h="a"]'), hb = el.querySelector('[data-h="b"]');
+    ha.style.left = st.a * W - 18 + 'px'; hb.style.left = st.b * W + 'px';
+    el.querySelector('[data-sa]').style.width = st.a * W + 'px';
+    el.querySelector('[data-sb]').style.width = (1 - st.b) * W + 'px';
+    Object.assign(el.querySelector('.frame').style, { left: st.a * W + 'px', width: (st.b - st.a) * W + 'px' });
+    el.querySelector('[data-ta]').textContent = fmt(st.a * dur);
+    el.querySelector('[data-tb]').textContent = fmt(st.b * dur);
+    el.querySelector('[data-len]').textContent = `${fmt((st.b - st.a) * dur)} von ${fmt(dur)}`;
+    el.querySelector('[data-mute]').classList.toggle('on', st.mute);
+    el.querySelector('.ed-img').style.transform = `rotate(${st.rot}deg)`;
+  };
+  el.querySelectorAll('.handle').forEach((h) => {
+    h.addEventListener('pointerdown', (e) => {
+      h.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        const r = strip.getBoundingClientRect();
+        const v = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+        if (h.dataset.h === 'a') st.a = Math.min(v, st.b - 0.05); else st.b = Math.max(v, st.a + 0.05);
+        draw();
+      };
+      const up = () => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); vibrate(3); };
+      h.addEventListener('pointermove', move); h.addEventListener('pointerup', up);
+    });
+  });
+  el.querySelector('[data-mute]').addEventListener('click', () => { st.mute = !st.mute; draw(); });
+  el.querySelector('[data-rot]').addEventListener('click', () => { st.rot -= 90; draw(); });
+  const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), ms(cfg.popMs) + 40); };
+  el.querySelector('[data-x]').addEventListener('click', close);
+  el.querySelector('[data-save]').addEventListener('click', () => saveSheet(f, close, 'gekürzt'));
+  phone.appendChild(el);
+  setTimeout(draw, 30);
+}
+
+// Speichern: als Kopie (Standard) oder Original ersetzen (Original in den Papierkorb)
+function saveSheet(f, closeEditor, suffix) {
+  const sc = document.createElement('div'); sc.className = 'scrim'; sc.style.zIndex = 44;
+  const sh = document.createElement('div'); sh.className = 'sheet'; sh.style.zIndex = 45;
+  sh.innerHTML = `<div class="grab"></div><h3>Speichern</h3><button data-k="copy">Als Kopie speichern</button><button data-k="replace">Original ersetzen<span class="meta" style="margin-left:auto">Original in den Papierkorb</span></button>`;
+  const close = () => { sc.classList.add('out'); sh.classList.add('out'); setTimeout(() => { sc.remove(); sh.remove(); }, ms(cfg.popMs * 0.66) + 40); };
+  sc.addEventListener('click', close);
+  sh.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    close(); closeEditor();
+    const dir = parentOf(f);
+    if (b.dataset.k === 'copy') {
+      const i = f.name.lastIndexOf('.');
+      const name = freeName(dir, `${f.name.slice(0, i)} (${suffix})${f.name.slice(i)}`);
+      const c = F(name, f.size, 0); c.seed = f.seed; dir.children.push(c); afterChange();
+      toast(`Gespeichert als „${name}“`, () => { dir.children.splice(dir.children.indexOf(c), 1); render('update'); });
+    } else { f.mtime = NOW; afterChange(); toast('Gespeichert · Original liegt im Papierkorb', () => toast('Original wiederhergestellt')); }
+  }));
+  phone.append(sc, sh);
 }
 
 // =====================================================================================
