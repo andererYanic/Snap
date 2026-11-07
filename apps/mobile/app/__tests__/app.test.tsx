@@ -45,7 +45,7 @@ NativeModules.SnapCore = {
 
 import App from '../App';
 
-const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+const flush = () => act(async () => { await new Promise<void>((resolve) => { setTimeout(() => resolve(), 0); }); });
 
 /** Alle sichtbaren Texte (aus den Text-Elementen). */
 function allText(r: ReactTestRenderer.ReactTestRenderer): string {
