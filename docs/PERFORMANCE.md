@@ -518,3 +518,14 @@ Anlass: Der Nutzer meldete starke Bildeinbrüche und träge Menüs. Neue Messung
   läuft außerhalb des UI-Threads, die Oberfläche bleibt bedienbar.
 - Speichern in voller Größe (höchstens 24 MP, sonst verkleinert), ebenfalls im Hintergrund.
 - **Offen:** Messung auf echter Hardware (Vorschau-Zeit je Reglerschritt) nachholen.
+
+## Review 25 – Videobearbeitung (Android, 2026-11-07)
+
+- Zeitleiste: 8 Einzelbilder (160 px) über `MediaMetadataRetriever` am nächsten Schlüsselbild,
+  im Hintergrund erzeugt und im Bearbeitungs-Cache (80 MB, gemeinsam mit der Bildbearbeitung)
+  abgelegt; beim zweiten Öffnen sofort da.
+- Ziehen der Griffe aktualisiert nur Zahlen und springt die Vorschau an (kein Dekodieren eigener
+  Bilder); Export läuft in Media3 (Hardware-Codecs), der UI-Thread fragt nur alle 400 ms den
+  Fortschritt ab (eine Zahl über die Brücke).
+- Ein Export zur Zeit (Sperre); Abbrechen löscht die halbfertige Datei.
+- **Offen:** Exportzeit je Minute Video auf echter Hardware messen.

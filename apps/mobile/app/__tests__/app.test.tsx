@@ -71,6 +71,11 @@ NativeModules.SnapCore = {
   resetFont: jest.fn(async () => null),
   setFontFromFile: jest.fn(async () => 'MeineSchrift'),
   editPreview: jest.fn(async () => '/cache/edit/vorschau.jpg'),
+  videoInfo: jest.fn(async () => JSON.stringify({ durationMs: 20000, width: 1920, height: 1080, rotation: 0, audio: true })),
+  videoFrames: jest.fn(async () => JSON.stringify(['/cache/edit/v-0.jpg', null])),
+  videoSave: jest.fn(async (_p: string, _j: string, mode: string) => (mode === 'temp' ? '/storage/emulated/0/DCIM/.snap-edit-2.mp4' : '/storage/emulated/0/DCIM/clip (bearbeitet).mp4')),
+  videoProgress: jest.fn(async () => 42),
+  videoCancel: jest.fn(),
   editSave: jest.fn(async (_p: string, _j: string, mode: string) => (mode === 'temp' ? '/storage/emulated/0/DCIM/.snap-edit-1.jpg' : '/storage/emulated/0/DCIM/urlaub (bearbeitet).jpg')),
   lastCrash: jest.fn(async () => crashReport),
   requestAllFilesAccess: jest.fn(),
@@ -652,5 +657,48 @@ test('Bildbearbeitung: Seitenverhältnis, Drehen, als Kopie speichern bzw. Origi
     }
   } finally {
     getSize.mockRestore();
+  }
+});
+
+test('Videobearbeitung: Zeitangaben, Einpassen, Ton aus, Drehen, Speichern', async () => {
+  const { clock, fitVideo } = require('../src/VideoEditor');
+  expect(clock(75500)).toBe('1:16');
+  expect(clock(3723000)).toBe('1:02:03');
+  // Querformat um 90° gedreht → Hochformat in der Bühne
+  const box = fitVideo({ width: 1920, height: 1080, rotation: 0 }, 90, { w: 400, h: 800 });
+  expect(box.w).toBeCloseTo(400);
+  expect(box.h).toBeCloseTo(400 * (1920 / 1080));
+  const VideoEditor = require('../src/VideoEditor').default;
+  for (const mode of ['copy', 'replace'] as const) {
+    calls.length = 0;
+    const notes: string[] = [];
+    let closed: boolean | null = null;
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      r = mount(<VideoEditor path="/storage/emulated/0/DCIM/clip.mp4" name="clip.mp4" onClose={(c: boolean) => { closed = c; }} notify={(t: string) => notes.push(t)} />);
+    });
+    await flush();
+    expect(allText(r)).toContain('0:00 – 0:20');
+    expect(byLabel(r, 'Speichern').props.disabled).toBe(true);
+    await act(async () => { pressable(r, '🔊 Ton an').props.onPress(); });
+    await act(async () => { byLabel(r, 'Drehen').props.onPress(); });
+    expect(byLabel(r, 'Speichern').props.disabled).toBe(false);
+    await act(async () => { byLabel(r, 'Speichern').props.onPress(); });
+    await flush();
+    await act(async () => { await pressable(r, mode === 'copy' ? 'Als Kopie speichern' : 'Original ersetzen').props.onPress(); });
+    await flush();
+    const call = NativeModules.SnapCore.videoSave.mock.calls.at(-1);
+    expect(call[0]).toBe('/storage/emulated/0/DCIM/clip.mp4');
+    expect(JSON.parse(call[1])).toEqual({ startMs: 0, endMs: 20000, mute: true, rot: 270 });
+    expect(closed).toBe(true);
+    if (mode === 'copy') {
+      expect(call[2]).toBe('copy');
+      expect(notes).toContain('Gespeichert als „clip (bearbeitet).mp4“.');
+    } else {
+      expect(call[2]).toBe('temp');
+      expect(calls).toContainEqual({ FileOp: { op: { Replace: { path: '/storage/emulated/0/DCIM/clip.mp4', with: '/storage/emulated/0/DCIM/.snap-edit-2.mp4' } }, wait: true } });
+    }
+    await act(async () => { r.unmount(); });
+    mounted.length = 0;
   }
 });

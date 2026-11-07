@@ -325,6 +325,57 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /** Video: Dauer, Größe, Ausrichtung, Tonspur (JSON). */
+  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+  @ReactMethod
+  fun videoInfo(path: String, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(VideoEdit.info(path))
+      } catch (e: Throwable) {
+        promise.reject("video", e.message ?: "Video nicht lesbar.")
+      }
+    }
+  }
+
+  /** Video: Einzelbilder für die Zeitleiste (JSON-Liste von Pfaden). */
+  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+  @ReactMethod
+  fun videoFrames(path: String, count: Double, edge: Double, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(VideoEdit.frames(ctx.applicationContext, path, count.toInt(), edge.toInt()))
+      } catch (e: Throwable) {
+        promise.reject("video", e.message ?: "Video nicht lesbar.")
+      }
+    }
+  }
+
+  /** Video exportieren: `copy` (neue Datei daneben) oder `temp` (für „Original ersetzen“). */
+  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+  @ReactMethod
+  fun videoSave(path: String, params: String, mode: String, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(VideoEdit.save(ctx.applicationContext, path, params, if (mode == "temp") "temp" else "copy"))
+      } catch (e: Throwable) {
+        promise.reject("video", e.message ?: "Speichern fehlgeschlagen.")
+      }
+    }
+  }
+
+  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+  @ReactMethod
+  fun videoProgress(promise: Promise) {
+    VideoEdit.progress { promise.resolve(it) }
+  }
+
+  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+  @ReactMethod
+  fun videoCancel() {
+    VideoEdit.cancel()
+  }
+
   /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
   @ReactMethod
   fun printFile(path: String, promise: Promise) {
