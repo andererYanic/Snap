@@ -221,3 +221,55 @@ export const api3 = {
   settings: () => invoke<{ items: Setting[] }>("settings"),
   settingSet: (key: string, value: number | null) => invoke<unknown>("setting_set", { key, value }),
 };
+
+// ---------------------------------------------------------------- 5: Links, Speicheranalyse, Schrift
+
+export interface LinkInfo {
+  id: string;
+  url: string;
+  name: string;
+  size: number;
+  created_at: number;
+  expires_at: number;
+  max_downloads: number | null;
+  password: boolean;
+  state: "active" | "revoked" | "expired" | string;
+}
+export interface UsageEntry { name: string; is_dir: boolean; size: number; files: number }
+export interface TypeUsage { category: string; size: number; files: number }
+export interface SpaceUsage { path: string; total: number; files: number; children: UsageEntry[]; by_type: TypeUsage[]; largest: { path: string; size: number }[] }
+export interface DuplicateGroup { hash: string; size: number; paths: string[]; wasted: number; other_devices: string[] }
+export interface DuplicateReport { groups: DuplicateGroup[]; wasted: number }
+
+export const api5 = {
+  links: () => invoke<{ items: LinkInfo[]; base_url: string | null }>("links"),
+  linkSetup: (baseUrl: string, endpoint: string, bucket: string, accessKeyId: string, secretAccessKey: string) =>
+    invoke<unknown>("link_setup", { baseUrl, endpoint, bucket, accessKeyId, secretAccessKey }),
+  linkCreate: (path: string, days: number | null, maxDownloads: number | null, password: string | null) =>
+    invoke<LinkInfo>("link_create", { path, days, maxDownloads, password }),
+  linkRevoke: (id: string) => invoke<LinkInfo>("link_revoke", { id }),
+  spaceUsage: (path: string) => invoke<SpaceUsage>("space_usage", { path }),
+  duplicates: (path: string | null) => invoke<DuplicateReport>("duplicates", { path }),
+  fontGet: () => invoke<ArrayBuffer>("font_get"),
+  fontPick: () => invoke<string>("font_pick"),
+  fontName: () => invoke<string>("font_name"),
+  fontReset: () => invoke<void>("font_reset"),
+};
+
+/** Eigene Schrift (falls gespeichert) laden und als „SnapCustom“ vor Inconsolata setzen. */
+export async function applyFont(): Promise<void> {
+  const root = document.documentElement;
+  try {
+    const buf = await api5.fontGet();
+    if (buf && buf.byteLength > 0) {
+      const face = new FontFace(`SnapCustom${Date.now()}`, buf);
+      await face.load();
+      document.fonts.add(face);
+      root.style.setProperty("--font", `"${face.family}", "Inconsolata", monospace`);
+      return;
+    }
+  } catch {
+    // Kaputte Schrift: zurück zum Standard
+  }
+  root.style.removeProperty("--font");
+}

@@ -6,11 +6,12 @@ import { Icon } from "./icons";
 import Explorer from "./Explorer";
 import Photos from "./Photos";
 import { Backups, Devices, SettingsPage } from "./Pages";
+import { LinksPage, StoragePage } from "./Tools";
 
 /** Ein Tab: Ordner (mit Verlauf), Suche, Fotos oder Papierkorb. */
 export interface Tab {
   id: number;
-  kind: "folder" | "photos" | "trash" | "devices" | "backups" | "settings";
+  kind: "folder" | "photos" | "trash" | "devices" | "backups" | "settings" | "links" | "storage";
   path: string;
   history: string[];
   index: number;
@@ -35,6 +36,8 @@ function tabTitle(tb: Tab, home: string): string {
   if (tb.kind === "devices") return t("Geräte");
   if (tb.kind === "backups") return t("Sicherungen");
   if (tb.kind === "settings") return t("Einstellungen");
+  if (tb.kind === "links") return t("Freigabelinks");
+  if (tb.kind === "storage") return `${t("Speicher")}: ${baseName(tb.path)}`;
   if (tb.path === home) return t("Persönlicher Ordner");
   return baseName(tb.path);
 }
@@ -180,7 +183,7 @@ export default function App() {
               title={tb.kind === "folder" ? tb.path : undefined}
             >
               {(() => {
-                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, folder: Icon.home }[tb.kind];
+                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, links: Icon.link, storage: Icon.chart, folder: Icon.home }[tb.kind];
                 return <I />;
               })()}
               <span className="label">{tabTitle(tb, home)}</span>
@@ -210,6 +213,10 @@ export default function App() {
             <Backups notify={notify} />
           ) : tab?.kind === "settings" ? (
             <SettingsPage notify={notify} />
+          ) : tab?.kind === "links" ? (
+            <LinksPage notify={notify} />
+          ) : tab?.kind === "storage" ? (
+            <StoragePage key={tab.path} path={tab.path} notify={notify} onOpen={(dir) => updateTab(tab.id, (x) => ({ ...x, path: dir }))} />
           ) : tab ? (
             <Explorer
               key={tab.id}
@@ -281,6 +288,10 @@ function Sidebar({ places, tab, onGo }: { places: Place[]; tab?: Tab; onGo: (k: 
       <button className={`navitem${is("backups", "") ? " active" : ""}`} onClick={() => onGo("backups", "backups:")}>
         <Icon.backup size={16} />
         <span>{t("Sicherungen")}</span>
+      </button>
+      <button className={`navitem${is("links", "") ? " active" : ""}`} onClick={() => onGo("links", "links:")}>
+        <Icon.link size={16} />
+        <span>{t("Freigabelinks")}</span>
       </button>
       <h4>{t("Dieser Computer")}</h4>
       <button className={`navitem${is("folder", "/") ? " active" : ""}`} onClick={() => onGo("folder", "/")}>
