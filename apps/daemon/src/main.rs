@@ -1521,6 +1521,14 @@ fn print_devices(devices: &[DeviceInfo]) {
     for d in devices {
         let sync = d.last_sync_at.map(|t| format!("vor {}", human_duration(now - t))).unwrap_or_else(|| "nie".into());
         println!("{:<20} {:<12} {:<18} {}", d.name, short(&d.node_id, 10), fmt_time(d.paired_at), sync);
+        if let Some(st) = d.storage {
+            println!(
+                "    💾 {} von {} frei{}",
+                human_size(st.free),
+                human_size(st.total),
+                if d.online { "" } else { " (zuletzt gemeldet)" }
+            );
+        }
         for g in &d.grants {
             match &g.folder {
                 Some(f) => println!("    🔐 {:<14} {f}", g.capability),

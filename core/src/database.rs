@@ -232,6 +232,21 @@ pub struct DeviceInfo {
     /// Gewährte Rechte (nur bei `pair list` befüllt).
     #[serde(default)]
     pub grants: Vec<Grant>,
+    /// Gerade live verbunden (nur bei `pair list` befüllt).
+    #[serde(default)]
+    pub online: bool,
+    /// Zuletzt gemeldeter Speicher seiner Freigaben (nur bei `pair list`, falls gemeldet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<DeviceStorage>,
+}
+
+/// Speicher, den ein gekoppeltes Gerät meldet: Summen über die Laufwerke seiner Freigaben.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceStorage {
+    pub total: u64,
+    pub free: u64,
+    /// Zeitpunkt der Meldung (Unix-Sekunden).
+    pub updated_at: i64,
 }
 
 /// Ein gewährtes Recht, optional auf einen Ordner begrenzt.
@@ -1652,6 +1667,8 @@ impl DatabaseManager {
                     paired_at: r.get(2)?,
                     last_sync_at: r.get(3)?,
                     grants: Vec::new(),
+                    online: false,
+                    storage: None,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

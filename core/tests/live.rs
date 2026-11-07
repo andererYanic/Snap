@@ -228,3 +228,162 @@ async fn revoking_catalog_read_drops_live_connection() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+/// Geräteliste von `d` → (online, Speicher) des Geräts `name`.
+async fn device_storage(d: &Daemon, name: &str) -> (bool, Option<space_core::database::DeviceStorage>) {
+    match d.request(Request::PairList).await {
+        Response::Devices { devices } => {
+            let dev = devices.into_iter().find(|x| x.name == name).expect("Gerät fehlt");
+            (dev.online, dev.storage)
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn storage_is_reported_to_paired_devices() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = start(&tmp.path().join("a"), "A", free_port()).await;
+    let b = start(&tmp.path().join("b"), "B", free_port()).await;
+    let share = tmp.path().join("freigabe");
+    std::fs::create_dir_all(&share).unwrap();
+    assert!(matches!(
+        a.request(Request::ShareAdd { path: share.clone(), name: Some("F".into()), devices: None }).await,
+        Response::ShareAdded { .. }
+    ));
+    pair(&a, &b).await;
+    wait_until("Live-Verbindung", Duration::from_secs(20), || a.live_peers() == 1 && b.live_peers() == 1).await;
+    // B kennt A's Speicher (Summe der Freigaben), A kennt von B keinen (B gibt nichts frei)
+    let start_t = Instant::now();
+    let st = loop {
+        if let (true, Some(s)) = device_storage(&b, "A").await {
+            break s;
+        }
+        assert!(start_t.elapsed() < Duration::from_secs(10), "Speicher kam nicht an");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let (expect_total, _) = space_core::live::shared_storage(std::slice::from_ref(&share)).unwrap();
+    assert_eq!(st.total, expect_total);
+    assert!(st.free <= st.total && st.updated_at > 0);
+    assert_eq!(device_storage(&a, "B").await, (true, None));
+    // Doppelt freigegebenes Laufwerk wird nur einmal gezählt
+    let second = tmp.path().join("zweite");
+    std::fs::create_dir_all(&second).unwrap();
+    assert_eq!(space_core::live::shared_storage(&[share.clone(), second]).unwrap().0, expect_total);
+    assert_eq!(space_core::live::shared_storage(&[]), None);
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+/// Liest bis zu `wait` lang Frames vom Daemon (nach dem Senden von `frames`).
+async fn exchange(ep: &Endpoint, target: &Daemon, frames: Vec<Vec<u8>>, wait: Duration) -> (Vec<String>, bool) {
+    let conn = ep.connect(target.network().endpoint().addr(), LIVE_ALPN).await.unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    for f in frames {
+        send.write_all(&f).await.unwrap();
+    }
+    let mut got = Vec::new();
+    let deadline = Instant::now() + wait;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let mut len = [0u8; 4];
+        match tokio::time::timeout(left, recv.read_exact(&mut len)).await {
+            Ok(Ok(())) => {
+                let mut body = vec![0u8; u32::from_be_bytes(len) as usize];
+                if recv.read_exact(&mut body).await.is_err() {
+                    break;
+                }
+                got.push(String::from_utf8_lossy(&body).into_owned());
+            }
+            _ => break,
+        }
+    }
+    let open = conn.close_reason().is_none();
+    conn.close(0u32.into(), b"ende");
+    (got, open)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hostile_storage_reports_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = start(&tmp.path().join("a"), "A", free_port()).await;
+    let share = tmp.path().join("freigabe");
+    std::fs::create_dir_all(&share).unwrap();
+    assert!(matches!(
+        a.request(Request::ShareAdd { path: share, name: Some("F".into()), devices: None }).await,
+        Response::ShareAdded { .. }
+    ));
+    let mut cfg_c = config(&tmp.path().join("c"), "C", free_port());
+    cfg_c.live_connections = false;
+    let c = Daemon::start_loopback(cfg_c.clone()).await.unwrap();
+    pair(&a, &c).await;
+    c.shutdown().await;
+    drop(c);
+    let ep = raw_client(&cfg_c.secret_key_path()).await;
+
+    // Fremder ohne Kopplung bekommt weder Verbindung noch Speicher
+    let stranger = Endpoint::builder(presets::Minimal)
+        .relay_mode(RelayMode::Disabled)
+        .bind_addr("127.0.0.1:0")
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+    let reason = send_raw(&stranger, &a, vec![frame(r#"{"t":"Hello","v":2,"total":0}"#)]).await;
+    assert!(reason.contains("not paired"), "{reason}");
+
+    // Alte Gegenstelle (Protokoll 1): Verbindung bleibt, aber keine Speichermeldung
+    let (got, open) = exchange(&ep, &a, vec![frame(r#"{"t":"Hello","v":1,"total":0}"#)], Duration::from_secs(2)).await;
+    assert!(open && got.iter().any(|m| m.contains("Hello")), "{got:?}");
+    assert!(!got.iter().any(|m| m.contains("Storage")), "kein Speicher an Protokoll 1: {got:?}");
+    // Protokoll 2 mit catalog.read: Speicher wird gemeldet
+    let (got, _) = exchange(&ep, &a, vec![frame(r#"{"t":"Hello","v":2,"total":0}"#)], Duration::from_secs(2)).await;
+    assert!(got.iter().any(|m| m.contains("\"Storage\"")), "{got:?}");
+
+    // Manipulierte Werte beenden die Verbindung und werden nicht übernommen
+    let hello = || frame(r#"{"t":"Hello","v":2,"total":0}"#);
+    for bad in [
+        r#"{"t":"Storage","total":100,"free":200}"#,
+        r#"{"t":"Storage","total":0,"free":0}"#,
+        r#"{"t":"Storage","total":2305843009213693952,"free":1}"#,
+        r#"{"t":"Storage","total":-5,"free":1}"#,
+        r#"{"t":"Storage","total":100,"free":1,"pfad":"/home"}"#,
+    ] {
+        let (_, open) = exchange(&ep, &a, vec![hello(), frame(bad)], Duration::from_secs(2)).await;
+        assert!(!open, "{bad} muss zur Trennung führen");
+        assert_eq!(device_storage(&a, "C").await.1, None, "{bad} darf nicht übernommen werden");
+    }
+    // Gültige Meldung wird übernommen, eine zweite sofort danach verworfen (Ratenbegrenzung)
+    let (_, open) = exchange(
+        &ep,
+        &a,
+        vec![
+            hello(),
+            frame(r#"{"t":"Storage","total":1000000,"free":250000}"#),
+            frame(r#"{"t":"Storage","total":999,"free":1}"#),
+        ],
+        Duration::from_secs(1),
+    )
+    .await;
+    assert!(open);
+    let s = device_storage(&a, "C").await.1.expect("gültige Meldung übernommen");
+    assert_eq!((s.total, s.free), (1_000_000, 250_000));
+
+    // Recht entzogen: keine Verbindung mehr, also auch kein Speicher mehr
+    assert!(matches!(
+        a.request(Request::PairRevoke { device: "C".into(), capability: "catalog.read".into(), folder: None }).await,
+        Response::Success { .. }
+    ));
+    let reason = send_raw(&ep, &a, vec![hello()]).await;
+    assert!(reason.contains("not paired"), "{reason}");
+    // Entkoppeln vergisst den gemeldeten Speicher
+    assert!(matches!(a.request(Request::PairRemove { device: "C".into() }).await, Response::Success { .. }));
+    match a.request(Request::PairList).await {
+        Response::Devices { devices } => assert!(devices.iter().all(|d| d.name != "C")),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(a.request(Request::Info).await, Response::Info(_)));
+    ep.close().await;
+    stranger.close().await;
+    a.shutdown().await;
+}
