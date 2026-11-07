@@ -17,9 +17,10 @@ import type { Theme } from './theme';
 import { isMedia, isVideo, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
 import Editor from './Editor';
+import RemoteBrowser, { type RemoteDevice } from './RemoteBrowser';
 import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
-import Viewer from './Viewer';
+import Viewer, { type MediaItem } from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
 interface Props {
@@ -79,7 +80,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [pdf, setPdf] = useState<{ path: string; name: string } | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
-  const [viewer, setViewer] = useState<{ items: Item[]; start: number } | null>(null);
+  const [viewer, setViewer] = useState<{ items: MediaItem[]; start: number } | null>(null);
+  // Geöffnetes anderes Gerät (Startseite → Gerät antippen)
+  const [remoteDev, setRemoteDev] = useState<RemoteDevice | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
   const [folders, setFolders] = useState<[string, string][]>([]);
   // Gekoppelte Geräte mit gemeldetem Speicher (Startseite)
@@ -110,6 +113,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     setSel(new Set());
     setMenu(null);
     setClip(null);
+    setRemoteDev(null);
     setPath((p) => {
       if (p !== null) {
         setDir('back');
@@ -273,6 +277,19 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       setViewer({ items: files, start: Math.max(0, files.findIndex((x) => x.path === e.path)) });
     } else {
       core.openFile(e.path).catch(fail);
+    }
+  };
+
+  /** Datei (z. B. von einem anderen Gerät heruntergeladen) mit den eingebauten Anzeigen öffnen. */
+  const openPath = (path: string, name: string) => {
+    if (isText(name)) {
+      setTextFile({ path, name });
+    } else if (/\.pdf$/i.test(name)) {
+      setPdf({ path, name });
+    } else if (isMedia(name)) {
+      setViewer({ items: [{ path, name }], start: 0 });
+    } else {
+      core.openFile(path).catch(fail);
     }
   };
 
@@ -550,7 +567,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
           {remote.map((d) => {
             const used = d.storage ? d.storage.total - d.storage.free : 0;
             return (
-              <View key={d.node_id} style={[s.card, s.deviceCard, !d.online && s.dim]} accessibilityLabel={d.name}>
+              <Tap key={d.node_id} theme={theme} onPress={() => setRemoteDev(d)} style={[s.card, s.deviceCard, !d.online && s.dim]} label={d.name}>
                 <View style={s.cardRow}>
                   <View style={[s.driveIcon, s.deviceIcon, { backgroundColor: theme.accentSoft }]}>
                     <Text style={[s.deviceGlyph, { color: theme.accent }]}>⌁</Text>
@@ -571,8 +588,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
                       </View>
                     )}
                   </View>
+                  <Text style={s.chev}>›</Text>
                 </View>
-              </View>
+              </Tap>
             );
           })}
           {folders.length > 0 && <Text style={s.section}>{t('Standardordner')}</Text>}
@@ -880,6 +898,18 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         </View>
       </Modal>
 
+      {remoteDev && (
+        <View style={StyleSheet.absoluteFill}>
+          <RemoteBrowser
+            device={remoteDev}
+            theme={theme}
+            notify={notify}
+            onClose={() => setRemoteDev(null)}
+            onOpen={openPath}
+            onStream={(uri, name) => setViewer({ items: [{ path: '', name, uri }], start: 0 })}
+          />
+        </View>
+      )}
       {textFile && <TextViewer path={textFile.path} name={textFile.name} theme={theme} onClose={() => setTextFile(null)} />}
       {pdf && <PdfViewer path={pdf.path} name={pdf.name} onClose={() => setPdf(null)} />}
       {viewer && (

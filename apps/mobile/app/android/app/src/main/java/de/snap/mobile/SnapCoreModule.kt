@@ -376,6 +376,12 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     VideoEdit.cancel()
   }
 
+  /** Cache-Ordner der App (für geöffnete Dateien anderer Geräte). */
+  @ReactMethod
+  fun cacheDir(promise: Promise) {
+    promise.resolve(ctx.cacheDir.absolutePath)
+  }
+
   /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
   @ReactMethod
   fun printFile(path: String, promise: Promise) {

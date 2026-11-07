@@ -81,6 +81,16 @@ pub struct BrowseCursor {
 
 pub const MAX_BROWSE_LIMIT: u32 = 500;
 
+/// Eine Seite eines Ordners im Katalog eines anderen Geräts.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct RemoteDirPage {
+    /// Direkte Unterordner (in der Wurzel: Freigaben).
+    pub dirs: Vec<String>,
+    pub files: Vec<CatalogItem>,
+    /// Fortsetzung für die nächste Seite (`after`).
+    pub next: Option<String>,
+}
+
 /// Ein Eintrag im Katalog, egal ob lokal oder auf einem anderen Gerät.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct CatalogItem {
@@ -197,6 +207,19 @@ pub enum Request {
     Info,
     /// Katalog seitenweise abfragen (für Oberflächen).
     Browse(BrowseQuery),
+    /// Ordner im Katalog eines gekoppelten Geräts (lokale Kopie): Unterordner und Dateien.
+    /// `share = None`: Wurzel (Freigaben und einzeln geteilte Dateien). Nur lokal.
+    RemoteDir {
+        device: String,
+        #[serde(default)]
+        share: Option<String>,
+        #[serde(default)]
+        dir: String,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        limit: u32,
+    },
     /// Ereignisse abonnieren: Die Verbindung bleibt offen, der Daemon sendet
     /// fortlaufend `Response::Event`.
     Subscribe,
@@ -527,6 +550,7 @@ pub enum Response {
         pin: PinInfo,
         queued: usize,
     },
+    RemoteDir(RemoteDirPage),
     BrowsePage {
         items: Vec<CatalogItem>,
         total: u64,

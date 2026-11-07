@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
@@ -627,6 +627,12 @@ impl DatabaseManager {
                     last_snapshot TEXT
                 );
                 ",
+            )?;
+        }
+        if version < 11 {
+            // Migration -> 11: Ordneransicht fremder Geräte (Sprünge im Pfadindex statt Scan).
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_ledger_tree ON ledger_entries(origin, share, rel_path) WHERE deleted = 0;",
             )?;
         }
         if version > 0 && version < 3 {
@@ -1457,6 +1463,141 @@ impl DatabaseManager {
             .query_map(params![self_origin, share, rel_path], Self::map_remote)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Ein Ordner im Katalog eines anderen Geräts: direkte Unterordner und Dateien, sortiert nach
+    /// Pfad (Byte-Reihenfolge). `share = None`: Wurzel – Freigaben als Ordner, dazu einzeln
+    /// geteilte Dateien. `after`: Fortsetzung (`next` der vorigen Seite).
+    ///
+    /// Statt alle Einträge unter dem Ordner zu lesen, springt die Abfrage im Index
+    /// `idx_ledger_tree` von Kind zu Kind: ein Unterordner kostet einen Indexzugriff, egal wie
+    /// viele Dateien er enthält.
+    pub fn remote_dir(
+        &self,
+        origin: &str,
+        share: Option<&str>,
+        dir: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::ipc::RemoteDirPage> {
+        let conn = self.read();
+        let mut page = crate::ipc::RemoteDirPage::default();
+        let limit = limit.max(1);
+        let Some(share) = share else {
+            // Wurzel: erst die Freigaben (Sprung von Name zu Name), dann einzelne Dateien.
+            // Fortsetzung: "s:<freigabe>" bzw. "f:<rel_path>\0".
+            let mut cursor = match after {
+                None => Some(String::from("\0")),
+                Some(a) => a.strip_prefix("s:").map(str::to_owned),
+            };
+            if let Some(c) = cursor.as_mut() {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT share FROM ledger_entries WHERE deleted = 0 AND origin = ?1 AND share >= ?2
+                     ORDER BY share LIMIT 1",
+                )?;
+                loop {
+                    let next: Option<String> = stmt.query_row(params![origin, c.as_str()], |r| r.get(0)).optional()?;
+                    let Some(name) = next else { break };
+                    if page.dirs.len() + page.files.len() >= limit {
+                        page.next = Some(format!("s:{name}"));
+                        return Ok(page);
+                    }
+                    *c = format!("{name}\0");
+                    page.dirs.push(name);
+                }
+            }
+            let start = match after.and_then(|a| a.strip_prefix("f:")) {
+                Some(f) => f.to_owned(),
+                None => String::new(),
+            };
+            Self::single_files_from(&conn, origin, &start, limit, &mut page)?;
+            return Ok(page);
+        };
+        let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+        // Obergrenze: alles, was mit `prefix` beginnt, liegt vor `dir + "0"` ('0' folgt auf '/').
+        let upper = if dir.is_empty() { None } else { Some(format!("{dir}0")) };
+        let mut cursor = after.map(str::to_owned).unwrap_or_else(|| prefix.clone());
+        // Obergrenze fest in der Abfrage (nicht "?4 IS NULL OR …"), sonst nutzt SQLite sie nicht
+        // für den Indexbereich und liest nach dem letzten Kind alle folgenden Einträge.
+        // Ohne Ordner (Freigabe-Wurzel) gilt: Freigabe-Name ist im Index die obere Grenze.
+        let upper = upper.unwrap_or_else(|| String::from("\u{10FFFF}"));
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT {} FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
+             WHERE l.deleted = 0 AND l.origin = ?1 AND l.share = ?2 AND l.rel_path >= ?3 AND l.rel_path < ?4
+             ORDER BY l.rel_path LIMIT 1",
+            Self::TREE_COLUMNS
+        ))?;
+        loop {
+            let row =
+                stmt.query_row(params![origin, share, cursor.as_str(), upper.as_str()], Self::map_tree).optional()?;
+            let Some(item) = row else { break };
+            let rel = item.rel_path.clone().unwrap_or_default();
+            let Some(rest) = rel.strip_prefix(&prefix) else { break };
+            if page.dirs.len() + page.files.len() >= limit {
+                page.next = Some(rel);
+                break;
+            }
+            match rest.find('/') {
+                Some(i) => {
+                    let seg = &rest[..i];
+                    // Alles in diesem Unterordner überspringen (liegt vor "<seg>0").
+                    cursor = format!("{prefix}{seg}0");
+                    if !seg.is_empty() {
+                        page.dirs.push(seg.to_owned());
+                    }
+                }
+                None => {
+                    cursor = format!("{rel}\0");
+                    page.files.push(item);
+                }
+            }
+        }
+        Ok(page)
+    }
+
+    const TREE_COLUMNS: &'static str =
+        "l.origin, d.name, l.hash, l.name, l.size, l.created_at, NULLIF(l.share, ''), NULLIF(l.rel_path, '')";
+
+    fn map_tree(r: &rusqlite::Row<'_>) -> rusqlite::Result<crate::ipc::CatalogItem> {
+        Ok(crate::ipc::CatalogItem {
+            origin: r.get(0)?,
+            origin_name: r.get(1)?,
+            hash: r.get(2)?,
+            name: r.get(3)?,
+            size: r.get::<_, i64>(4)? as u64,
+            created_at: r.get(5)?,
+            path: None,
+            share: r.get(6)?,
+            rel_path: r.get(7)?,
+        })
+    }
+
+    /// Einzeln geteilte Dateien (ohne Freigabe) eines Geräts ab `start`, sortiert nach Hash.
+    fn single_files_from(
+        conn: &rusqlite::Connection,
+        origin: &str,
+        start: &str,
+        limit: usize,
+        page: &mut crate::ipc::RemoteDirPage,
+    ) -> Result<()> {
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT {} FROM ledger_entries l LEFT JOIN devices d ON d.node_id = l.origin
+             WHERE l.deleted = 0 AND l.origin = ?1 AND l.share = '' AND l.hash >= ?2
+             ORDER BY l.hash LIMIT ?3",
+            Self::TREE_COLUMNS
+        ))?;
+        let room = limit.saturating_sub(page.dirs.len() + page.files.len());
+        let rows = stmt
+            .query_map(params![origin, start, (room + 1) as i64], Self::map_tree)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for item in rows {
+            if page.dirs.len() + page.files.len() >= limit {
+                page.next = Some(format!("f:{}", item.hash));
+                break;
+            }
+            page.files.push(item);
+        }
+        Ok(())
     }
 
     /// Seitenweise Katalogabfrage über eigene und fremde Dateien, sortiert nach Name
@@ -2819,6 +2960,89 @@ mod tests {
         for e in expected {
             assert_eq!(sub.next().await.unwrap(), e);
         }
+    }
+
+    #[test]
+    fn remote_dir_lists_children_and_pages() {
+        let db = DatabaseManager::open_in_memory().unwrap();
+        let key = iroh::SecretKey::generate();
+        let origin = key.public().to_string();
+        let files: &[(&str, &str)] = &[
+            ("Fotos", "a.jpg"),
+            ("Fotos", "2024/x.jpg"),
+            ("Fotos", "2024/tief/y.jpg"),
+            ("Fotos", "2024.txt"),
+            ("Fotos", "2024-alt/z.jpg"),
+            ("Fotos", "b.jpg"),
+            ("Fotos", "/leer.jpg"),
+            ("Musik", "lied.mp3"),
+            ("", ""),
+        ];
+        let entries: Vec<LedgerEntry> = files
+            .iter()
+            .enumerate()
+            .map(|(i, (share, rel))| {
+                let i = i as i64;
+                let mut e = LedgerEntry {
+                    origin: origin.clone(),
+                    entry_id: i + 1,
+                    seq: i + 1,
+                    hash: format!("{:064x}", i),
+                    name: rel.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("einzeln.pdf").to_owned(),
+                    size: 1,
+                    created_at: 0,
+                    deleted: false,
+                    signature: String::new(),
+                    share: share.to_string(),
+                    rel_path: rel.to_string(),
+                };
+                e.signature = e.sign(&key);
+                e
+            })
+            .collect();
+        db.apply_remote_entries(&entries).unwrap();
+
+        // Wurzel: Freigaben als Ordner, dazu die einzeln geteilte Datei
+        let root = db.remote_dir(&origin, None, "", None, 100).unwrap();
+        assert_eq!(root.dirs, vec!["Fotos", "Musik"]);
+        assert_eq!(root.files.len(), 1);
+        assert_eq!(root.files[0].name, "einzeln.pdf");
+        assert!(root.next.is_none());
+        // Seitenweise in der Wurzel: 1 + 1 + 1
+        let p1 = db.remote_dir(&origin, None, "", None, 1).unwrap();
+        assert_eq!((p1.dirs.clone(), p1.files.len()), (vec!["Fotos".to_owned()], 0));
+        let p2 = db.remote_dir(&origin, None, "", p1.next.as_deref(), 1).unwrap();
+        assert_eq!(p2.dirs, vec!["Musik"]);
+        let p3 = db.remote_dir(&origin, None, "", p2.next.as_deref(), 1).unwrap();
+        assert_eq!((p3.dirs.len(), p3.files.len(), p3.next.clone()), (0, 1, None));
+
+        // Freigabe: Unterordner einmal, Dateien direkt darin; leere Teile werden übergangen
+        let top = db.remote_dir(&origin, Some("Fotos"), "", None, 100).unwrap();
+        // Reihenfolge nach Bytes ('-' < '.' < '/'); die Oberfläche sortiert selbst
+        assert_eq!(top.dirs, vec!["2024-alt", "2024"]);
+        let names: Vec<_> = top.files.iter().map(|f| f.rel_path.clone().unwrap()).collect();
+        assert_eq!(names, vec!["2024.txt", "a.jpg", "b.jpg"]);
+        let sub = db.remote_dir(&origin, Some("Fotos"), "2024", None, 100).unwrap();
+        assert_eq!(sub.dirs, vec!["tief"]);
+        assert_eq!(sub.files.len(), 1);
+        assert_eq!(sub.files[0].name, "x.jpg");
+
+        // Seitenweise: jede Seite setzt genau dort fort, nichts doppelt oder verloren
+        let mut seen = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let p = db.remote_dir(&origin, Some("Fotos"), "", after.as_deref(), 2).unwrap();
+            seen.extend(p.dirs.iter().cloned());
+            seen.extend(p.files.iter().map(|f| f.rel_path.clone().unwrap()));
+            match p.next {
+                Some(n) => after = Some(n),
+                None => break,
+            }
+        }
+        seen.sort();
+        assert_eq!(seen, vec!["2024", "2024-alt", "2024.txt", "a.jpg", "b.jpg"]);
+        // Fremdes Gerät: leer
+        assert_eq!(db.remote_dir("unbekannt", None, "", None, 10).unwrap(), Default::default());
     }
 
     #[test]

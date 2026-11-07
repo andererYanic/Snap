@@ -118,6 +118,42 @@ pub(crate) fn catalog(inner: &DaemonInner) -> Result<Response> {
     })
 }
 
+/// Ordner im Katalog eines gekoppelten Geräts (aus der lokalen Kopie, ohne Netzwerk).
+pub(crate) fn remote_dir(
+    inner: &DaemonInner,
+    device: &str,
+    share: Option<String>,
+    dir: &str,
+    after: Option<String>,
+    limit: u32,
+) -> Result<Response> {
+    use crate::ipc::MAX_BROWSE_LIMIT;
+    let found = inner.db.find_devices(device)?;
+    let node = match found.as_slice() {
+        [d] => d.node_id.clone(),
+        [] => api_bail!(NotFound, "Kein gekoppeltes Gerät '{device}'"),
+        _ => api_bail!(Ambiguous, "Gerät '{device}' ist mehrdeutig"),
+    };
+    let bad = |s: &str| s.len() > 4096 || s.contains('\0');
+    if share.as_deref().is_some_and(bad) || bad(dir) || after.as_deref().is_some_and(|a| a.len() > 8192) {
+        api_bail!(InvalidInput, "Ungültiger Pfad");
+    }
+    // Ordnerpfad normalisieren: ohne führende/abschließende '/', keine leeren Teile, kein "..".
+    let dir = dir.trim_matches('/');
+    if dir.split('/').any(|p| p.is_empty() || p == "." || p == "..") && !dir.is_empty() {
+        api_bail!(InvalidInput, "Ungültiger Pfad");
+    }
+    if share.is_none() && !dir.is_empty() {
+        api_bail!(InvalidInput, "Ordner nur innerhalb einer Freigabe");
+    }
+    let limit = match limit {
+        0 => 200,
+        n => n.min(MAX_BROWSE_LIMIT),
+    } as usize;
+    let page = inner.db.remote_dir(&node, share.as_deref(), dir, after.as_deref(), limit)?;
+    Ok(Response::RemoteDir(page))
+}
+
 /// Seitenweise Katalogabfrage für Oberflächen.
 pub(crate) fn browse(inner: &DaemonInner, q: crate::ipc::BrowseQuery) -> Result<Response> {
     use crate::ipc::MAX_BROWSE_LIMIT;

@@ -26,6 +26,8 @@ import { m } from './motion';
 export interface MediaItem {
   path: string;
   name: string;
+  /** Statt `file://path` (z. B. gestreamtes Video eines anderen Geräts). */
+  uri?: string;
 }
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -102,14 +104,16 @@ export default function Viewer({ items, start, onClose, onEdit }: {
               <Text style={styles.title} numberOfLines={1}>{item.name}</Text>
               <Text style={styles.counter}>{`${index + 1} / ${items.length}`}</Text>
             </View>
-            {onEdit && (
+            {onEdit && !item.uri && (
               <Pressable onPress={() => onEdit(item)} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Bearbeiten')}>
                 <Text style={styles.btnSmall}>{t('Bearbeiten')}</Text>
               </Pressable>
             )}
-            <Pressable onPress={() => core.shareFiles([item.path]).catch(() => {})} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Teilen')}>
-              <Text style={styles.btnSmall}>{t('Teilen')}</Text>
-            </Pressable>
+            {!item.uri && (
+              <Pressable onPress={() => core.shareFiles([item.path]).catch(() => {})} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Teilen')}>
+                <Text style={styles.btnSmall}>{t('Teilen')}</Text>
+              </Pressable>
+            )}
             <Pressable onPress={() => core.openFile(item.path).catch(() => {})} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Öffnen mit …')}>
               <Text style={styles.btnSmall}>⋯</Text>
             </Pressable>
@@ -241,7 +245,7 @@ function VideoPage({ item, active }: { item: MediaItem; active: boolean }) {
         </View>
       ) : (
         <Video
-          source={{ uri: `file://${item.path}` }}
+          source={{ uri: item.uri ?? `file://${item.path}` }}
           style={styles.media}
           resizeMode="contain"
           paused={!active}

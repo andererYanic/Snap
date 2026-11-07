@@ -1078,6 +1078,17 @@ fn print_response(res: Response) -> ExitCode {
             );
             println!("   {queued} Datei(en) werden geladen; neue und geänderte Dateien folgen automatisch.");
         }
+        Response::RemoteDir(page) => {
+            for d in &page.dirs {
+                println!("{:<14} {:>10}  {d}/", "", "");
+            }
+            for f in &page.files {
+                println!("{:<14} {:>10}  {}", short(&f.hash, 12), human_size(f.size), f.name);
+            }
+            if page.next.is_some() {
+                println!("… weitere Einträge");
+            }
+        }
         Response::BrowsePage { items, total, .. } => {
             for i in &items {
                 let wo = i.origin_name.clone().or_else(|| i.origin.as_deref().map(|o| short(o, 10).to_string()));

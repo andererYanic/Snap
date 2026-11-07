@@ -177,6 +177,11 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   privaten App-Ordner, geschützt durch die Android-Sandbox.
 - Die Oberfläche ist mitgelieferter nativer Code (React Native). Feindliche Dateinamen werden als
   Text dargestellt, nicht als HTML. Folgenreiches bestätigt die App trotzdem in nativen Dialogen.
+- Ordneransicht anderer Geräte (`RemoteDir`) ist nur lokal erlaubt und liest die eigene Kopie des
+  signierten Katalogs; Pfade dort sind feindlich: leere Teile werden übergangen, Eingaben auf Länge
+  und NUL geprüft, `..` abgelehnt. Beim Öffnen wird der Zielname im Cache aus dem fremden Namen
+  bereinigt (ein Pfadteil, ohne `/`, `\`, Steuerzeichen, nicht `.`/`..`), der Ordner kommt aus dem
+  geprüften Hash – fremde Namen können so nicht aus dem Cache-Ordner heraus schreiben.
 - Bild- und Videobearbeitung laufen nur auf dem Gerät (Android-Dekoder bzw. Media3 Transformer).
   Pfade aus der Oberfläche werden geprüft (absolut, ohne `..`, reguläre Datei); Ergebnisse werden
   nie über bestehende Dateien geschrieben (`createNewFile`), „Original ersetzen“ läuft über den Kern
