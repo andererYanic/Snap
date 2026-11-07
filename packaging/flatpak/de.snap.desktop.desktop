@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Snap
+GenericName=File Manager
+GenericName[de]=Dateimanager
+Comment=Private file manager that connects your own devices
+Comment[de]=Privater Dateimanager, der deine eigenen Geräte verbindet
+Exec=snap-desktop
+Icon=de.snap.desktop
+Terminal=false
+Categories=System;FileTools;FileManager;
+Keywords=files;sync;backup;p2p;
+Keywords[de]=Dateien;Abgleich;Sicherung;p2p;
+StartupWMClass=snap-desktop

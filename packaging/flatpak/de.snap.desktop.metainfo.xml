@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>de.snap.desktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Snap</name>
+  <summary>Private file manager that connects your own devices</summary>
+  <summary xml:lang="de">Privater Dateimanager, der deine eigenen Geräte verbindet</summary>
+  <description>
+    <p>Snap shows the files of all your devices in one place – directly between your devices,
+      without a cloud account. Includes a fast file manager, a photo timeline, encrypted backups
+      and end-to-end encrypted share links.</p>
+    <p xml:lang="de">Snap zeigt die Dateien all deiner Geräte an einem Ort – direkt zwischen den
+      Geräten, ohne Cloud-Konto. Mit schnellem Dateimanager, Foto-Zeitachse, verschlüsselten
+      Sicherungen und Ende-zu-Ende-verschlüsselten Freigabelinks.</p>
+  </description>
+  <launchable type="desktop-id">de.snap.desktop.desktop</launchable>
+  <url type="homepage">https://github.com/andererYanic/Snap</url>
+  <url type="bugtracker">https://github.com/andererYanic/Snap/issues</url>
+  <developer id="de.snap">
+    <name>Snap</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <releases>
+    <release version="0.1.0" date="2026-11-07"/>
+  </releases>
+</component>

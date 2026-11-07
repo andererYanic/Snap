@@ -1,0 +1,61 @@
+# Flatpak der Desktop-App (App + Dienst `space-daemon` in einem Paket).
+# Bauen: flatpak-builder --force-clean --user --install build packaging/flatpak/de.snap.desktop.yml
+#
+# Hinweis: Der Bau lädt Rust-Crates und npm-Pakete aus dem Netz (`--share=network` beim Bauen).
+# Für GitHub-Releases genügt das; für Flathub müssen die Quellen vorab erzeugt werden
+# (flatpak-cargo-generator / flatpak-node-generator) – siehe docs/PACKAGING.md.
+id: de.snap.desktop
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node22
+command: snap-desktop
+finish-args:
+  # Fenster und Grafik
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Peer-to-Peer zwischen den eigenen Geräten
+  - --share=network
+  # Dateimanager: Zugriff auf die Dateien des Nutzers (wie andere Dateimanager auf Flathub)
+  - --filesystem=host
+  # Benachrichtigungen (z. B. abgeschlossene Sicherungen)
+  - --talk-name=org.freedesktop.Notifications
+modules:
+  - name: snap
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+      build-args:
+        - --share=network
+      env:
+        CARGO_HOME: /run/build/snap/cargo-home
+        CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+        npm_config_cache: /run/build/snap/npm-cache
+    build-commands:
+      # Oberfläche
+      - cd apps/desktop && npm ci --no-fund --no-audit && npm run build
+      # Dienst und App (App mit eingebetteter Oberfläche statt Entwicklungsserver)
+      - cargo build --release --locked -p space-daemon
+      - cd apps/desktop/src-tauri && cargo build --release --locked --features custom-protocol
+      - install -Dm755 target/release/space-daemon /app/bin/space-daemon
+      - install -Dm755 apps/desktop/src-tauri/target/release/snap-desktop /app/bin/snap-desktop
+      - install -Dm644 packaging/flatpak/de.snap.desktop.desktop /app/share/applications/de.snap.desktop.desktop
+      - install -Dm644 packaging/flatpak/de.snap.desktop.metainfo.xml /app/share/metainfo/de.snap.desktop.metainfo.xml
+      - install -Dm644 apps/desktop/src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/de.snap.desktop.png
+      - install -Dm644 apps/desktop/src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/de.snap.desktop.png
+      - install -Dm644 LICENSE /app/share/licenses/de.snap.desktop/LICENSE
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - apps/desktop/node_modules
+          - apps/desktop/dist
+          - apps/desktop/src-tauri/target
+          - apps/mobile
+          - .flatpak-builder
+          - build
