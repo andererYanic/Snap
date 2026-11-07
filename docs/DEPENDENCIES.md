@@ -26,6 +26,9 @@ davon über Iroh.
 | `directories` | XDG-Pfade | Klein. Update auf v6 möglich. |
 | `libc` | 6 Systemaufrufe (s. `SECURITY_MODEL.md`, `unsafe`) | Standard |
 
+| `zip` (nur `aes-crypto`, `deflate-flate2`, `deflate64`) | ZIP entpacken inkl. AES-Passwort | Aktiv gepflegt (zip-rs). Ohne Standardfunktionen gebaut: kein bzip2/zstd/xz (C-Code bzw. unnötig). Fuzz-Ziel `archive_extract`. |
+| `flate2` (Backend `miniz_oxide`) | Deflate/gzip | Standard, reines Rust-Backend. |
+| `tar` (ohne `xattr`) | tar/tar.gz entpacken | Etabliert (alexcrichton). Wir nutzen nur das Lesen der Einträge, nicht `unpack()`; Pfade und Typen prüft Snap selbst. |
 | `uniffi` (nur `apps/mobile/core-ffi`) | Kotlin-Anbindung des Kerns für Android | Von Mozilla, in Firefox für Android im Einsatz. Bringt zum Erzeugen der Anbindung `askama` und `basic-toml` mit (nur Bauzeit; `basic-toml` als „unmaintained“ gemeldet, ohne bekannte Lücke). |
 
 **Android-App (npm, Prüfung per `npm audit` in der CI):**
