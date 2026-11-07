@@ -596,3 +596,22 @@ Messung (`perf.rs::local_index_million`, Release, 1 Mio. Einträge):
 | „vertrag“ + nur PDF, keine Treffer (ungünstigster Fall) | 87 ms | **24 ms** |
 | übrige Suchen (exakt, Tippfehler) | 1–9 ms | 1–9 ms (unverändert) |
 | 1 Mio. Einträge einfügen + Index | – | 8,2 s |
+
+## Review 31 – Große Ordner: Cursor und Zwischenspeicher (2026-11-07)
+
+`ListDir` kennt jetzt einen Cursor (`after`/`next`): Seiten bleiben stabil, auch wenn sich der
+Ordner zwischen zwei Seiten ändert. Gemessen zeigte sich, dass bei sehr großen Ordnern nicht das
+Sortieren, sondern `readdir` die Zeit kostet. Daher werden Ordner ab 5 000 (bis 200 000) Einträgen
+sortiert zwischengespeichert (höchstens 4), gültig solange die Änderungszeit des Ordners gleich
+bleibt; frisch geänderte Ordner (< 3 s, grobe Zeitstempel z. B. auf FAT) werden nicht gespeichert.
+
+Messung (`perf.rs::explorer_paging_large_folder`, Release, 100 000 Dateien):
+
+| Seite | vorher | nachher |
+|---|---|---|
+| erste Seite (kalt) | 56 ms | 49–73 ms (readdir, schwankt mit dem Datenträger) |
+| Seite ab 50 000, per Position | 44 ms | 0,13 ms aus dem Zwischenspeicher |
+| Folgeseite per Cursor | – | **0,13 ms** |
+
+Die erste Seite eines riesigen Ordners bleibt eine asynchrone Abfrage im Hintergrund (die
+Oberfläche blockiert nicht); erneutes Öffnen und Weiterblättern sind sofort da.

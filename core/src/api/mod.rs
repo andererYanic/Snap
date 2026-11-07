@@ -94,8 +94,8 @@ pub(crate) async fn handle_request(
         }
         Request::Search { query, filter, limit } => explorer::search(inner, query, filter, limit).await,
         Request::ReadDocx { path, image_dir } => read_docx(path, image_dir).await,
-        Request::ListDir { path, show_hidden, offset, limit } => {
-            explorer::list_dir(path, show_hidden, offset, limit).await
+        Request::ListDir { path, show_hidden, offset, limit, after } => {
+            explorer::list_dir(path, show_hidden, offset, limit, after).await
         }
         Request::IndexRoots => explorer::index_roots(inner),
         Request::IndexAdd { path } => explorer::index_add(inner, &path).await,

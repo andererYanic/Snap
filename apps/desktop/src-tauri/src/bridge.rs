@@ -202,7 +202,7 @@ mod tests {
             return;
         };
         let d = Daemon { socket: sock.into() };
-        let req = || Request::ListDir { path: dir.clone().into(), show_hidden: false, offset: 0, limit: 2000 };
+        let req = || Request::ListDir { path: dir.clone().into(), show_hidden: false, offset: 0, limit: 2000, after: None };
         d.request(req()).await.unwrap();
         let n = 50;
         let t = std::time::Instant::now();

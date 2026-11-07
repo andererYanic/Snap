@@ -117,7 +117,8 @@ async fn explorer_inputs_and_rights() {
     std::fs::write(dir.join(".versteckt"), b"x").unwrap();
 
     // Seitenweises Lesen, versteckte nur auf Wunsch
-    let page = |offset, limit, show_hidden| Request::ListDir { path: dir.clone(), show_hidden, offset, limit };
+    let page =
+        |offset, limit, show_hidden| Request::ListDir { path: dir.clone(), show_hidden, offset, limit, after: None };
     match d.request(page(20, 10, false)).await {
         Response::DirListing { entries, total, .. } => {
             assert_eq!(total, 25);
@@ -131,9 +132,10 @@ async fn explorer_inputs_and_rights() {
     );
 
     // Ungültige Eingaben
-    let rel = Request::ListDir { path: "relativ".into(), show_hidden: false, offset: 0, limit: 10 };
+    let rel = Request::ListDir { path: "relativ".into(), show_hidden: false, offset: 0, limit: 10, after: None };
     assert_eq!(code(&d.request(rel).await), Some(ErrorCode::InvalidInput));
-    let missing = Request::ListDir { path: tmp.path().join("fehlt"), show_hidden: false, offset: 0, limit: 10 };
+    let missing =
+        Request::ListDir { path: tmp.path().join("fehlt"), show_hidden: false, offset: 0, limit: 10, after: None };
     assert_eq!(code(&d.request(missing).await), Some(ErrorCode::NotFound));
     assert_eq!(code(&d.request(Request::IndexAdd { path: "relativ".into() }).await), Some(ErrorCode::InvalidInput));
     let file = Request::IndexAdd { path: dir.join("datei-01.txt") };

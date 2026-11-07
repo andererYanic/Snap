@@ -160,7 +160,7 @@ mod permissions {
             Request::PairRevoke { device: "x".into(), capability: "files.read".into(), folder: None },
             Request::Audit { limit: 10 },
             Request::Search { query: "passwort".into(), filter: Default::default(), limit: 10 },
-            Request::ListDir { path: "/".into(), show_hidden: true, offset: 0, limit: 10 },
+            Request::ListDir { path: "/".into(), show_hidden: true, offset: 0, limit: 10, after: None },
             Request::IndexRoots,
             Request::IndexAdd { path: "/".into() },
             Request::IndexRemove { id: 1 },
