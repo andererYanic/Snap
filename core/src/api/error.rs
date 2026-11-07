@@ -30,6 +30,8 @@ pub enum ErrorCode {
     Cancelled,
     /// Operation wartet auf Bestätigung am Zielgerät (Massenschutz).
     NeedsApproval,
+    /// Archiv ist verschlüsselt: Passwort fehlt oder ist falsch.
+    PasswordRequired,
     /// Unerwarteter interner Fehler.
     Internal,
 }

@@ -1,9 +1,10 @@
 // Geräte (Status, Koppeln per Code) und „Mehr“ (Papierkorb, Einstellungen).
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
-import { request } from './core';
+import { request, shortDate } from './core';
 import { LANGUAGES, lang, locale, setLanguage, t } from './i18n';
 import type { Theme } from './theme';
+import { themed } from './ui';
 
 interface Device { node_id: string; name: string; paired_at: number; grants: { capability: string; folder: string | null }[] }
 
@@ -69,7 +70,7 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
           <View style={s.grow}>
             <Text style={s.strong}>{d.name}</Text>
             <Text style={s.muted}>
-              {online.has(d.node_id) ? t('Verbunden') : t('Nicht verbunden')} · {t('gekoppelt am {date}', { date: new Date(d.paired_at * 1000).toLocaleDateString(locale()) })}
+              {online.has(d.node_id) ? t('Verbunden') : t('Nicht verbunden')} · {t('gekoppelt am {date}', { date: shortDate(d.paired_at, locale()) })}
             </Text>
           </View>
           <Pressable onPress={() => unpair(d)} style={s.btnSmall} accessibilityLabel={t('Entkoppeln')}>
@@ -152,7 +153,7 @@ export function More({ theme, notify, material, setMaterial, materialAvailable }
   );
 }
 
-const styles = (th: Theme) =>
+const styles = themed((th: Theme) =>
   StyleSheet.create({
     page: { padding: 16, paddingBottom: 40 },
     h2: { color: th.text, fontSize: 18, fontWeight: '600', marginTop: 12, marginBottom: 8 },
@@ -177,4 +178,4 @@ const styles = (th: Theme) =>
     chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
     chip: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 22, backgroundColor: th.accentSoft },
     chipOn: { backgroundColor: th.accent },
-  });
+  }));

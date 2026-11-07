@@ -46,6 +46,11 @@ ring = "0.17"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# Entpacken: nur reine Rust-Teile (Deflate über miniz_oxide, Deflate64, AES); kein C-Code für
+# fremde Archive. tar ohne xattr (keine erweiterten Attribute aus Archiven übernehmen).
+zip = { version = "9.4", default-features = false, features = ["aes-crypto", "deflate-flate2", "deflate64"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tar = { version = "0.4", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

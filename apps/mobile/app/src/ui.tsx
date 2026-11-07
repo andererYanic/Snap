@@ -2,6 +2,8 @@
 // untere Auswahlfläche (Bottom Sheet), tippbare Zeile mit Rückmeldung.
 import type { ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { fadeIn, m, sheetIn } from './motion';
 import type { Theme } from './theme';
 
 const TYPE_COLORS: [RegExp, string, string][] = [
@@ -98,9 +100,12 @@ export function BottomSheet({ visible, title, actions, onClose, theme }: {
   visible: boolean; title?: string; actions: SheetAction[]; onClose: () => void; theme: Theme;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={g.scrim} onPress={onClose} accessibilityLabel="Schließen" />
-      <View style={[g.sheetBox, { backgroundColor: theme.dark ? '#24262e' : '#ffffff' }]}>
+    // Eigene Animation statt der trägen Fenster-Animation des Systems; Schließen ist sofort.
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
+      <Animated.View entering={m(fadeIn)} style={g.scrim}>
+        <Pressable style={g.fill} onPress={onClose} accessibilityLabel="Schließen" />
+      </Animated.View>
+      <Animated.View entering={m(sheetIn)} style={[g.sheetBox, { backgroundColor: theme.dark ? '#24262e' : '#ffffff' }]}>
         <View style={[g.grabber, { backgroundColor: theme.stroke }]} />
         {title ? <Text style={[g.sheetTitle, { color: theme.text2 }]}>{title}</Text> : null}
         {actions.map((a) => (
@@ -118,12 +123,25 @@ export function BottomSheet({ visible, title, actions, onClose, theme }: {
             <Text style={[g.sheetText, { color: a.danger ? theme.danger : theme.text }]}>{a.label}</Text>
           </Pressable>
         ))}
-      </View>
+      </Animated.View>
     </Modal>
   );
 }
 
 /** Tippbare Fläche mit Android-Rückmeldung (Welle). */
+/** Stil-Fabrik je Thema nur einmal ausführen (StyleSheet.create pro Renderlauf ist teuer). */
+export function themed<T>(make: (th: Theme) => T): (th: Theme) => T {
+  const cache = new WeakMap<Theme, T>();
+  return (th) => {
+    let v = cache.get(th);
+    if (!v) {
+      v = make(th);
+      cache.set(th, v);
+    }
+    return v;
+  };
+}
+
 export function Tap({ children, onPress, onLongPress, delayLongPress = 350, style, theme, label, disabled, selected }: {
   children: ReactNode; onPress?: () => void; onLongPress?: () => void; delayLongPress?: number; style?: any; theme: Theme; label?: string; disabled?: boolean; selected?: boolean;
 }) {
@@ -159,6 +177,7 @@ const g = StyleSheet.create({
   dots: { flexDirection: 'row', gap: 3 },
   dot: { width: 5, height: 5, borderRadius: 3 },
   scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  fill: { flex: 1 },
   sheetBox: { paddingBottom: 24, paddingTop: 8, borderTopLeftRadius: 24, borderTopRightRadius: 24 },
   grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, marginBottom: 8 },
   sheetTitle: { fontSize: 13, fontWeight: '600', paddingHorizontal: 24, paddingVertical: 8 },

@@ -116,6 +116,18 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   (Fuzz-Ziel `ops_request`). Restrisiko: Ein Prozess *desselben Benutzers* auf dem Zielgerät
   könnte zwischen Prüfung und Ausführung einen Symlink austauschen (TOCTOU) – lokale Prozesse
   desselben Benutzers liegen außerhalb des Bedrohungsmodells.
+- **Archive entpacken** (`fileops/archive.rs`, ZIP inkl. AES/ZipCrypto, tar, tar.gz): Archive
+  gelten als feindlich. Entpackt wird in einen versteckten Arbeitsordner, der erst am Ende unter
+  einem freien Namen sichtbar wird (Fehler/Abbruch hinterlassen nichts). Ein einziger Pfad mit
+  `..`, absolutem Anfang, Laufwerksangabe, NUL-Byte, zu langem Namen oder mehr als 64 Ebenen lehnt
+  das ganze Archiv ab. Verknüpfungen, Hardlinks und Gerätedateien werden nie angelegt, Rechte aus
+  dem Archiv (setuid …) nie übernommen, Dateien nur mit `create_new` geschrieben. Gegen Zip-Bomben:
+  ≤ 100 000 Einträge, entpackte Bytes ≤ freier Platz minus 512 MiB Reserve und ab 64 MiB höchstens
+  1000-fache Archivgröße – gemessen beim Schreiben, nicht aus den Kopfdaten. Passwörter erscheinen
+  nie in Protokollen. Nur reine Rust-Decoder (kein C-Code für fremde Archive). Fuzz-Ziel
+  `archive_extract` prüft die Invarianten. Vorerst nur lokal; Entpacken auf anderen Geräten folgt
+  mit eigenen Angriffstests. **Restrisiko:** ZipCrypto (altes ZIP-Verfahren) ist kryptografisch
+  schwach – betrifft nur die Vertraulichkeit solcher Archive, nicht Snap.
 - **Eingaben von außen:** Größenlimits (IPC 1 MiB, Ledger-Seite 1000 Einträge / 8 MiB,
   Pairing 64 KiB), Timeouts, Fuzzing aller Parser (`fuzz/`).
 - **Audit-Log:** abgelehnte und nicht-triviale Zugriffe fremder Geräte, entdoppelt und begrenzt.

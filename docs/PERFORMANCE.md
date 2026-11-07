@@ -446,3 +446,44 @@ Messung `core/tests/perf.rs` (Release, Index mit 1 Mio. Einträgen, kalter Cache
   im App-Cache (begrenzt auf 200 MB). Ein zweiter Aufruf liest nur noch die Cache-Datei; die App
   hält zusätzlich die URIs im Speicher und lädt die ersten 40 Bilder der Zeitachse vorab.
 - Animationen laufen über Reanimated auf dem UI-Thread, also unabhängig von JS-Last.
+
+## Review 20 – Archive entpacken (4e, 2026-11-07)
+
+Messung `core/tests/perf.rs` → `archive_extract` (Release):
+
+| Messung | Ergebnis |
+|---|---|
+| ZIP mit 5 000 Dateien à 2 KB (50 Ordner) | **81 ms** (16 µs je Datei) |
+| ZIP mit einer Datei, 200 MB (schwach komprimierbar) | **1,0 s** (≈ 206 MB/s) |
+
+- Entpacken läuft als Auftrag im Hintergrund (`spawn_blocking`) mit Fortschritt und Abbruch;
+  die Oberfläche wartet nie darauf. Prüfungen (Pfade, Grenzen) kosten neben dem Schreiben kaum
+  etwas.
+- Auf Telefonen rechnen wir grob mit einem Drittel bis einem Fünftel – also etwa 40–70 MB/s.
+- Geschrieben wird in 64-KiB-Blöcken; der Speicherbedarf bleibt unabhängig von der Archivgröße.
+
+## Review 21 – Android: Ruckler und träge Menüs (4h, 2026-11-07)
+
+Anlass: Der Nutzer meldete starke Bildeinbrüche und träge Menüs. Neue Messung im Emulator-CI
+(`apps/mobile/app/e2e/perf.sh`: Ordner mit 460 Dateien, Scrollen, Halten-und-Wischen, Menü;
+`dumpsys gfxinfo`).
+
+| Bildzeit | vorher | nachher |
+|---|---|---|
+| 50. Perzentil | 26 ms | 23 ms |
+| 90. / 99. Perzentil | 32 / 48 ms | 32 / 48 ms |
+| langsame UI-Thread-Bilder | 12 | 12 |
+
+- **Einordnung:** Der CI-Emulator rendert ohne Grafikkarte (SwiftShader); seine Bildzeiten sind
+  vom Zeichnen bestimmt und zeigen JS-Verbesserungen kaum. Auf dem Telefon des Nutzers ist es nach
+  dessen Rückmeldung „deutlich flüssiger“. Die Messung bleibt als Schutz vor Rückschritten.
+- Ursachen und Abhilfe: Bei jedem Renderlauf entstanden neue Themen- und Stilobjekte
+  (`StyleSheet.create` in jeder Zeile) → jetzt einmal je Thema. Beim Markieren wurde die ganze
+  Liste neu gezeichnet → memoisierte Zeilen. Jede Zeile war für eine Layout-Animation angemeldet,
+  jedes Vorschaubild hatte eine eigene Animation → entfernt bzw. native Einblendung. Datum und
+  Größe liefen bei jedem Zeichnen durch `toLocale…` (in Hermes teuer) → zwischengespeicherte
+  `Intl`-Formate. Scroll-Ereignisse 60-mal pro Sekunde in JS → nur am Ende einer Bewegung.
+- Suchfeld: ein einziges Eingabefeld für Startseite und Suche – die Tastatur bleibt beim ersten
+  Buchstaben offen (vorher schloss sie kurz).
+- **Offen:** Messung auf echter Hardware  wäre aussagekräftiger;
+  bis dahin zählt die Rückmeldung vom Gerät.

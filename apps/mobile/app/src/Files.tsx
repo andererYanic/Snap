@@ -4,23 +4,21 @@
 // - Markieren: lang halten – und ohne Loslassen über weitere Dateien wischen. Beim Loslassen
 //   erscheint das Menü dort, wo der Finger zuerst lag (wie bei iOS).
 // - Bilder und Videos öffnen in der eingebauten Anzeige, alles andere mit der passenden App.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  LinearTransition, runOnJS,
-} from 'react-native-reanimated';
+import Animated, { runOnJS } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
 import * as core from './core';
-import { humanSize, joinPath, parentOf, request, type DirEntry } from './core';
+import { humanSize, joinPath, parentOf, request, shortDate, type DirEntry } from './core';
 import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
-import { BottomSheet, Glyph, Tap, type SheetAction } from './ui';
+import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
 import Viewer from './Viewer';
-import { DUR, EASE_OUT, fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
+import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
 interface Props {
   theme: Theme;
@@ -58,6 +56,9 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   // bis alles abgewählt ist.
   const [barOn, setBarOn] = useState(false);
   const [clip, setClip] = useState<{ mode: 'copy' | 'move'; paths: string[] } | null>(null);
+  // Laufender langer Vorgang (Entpacken/Packen) und Passwortabfrage für verschlüsselte Archive
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pwAsk, setPwAsk] = useState<{ archive: string; rest: string[]; wrong: boolean; value: string } | null>(null);
   const [naming, setNaming] = useState<{ mode: 'folder' | 'file' | 'rename'; from?: string; value: string } | null>(null);
   const [sheet, setSheet] = useState<'create' | 'more' | 'selection' | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
@@ -272,6 +273,61 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     }
   };
 
+  // ------------------------------------------------------------ Archive
+  const ARCHIVE = /\.(zip|tar|tgz|tar\.gz)$/i;
+  const fileName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+
+  /** Entpackt Archive nacheinander; bei Passwortschutz wird gefragt und dort weitergemacht. */
+  const extractAll = async (archives: string[], password?: string) => {
+    setSel(new Set());
+    let done = 0;
+    let last = '';
+    for (let i = 0; i < archives.length; i++) {
+      const a = archives[i];
+      setBusy(t('„{name}“ wird entpackt …', { name: fileName(a) }));
+      try {
+        const r = await fileOp({ Extract: { archive: a, ...(i === 0 && password ? { password } : {}) } });
+        last = fileName(r?.outcome?.done?.[0]?.to ?? '');
+        done++;
+      } catch (e: any) {
+        setBusy(null);
+        if (e?.code === 'PasswordRequired') {
+          setPwAsk({ archive: a, rest: archives.slice(i + 1), wrong: i === 0 && !!password, value: '' });
+          if (done) {
+            load();
+          }
+          return;
+        }
+        load();
+        fail(e);
+        return;
+      }
+    }
+    setBusy(null);
+    load();
+    if (done === 1) {
+      undoable(t('Entpackt nach „{name}“.', { name: last }));
+    } else if (done > 1) {
+      notify(t('{n} Archive entpackt.', { n: done }));
+    }
+  };
+
+  const compressSel = async () => {
+    const paths = selected.map((e) => e.path);
+    setSel(new Set());
+    setBusy(t('{n} Einträge werden gepackt …', { n: paths.length }));
+    try {
+      const r = await fileOp({ Compress: { sources: paths } });
+      setBusy(null);
+      load();
+      undoable(t('„{name}“ erstellt.', { name: fileName(r?.outcome?.done?.[0]?.to ?? '') }));
+    } catch (e) {
+      setBusy(null);
+      load();
+      fail(e);
+    }
+  };
+
   const deleteForever = () => {
     const paths = selected.map((e) => e.path);
     Alert.alert(t('Endgültig löschen'), t('Diese {n} Elemente endgültig löschen? Das kann nicht rückgängig gemacht werden.', { n: paths.length }), [
@@ -415,14 +471,36 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     .onUpdate((e) => runOnJS(dragMove)(e.x, e.y))
     .onFinalize(() => runOnJS(dragEnd)());
 
+  // Zeilen sind memoisiert: Beim Markieren wird nur die geänderte Zeile neu gezeichnet.
+  const openRef = useRef(open);
+  openRef.current = open;
+  const onOpen = useCallback((e: Item) => openRef.current(e), []);
+  const selecting = sel.size > 0;
+  const renderItem = useCallback(
+    ({ item }: { item: Item }) => (
+      <FileRow
+        e={item}
+        on={sel.has(item.path)}
+        grid={grid}
+        tile={tile}
+        tileH={tileH}
+        theme={theme}
+        inSearch={!!hits}
+        selecting={selecting}
+        onOpen={onOpen}
+      />
+    ),
+    [sel, grid, tile, tileH, theme, hits, selecting, onOpen],
+  );
+
   // ------------------------------------------------------------ Startseite
-  if (path === null && !hits) {
-    const used = storage ? storage.total - storage.free : 0;
-    return (
+  // Startseite und Suche teilen sich EIN Suchfeld an derselben Stelle im Baum: Beim ersten
+  // Buchstaben wechselt nur der Inhalt darunter – die Tastatur bleibt offen.
+  const onLanding = path === null && !hits;
+  const used = storage ? storage.total - storage.free : 0;
+  const landingBody = !onLanding ? null : (
       <Animated.View entering={m(dir === 'back' ? pageIn('back') : fadeIn)} style={s.fill}>
         <ScrollView contentContainerStyle={s.landing} keyboardShouldPersistTaps="handled">
-          <Text style={s.bigTitle}>{t('Dateien')}</Text>
-          <SearchField theme={theme} value={query} onChange={setQuery} />
           <Text style={s.section}>{t('Speicher')}</Text>
           <Tap theme={theme} onPress={() => go(root, 'forward')} style={s.card} label={t('Interner Speicher')}>
             <View style={s.cardRow}>
@@ -461,14 +539,17 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           </View>
         </ScrollView>
       </Animated.View>
-    );
-  }
+  );
 
   // ------------------------------------------------------------ Explorer / Suche
-  const title = hits ? '' : path === root ? t('Interner Speicher') : path!.slice(path!.lastIndexOf('/') + 1);
+  const title = hits || path === null ? '' : path === root ? t('Interner Speicher') : path.slice(path.lastIndexOf('/') + 1);
   const single = selected.length === 1 ? selected[0] : null;
+  const zips = selected.filter((e) => e.kind === 'File' && ARCHIVE.test(e.name)).map((e) => e.path);
   const menuActions: MenuAction[] = [
     ...(single && single.kind === 'File' ? [{ label: t('Öffnen'), onPress: () => open({ ...single }) }] : []),
+    // Je nach Format: Archive entpacken
+    ...(single && zips.length === 1 ? [{ label: t('Entpacken'), onPress: () => extractAll(zips) }] : []),
+    { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
     { label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
     { label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
@@ -488,6 +569,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { icon: '⋯', label: t('Mehr'), onPress: () => setSheet('selection') },
   ];
   const selectionActions: SheetAction[] = [
+    ...(zips.length ? [{ label: zips.length === 1 ? t('Entpacken') : t('{n} Archive entpacken', { n: zips.length }), onPress: () => extractAll(zips) }] : []),
+    { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
     { label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
     { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
@@ -498,51 +581,6 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: t('Nach Größe sortieren'), onPress: () => setSort('size'), disabled: sort === 'size' },
     { label: hidden ? t('Versteckte Dateien ausblenden') : t('Versteckte Dateien anzeigen'), onPress: () => setHidden(!hidden) },
   ];
-
-  const renderItem = ({ item: e }: { item: Item }) => {
-    const on = sel.has(e.path);
-    if (grid) {
-      return (
-        <Animated.View style={{ width: tile, height: tileH }}>
-          <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} delayLongPress={LONG_PRESS} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
-            <View style={[s.tileThumb, { width: tile - 12, height: tile - 12 }]}>
-              <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
-              {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
-              {on && (
-                <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
-                  <Text style={{ color: theme.onAccent }}>✓</Text>
-                </Animated.View>
-              )}
-            </View>
-            <Text style={s.tileName} numberOfLines={2}>{e.name}</Text>
-          </Tap>
-        </Animated.View>
-      );
-    }
-    return (
-      <Animated.View>
-        <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} delayLongPress={LONG_PRESS} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
-          <View style={s.iconBox}>
-            <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
-            {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
-            {on && (
-              <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.check, { backgroundColor: theme.accent }]}>
-                <Text style={{ color: theme.onAccent }}>✓</Text>
-              </Animated.View>
-            )}
-          </View>
-          <View style={s.rowText}>
-            <Text style={[s.name, e.hidden && s.dim]} numberOfLines={1}>{e.name}</Text>
-            <Text style={s.meta} numberOfLines={1}>
-              {e.fuzzy ? `${t('ähnlich')} · ` : ''}
-              {hits ? e.path : `${e.kind === 'Dir' ? t('Ordner') : humanSize(e.size, locale())} • ${new Date(e.mtime * 1000).toLocaleDateString(locale())}`}
-            </Text>
-          </View>
-          {e.kind === 'Dir' && !sel.size && <Text style={s.chev}>›</Text>}
-        </Tap>
-      </Animated.View>
-    );
-  };
 
   return (
     <View style={s.fill}>
@@ -564,13 +602,18 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
             </Tap>
           )}
         </Animated.View>
-      ) : hits ? (
-        <View style={s.searchHeader}>
-          <Tap theme={theme} onPress={() => setQuery('')} style={s.iconBtn} label={t('Zurück')}>
-            <Text style={s.iconText}>‹</Text>
-          </Tap>
-          <View style={s.grow}>
-            <SearchField theme={theme} value={query} onChange={setQuery} autoFocus />
+      ) : path === null || hits ? (
+        <View style={hits ? s.searchTopActive : s.searchTop}>
+          {!hits && <Text style={s.bigTitle}>{t('Dateien')}</Text>}
+          <View style={s.searchRow}>
+            {hits ? (
+              <Tap theme={theme} onPress={() => setQuery('')} style={s.iconBtn} label={t('Zurück')}>
+                <Text style={s.iconText}>‹</Text>
+              </Tap>
+            ) : null}
+            <View style={s.grow}>
+              <SearchField theme={theme} value={query} onChange={setQuery} />
+            </View>
           </View>
         </View>
       ) : (
@@ -588,6 +631,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </View>
       )}
 
+      {landingBody ?? (
       <GestureDetector gesture={selectGesture}>
         <Animated.View
           key={`${path}|${view}|${hits ? 'q' : ''}`}
@@ -595,8 +639,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           style={s.fill}
           onLayout={(e) => (listH.current = e.nativeEvent.layout.height)}
         >
-          <Animated.FlatList
-            ref={listRef as any}
+          <FlatList
+            ref={listRef}
             data={shown}
             numColumns={grid ? cols : 1}
             key={grid ? 'grid' : 'list'}
@@ -604,11 +648,15 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
             contentContainerStyle={grid ? s.gridList : s.list}
             columnWrapperStyle={grid ? s.gridRow : undefined}
             getItemLayout={grid ? undefined : (_: unknown, i: number) => ({ length: ROW, offset: ROW * i, index: i })}
-            itemLayoutAnimation={m(LinearTransition.duration(DUR.page).easing(EASE_OUT))}
             scrollEnabled={scrollEnabled}
-            onScroll={(e: any) => (scrollY.current = e.nativeEvent.contentOffset.y)}
-            scrollEventThrottle={16}
+            // Scrollstand nur am Ende einer Bewegung merken (statt 60 JS-Aufrufe pro Sekunde)
+            onScrollEndDrag={(e) => (scrollY.current = e.nativeEvent.contentOffset.y)}
+            onMomentumScrollEnd={(e) => (scrollY.current = e.nativeEvent.contentOffset.y)}
             onScrollBeginDrag={() => setMenu(null)}
+            initialNumToRender={14}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
             onRefresh={hits ? undefined : load}
             refreshing={false}
             keyboardShouldPersistTaps="handled"
@@ -625,9 +673,10 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           />
         </Animated.View>
       </GestureDetector>
+      )}
 
       {/* Unten: Aktionsleiste (ab zwei Dateien), „Hier einfügen“ oder „+“ */}
-      {showBar ? (
+      {onLanding ? null : showBar ? (
         <Animated.View entering={m(toastIn)} style={s.actionBar} accessibilityRole="toolbar">
           {barActions.map((a) => (
             <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
@@ -666,6 +715,39 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       />
       <BottomSheet visible={sheet === 'more'} theme={theme} onClose={() => setSheet(null)} actions={moreActions} />
       <BottomSheet visible={sheet === 'selection'} title={t('{n} ausgewählt', { n: sel.size })} theme={theme} onClose={() => setSheet(null)} actions={selectionActions} />
+
+      {busy && (
+        <Animated.View entering={m(toastIn)} style={s.busy} accessibilityRole="progressbar" accessibilityLabel={busy}>
+          <ActivityIndicator color={theme.accent as string} />
+          <Text style={s.busyText} numberOfLines={2}>{busy}</Text>
+        </Animated.View>
+      )}
+
+      <Modal visible={!!pwAsk} transparent animationType="none" statusBarTranslucent onRequestClose={() => setPwAsk(null)}>
+        <View style={s.modalBg}>
+          <Animated.View entering={m(popIn)} style={s.modal}>
+            <Text style={s.modalTitle}>{t('Passwort')}</Text>
+            <Text style={[s.meta, s.pwHint]}>
+              {pwAsk?.wrong ? t('Falsches Passwort.') : t('„{name}“ ist mit einem Passwort geschützt.', { name: pwAsk ? fileName(pwAsk.archive) : '' })}
+            </Text>
+            <TextInput
+              autoFocus
+              secureTextEntry
+              autoCorrect={false}
+              autoCapitalize="none"
+              value={pwAsk?.value}
+              onChangeText={(v) => setPwAsk((x) => (x ? { ...x, value: v } : x))}
+              onSubmitEditing={() => pwAsk && (setPwAsk(null), extractAll([pwAsk.archive, ...pwAsk.rest], pwAsk.value))}
+              style={s.input}
+              accessibilityLabel={t('Passwort')}
+            />
+            <View style={s.modalBtns}>
+              <BarBtn theme={theme} label={t('Abbrechen')} onPress={() => setPwAsk(null)} />
+              <BarBtn theme={theme} label={t('Entpacken')} strong disabled={!pwAsk?.value} onPress={() => pwAsk && (setPwAsk(null), extractAll([pwAsk.archive, ...pwAsk.rest], pwAsk.value))} />
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
 
       <Modal visible={!!naming} transparent animationType="fade" onRequestClose={() => setNaming(null)}>
         <View style={s.modalBg}>
@@ -719,6 +801,65 @@ function SearchField({ theme, value, onChange, autoFocus }: { theme: Theme; valu
   );
 }
 
+interface RowProps {
+  e: Item;
+  on: boolean;
+  grid: boolean;
+  tile: number;
+  tileH: number;
+  theme: Theme;
+  inSearch: boolean;
+  selecting: boolean;
+  onOpen: (e: Item) => void;
+}
+
+const noop = () => {};
+
+const FileRow = memo(function FileRow({ e, on, grid, tile, tileH, theme, inSearch, selecting, onOpen }: RowProps) {
+  const s = styles(theme);
+  const press = () => onOpen(e);
+  if (grid) {
+    return (
+      <View style={{ width: tile, height: tileH }}>
+        <Tap theme={theme} onPress={press} onLongPress={noop} delayLongPress={LONG_PRESS} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
+          <View style={[s.tileThumb, { width: tile - 12, height: tile - 12 }]}>
+            <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
+            {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
+            {on && (
+              <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
+                <Text style={{ color: theme.onAccent }}>✓</Text>
+              </Animated.View>
+            )}
+          </View>
+          <Text style={s.tileName} numberOfLines={2}>{e.name}</Text>
+        </Tap>
+      </View>
+    );
+  }
+  const loc = locale();
+  return (
+    <Tap theme={theme} onPress={press} onLongPress={noop} delayLongPress={LONG_PRESS} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
+      <View style={s.iconBox}>
+        <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
+        {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
+        {on && (
+          <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.check, { backgroundColor: theme.accent }]}>
+            <Text style={{ color: theme.onAccent }}>✓</Text>
+          </Animated.View>
+        )}
+      </View>
+      <View style={s.rowText}>
+        <Text style={[s.name, e.hidden && s.dim]} numberOfLines={1}>{e.name}</Text>
+        <Text style={s.meta} numberOfLines={1}>
+          {e.fuzzy ? `${t('ähnlich')} · ` : ''}
+          {inSearch ? e.path : `${e.kind === 'Dir' ? t('Ordner') : humanSize(e.size, loc)} • ${shortDate(e.mtime, loc)}`}
+        </Text>
+      </View>
+      {e.kind === 'Dir' && !selecting && <Text style={s.chev}>›</Text>}
+    </Tap>
+  );
+});
+
 function BarBtn({ label, onPress, theme, disabled, strong }: { label: string; onPress: () => void; theme: Theme; disabled?: boolean; strong?: boolean }) {
   const s = styles(theme);
   return (
@@ -728,11 +869,11 @@ function BarBtn({ label, onPress, theme, disabled, strong }: { label: string; on
   );
 }
 
-const styles = (th: Theme) =>
+const styles = themed((th: Theme) =>
   StyleSheet.create({
     fill: { flex: 1 },
     grow: { flex: 1 },
-    landing: { padding: 16, paddingBottom: 40 },
+    landing: { paddingHorizontal: 16, paddingBottom: 40 },
     bigTitle: { color: th.text, fontSize: 30, fontWeight: '700', marginTop: 4, marginBottom: 14 },
     search: {
       flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingLeft: 14, borderRadius: 16,
@@ -741,7 +882,9 @@ const styles = (th: Theme) =>
     searchIcon: { color: th.text2, fontSize: 18, marginRight: 8 },
     searchInput: { flex: 1, color: th.text, fontSize: 16, paddingVertical: 10 },
     clear: { width: 48, height: 48, justifyContent: 'center', alignItems: 'center' },
-    searchHeader: { flexDirection: 'row', alignItems: 'center', paddingRight: 12, paddingVertical: 4 },
+    searchTop: { paddingHorizontal: 16, paddingTop: 4 },
+    searchTopActive: { paddingRight: 12, paddingVertical: 4 },
+    searchRow: { flexDirection: 'row', alignItems: 'center' },
     section: { color: th.text2, fontSize: 13, fontWeight: '700', marginTop: 24, marginBottom: 8, marginLeft: 4, letterSpacing: 0.3 },
     card: { borderRadius: 18, backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke, overflow: 'hidden' },
     cardRow: { flexDirection: 'row', alignItems: 'center', padding: 16 },
@@ -804,6 +947,12 @@ const styles = (th: Theme) =>
     actionBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 14, overflow: 'hidden' },
     actionIcon: { color: th.text, fontSize: 19, lineHeight: 24 },
     actionText: { color: th.text, fontSize: 12, marginTop: 2 },
+    busy: {
+      position: 'absolute', left: 16, right: 16, bottom: 16, minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 14,
+      paddingHorizontal: 18, borderRadius: 16, backgroundColor: th.dark ? '#2b2d36' : '#ffffff', elevation: 10,
+    },
+    busyText: { flex: 1, color: th.text, fontSize: 15 },
+    pwHint: { marginBottom: 8 },
     fabBox: { position: 'absolute', right: 20, bottom: 20 },
     fab: {
       width: 60, height: 60, borderRadius: 20, overflow: 'hidden',
@@ -815,4 +964,4 @@ const styles = (th: Theme) =>
     modalTitle: { color: th.text, fontSize: 18, fontWeight: '600', marginBottom: 12 },
     input: { color: th.text, fontSize: 16, borderBottomWidth: 2, borderBottomColor: th.accent, paddingVertical: 8 },
     modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 },
-  });
+  }));

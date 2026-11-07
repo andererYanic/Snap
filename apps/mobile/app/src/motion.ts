@@ -44,6 +44,12 @@ const pageBack = new Keyframe({
 }).duration(DUR.page);
 export const pageIn = (dir: 'forward' | 'back') => (dir === 'forward' ? pageForward : pageBack);
 
+/** Blatt von unten (BottomSheet): gleitet herein, ohne Nachfedern. */
+export const sheetIn = new Keyframe({
+  0: { transform: [{ translateY: 400 }] },
+  100: { transform: [{ translateY: 0 }], easing: EASE_OUT },
+}).duration(DUR.page + 40);
+
 let reduced = false;
 
 /** Einmal beim Start aufrufen; folgt danach Änderungen der Systemeinstellung. */

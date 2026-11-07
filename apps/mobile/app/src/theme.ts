@@ -16,7 +16,26 @@ export interface Theme {
   onAccent: ColorValue;
 }
 
+const cache = new Map<string, Theme>();
+/** Jedes Thema nur einmal erzeugen: gleiche Objekte über alle Renderläufe (wichtig für Memos). */
+function once(key: string, make: () => Theme): Theme {
+  let t = cache.get(key);
+  if (!t) {
+    t = make();
+    cache.set(key, t);
+  }
+  return t;
+}
+
 export function snapTheme(dark: boolean): Theme {
+  return once(`snap-${dark}`, () => makeSnap(dark));
+}
+
+export function materialTheme(dark: boolean): Theme {
+  return once(`material-${dark}`, () => makeMaterial(dark));
+}
+
+function makeSnap(dark: boolean): Theme {
   return dark
     ? {
         dark,
@@ -47,7 +66,7 @@ export function snapTheme(dark: boolean): Theme {
 }
 
 /** Material You: Systemfarben des Geräts (nur Android 12+). */
-export function materialTheme(dark: boolean): Theme {
+function makeMaterial(dark: boolean): Theme {
   const c = (name: string) => PlatformColor(`@android:color/${name}`);
   return {
     dark,
