@@ -6,7 +6,7 @@
 // - Bilder und Videos öffnen in der eingebauten Anzeige, alles andere mit der passenden App.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS } from 'react-native-reanimated';
@@ -56,6 +56,9 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   // bis alles abgewählt ist.
   const [barOn, setBarOn] = useState(false);
   const [clip, setClip] = useState<{ mode: 'copy' | 'move'; paths: string[] } | null>(null);
+  // Laufender langer Vorgang (Entpacken/Packen) und Passwortabfrage für verschlüsselte Archive
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pwAsk, setPwAsk] = useState<{ archive: string; rest: string[]; wrong: boolean; value: string } | null>(null);
   const [naming, setNaming] = useState<{ mode: 'folder' | 'file' | 'rename'; from?: string; value: string } | null>(null);
   const [sheet, setSheet] = useState<'create' | 'more' | 'selection' | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
@@ -266,6 +269,61 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       load();
       undoable(list.length === 1 ? t('„{name}“ in den Papierkorb verschoben.', { name: list[0].name }) : t('{n} Elemente in den Papierkorb verschoben.', { n: list.length }));
     } catch (e) {
+      fail(e);
+    }
+  };
+
+  // ------------------------------------------------------------ Archive
+  const ARCHIVE = /\.(zip|tar|tgz|tar\.gz)$/i;
+  const fileName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+
+  /** Entpackt Archive nacheinander; bei Passwortschutz wird gefragt und dort weitergemacht. */
+  const extractAll = async (archives: string[], password?: string) => {
+    setSel(new Set());
+    let done = 0;
+    let last = '';
+    for (let i = 0; i < archives.length; i++) {
+      const a = archives[i];
+      setBusy(t('„{name}“ wird entpackt …', { name: fileName(a) }));
+      try {
+        const r = await fileOp({ Extract: { archive: a, ...(i === 0 && password ? { password } : {}) } });
+        last = fileName(r?.outcome?.done?.[0]?.to ?? '');
+        done++;
+      } catch (e: any) {
+        setBusy(null);
+        if (e?.code === 'PasswordRequired') {
+          setPwAsk({ archive: a, rest: archives.slice(i + 1), wrong: i === 0 && !!password, value: '' });
+          if (done) {
+            load();
+          }
+          return;
+        }
+        load();
+        fail(e);
+        return;
+      }
+    }
+    setBusy(null);
+    load();
+    if (done === 1) {
+      undoable(t('Entpackt nach „{name}“.', { name: last }));
+    } else if (done > 1) {
+      notify(t('{n} Archive entpackt.', { n: done }));
+    }
+  };
+
+  const compressSel = async () => {
+    const paths = selected.map((e) => e.path);
+    setSel(new Set());
+    setBusy(t('{n} Einträge werden gepackt …', { n: paths.length }));
+    try {
+      const r = await fileOp({ Compress: { sources: paths } });
+      setBusy(null);
+      load();
+      undoable(t('„{name}“ erstellt.', { name: fileName(r?.outcome?.done?.[0]?.to ?? '') }));
+    } catch (e) {
+      setBusy(null);
+      load();
       fail(e);
     }
   };
@@ -486,8 +544,12 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   // ------------------------------------------------------------ Explorer / Suche
   const title = hits || path === null ? '' : path === root ? t('Interner Speicher') : path.slice(path.lastIndexOf('/') + 1);
   const single = selected.length === 1 ? selected[0] : null;
+  const zips = selected.filter((e) => e.kind === 'File' && ARCHIVE.test(e.name)).map((e) => e.path);
   const menuActions: MenuAction[] = [
     ...(single && single.kind === 'File' ? [{ label: t('Öffnen'), onPress: () => open({ ...single }) }] : []),
+    // Je nach Format: Archive entpacken
+    ...(single && zips.length === 1 ? [{ label: t('Entpacken'), onPress: () => extractAll(zips) }] : []),
+    { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
     { label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
     { label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
@@ -507,6 +569,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { icon: '⋯', label: t('Mehr'), onPress: () => setSheet('selection') },
   ];
   const selectionActions: SheetAction[] = [
+    ...(zips.length ? [{ label: zips.length === 1 ? t('Entpacken') : t('{n} Archive entpacken', { n: zips.length }), onPress: () => extractAll(zips) }] : []),
+    { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
     { label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
     { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
@@ -651,6 +715,39 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       />
       <BottomSheet visible={sheet === 'more'} theme={theme} onClose={() => setSheet(null)} actions={moreActions} />
       <BottomSheet visible={sheet === 'selection'} title={t('{n} ausgewählt', { n: sel.size })} theme={theme} onClose={() => setSheet(null)} actions={selectionActions} />
+
+      {busy && (
+        <Animated.View entering={m(toastIn)} style={s.busy} accessibilityRole="progressbar" accessibilityLabel={busy}>
+          <ActivityIndicator color={theme.accent as string} />
+          <Text style={s.busyText} numberOfLines={2}>{busy}</Text>
+        </Animated.View>
+      )}
+
+      <Modal visible={!!pwAsk} transparent animationType="none" statusBarTranslucent onRequestClose={() => setPwAsk(null)}>
+        <View style={s.modalBg}>
+          <Animated.View entering={m(popIn)} style={s.modal}>
+            <Text style={s.modalTitle}>{t('Passwort')}</Text>
+            <Text style={[s.meta, s.pwHint]}>
+              {pwAsk?.wrong ? t('Falsches Passwort.') : t('„{name}“ ist mit einem Passwort geschützt.', { name: pwAsk ? fileName(pwAsk.archive) : '' })}
+            </Text>
+            <TextInput
+              autoFocus
+              secureTextEntry
+              autoCorrect={false}
+              autoCapitalize="none"
+              value={pwAsk?.value}
+              onChangeText={(v) => setPwAsk((x) => (x ? { ...x, value: v } : x))}
+              onSubmitEditing={() => pwAsk && (setPwAsk(null), extractAll([pwAsk.archive, ...pwAsk.rest], pwAsk.value))}
+              style={s.input}
+              accessibilityLabel={t('Passwort')}
+            />
+            <View style={s.modalBtns}>
+              <BarBtn theme={theme} label={t('Abbrechen')} onPress={() => setPwAsk(null)} />
+              <BarBtn theme={theme} label={t('Entpacken')} strong disabled={!pwAsk?.value} onPress={() => pwAsk && (setPwAsk(null), extractAll([pwAsk.archive, ...pwAsk.rest], pwAsk.value))} />
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
 
       <Modal visible={!!naming} transparent animationType="fade" onRequestClose={() => setNaming(null)}>
         <View style={s.modalBg}>
@@ -850,6 +947,12 @@ const styles = themed((th: Theme) =>
     actionBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 14, overflow: 'hidden' },
     actionIcon: { color: th.text, fontSize: 19, lineHeight: 24 },
     actionText: { color: th.text, fontSize: 12, marginTop: 2 },
+    busy: {
+      position: 'absolute', left: 16, right: 16, bottom: 16, minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 14,
+      paddingHorizontal: 18, borderRadius: 16, backgroundColor: th.dark ? '#2b2d36' : '#ffffff', elevation: 10,
+    },
+    busyText: { flex: 1, color: th.text, fontSize: 15 },
+    pwHint: { marginBottom: 8 },
     fabBox: { position: 'absolute', right: 20, bottom: 20 },
     fab: {
       width: 60, height: 60, borderRadius: 20, overflow: 'hidden',

@@ -378,6 +378,171 @@ pub fn extract(archive: &Path, password: Option<&Password>, limits: Option<Limit
     api_bail!(AlreadyExists, "Kein freier Name für den Zielordner gefunden.")
 }
 
+/// Bereits komprimierte Formate werden nur gespeichert (Packen kostet dort nur Zeit).
+fn already_compressed(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".avif", ".mp4", ".mkv", ".mov", ".webm", ".m4v",
+        ".3gp", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".zip", ".gz", ".tgz", ".7z", ".rar", ".xz", ".zst",
+        ".bz2", ".apk", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".pdf",
+    ]
+    .iter()
+    .any(|e| lower.ends_with(e))
+}
+
+/// Name des neuen Archivs: eine Quelle → „Bericht.zip“ bzw. „Ordner.zip“, mehrere → „Archiv.zip“.
+pub fn archive_name(sources: &[PathBuf]) -> String {
+    match sources {
+        [one] => {
+            let name = one.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let is_dir = std::fs::symlink_metadata(one).map(|m| m.is_dir()).unwrap_or(false);
+            let stem = match name.rsplit_once('.') {
+                Some((s, _)) if !s.is_empty() && !is_dir => s.to_string(),
+                _ => name,
+            };
+            format!("{stem}.zip")
+        }
+        _ => "Archiv.zip".to_string(),
+    }
+}
+
+/// Ergebnis des Packens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Packed {
+    pub archive: PathBuf,
+    pub files: u64,
+    pub bytes: u64,
+    /// Ausgelassene Verknüpfungen und Sonderdateien.
+    pub skipped: u64,
+}
+
+/// Packt `sources` (Dateien und Ordner) in ein neues ZIP neben der ersten Quelle.
+/// Verknüpfungen werden nicht verfolgt, sondern ausgelassen. Nie überschreiben; ein Abbruch
+/// hinterlässt nichts. Blockierend – in `spawn_blocking` aufrufen.
+pub fn compress(sources: &[PathBuf], name: Option<&str>, p: &Progress) -> Result<Packed> {
+    let Some(first) = sources.first() else { api_bail!(InvalidInput, "Nichts zum Packen ausgewählt.") };
+    for s in sources {
+        if !s.is_absolute() {
+            api_bail!(InvalidInput, "Pfad muss absolut sein: {}", s.display());
+        }
+        if std::fs::symlink_metadata(s).is_err() {
+            api_bail!(NotFound, "{} existiert nicht.", s.display());
+        }
+    }
+    let dir = first.parent().context("Quelle ohne übergeordneten Ordner")?.to_path_buf();
+    let name = match name {
+        Some(n) => {
+            validate_name(n)?;
+            if n.to_ascii_lowercase().ends_with(".zip") {
+                n.to_string()
+            } else {
+                format!("{n}.zip")
+            }
+        }
+        None => archive_name(sources),
+    };
+    // Platz: schlimmstenfalls so groß wie die Quellen (plus Reserve)
+    let (mut files_total, mut bytes_total) = (0u64, 0u64);
+    for s in sources {
+        let (f, b) = super::ops::measure(s);
+        files_total += f.max(1);
+        bytes_total += b;
+    }
+    if bytes_total.saturating_add(FREE_RESERVE) > free_space(&dir)? {
+        api_bail!(Unavailable, "Nicht genug Platz für das Archiv ({:.1} GB nötig).", bytes_total as f64 / 1e9);
+    }
+    p.total_files.store(files_total, Ordering::Relaxed);
+    p.total_bytes.store(bytes_total, Ordering::Relaxed);
+
+    let work = dir.join(format!(".snap-packen-{:016x}.zip", fastrand::u64(..)));
+    let result = (|| -> Result<(u64, u64, u64)> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&work)
+            .with_context(|| format!("{} nicht anlegbar", work.display()))?;
+        let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(file));
+        let (mut files, mut bytes, mut skipped) = (0u64, 0u64, 0u64);
+        let mut used = std::collections::HashSet::new();
+        let mut buf = vec![0u8; 64 * 1024];
+        for src in sources {
+            let base = src.parent().unwrap_or(Path::new("/"));
+            for entry in walkdir::WalkDir::new(src).follow_links(false).sort_by_file_name() {
+                if p.cancel.load(Ordering::Relaxed) {
+                    api_bail!(Cancelled, "Vorgang abgebrochen.");
+                }
+                let entry = entry.with_context(|| format!("{} nicht lesbar", src.display()))?;
+                let rel = entry.path().strip_prefix(base).unwrap_or(entry.path());
+                let name = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+                let ft = entry.file_type();
+                if ft.is_dir() {
+                    if used.insert(format!("{name}/")) {
+                        zip.add_directory(format!("{name}/"), zip::write::SimpleFileOptions::default())?;
+                    }
+                    continue;
+                }
+                if !ft.is_file() {
+                    skipped += 1; // Verknüpfungen, Geräte, FIFOs
+                    continue;
+                }
+                if !used.insert(name.clone()) {
+                    api_bail!(InvalidInput, "„{name}“ ist mehrfach ausgewählt.");
+                }
+                let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                let method = if already_compressed(&name) {
+                    zip::CompressionMethod::Stored
+                } else {
+                    zip::CompressionMethod::Deflated
+                };
+                let opt = zip::write::SimpleFileOptions::default()
+                    .compression_method(method)
+                    .large_file(len >= u32::MAX as u64)
+                    .unix_permissions(0o644);
+                zip.start_file(name, opt)?;
+                let mut f = std::fs::File::open(entry.path())
+                    .with_context(|| format!("{} nicht lesbar", entry.path().display()))?;
+                loop {
+                    let n = f.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    zip.write_all(&buf[..n])?;
+                    bytes += n as u64;
+                    p.done_bytes.fetch_add(n as u64, Ordering::Relaxed);
+                    if p.cancel.load(Ordering::Relaxed) {
+                        api_bail!(Cancelled, "Vorgang abgebrochen.");
+                    }
+                }
+                files += 1;
+                p.done_files.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        zip.finish()?.flush()?;
+        Ok((files, bytes, skipped))
+    })();
+    let (files, bytes, skipped) = match result {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = std::fs::remove_file(&work);
+            return Err(e);
+        }
+    };
+    let plain = dir.join(&name);
+    let mut target = if std::fs::symlink_metadata(&plain).is_err() { plain } else { unique_path(&plain) };
+    for _ in 0..8 {
+        match rename_noreplace(&work, &target) {
+            Ok(()) => return Ok(Packed { archive: target, files, bytes, skipped }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => target = unique_path(&target),
+            Err(e) => {
+                let _ = std::fs::remove_file(&work);
+                return Err(e).with_context(|| format!("{} nicht anlegbar", target.display()));
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&work);
+    api_bail!(AlreadyExists, "Kein freier Name für das Archiv gefunden.")
+}
+
 /// Ergebnis für „Rückgängig“: Archiv → neuer Ordner.
 pub fn done_of(archive: &Path, x: &Extracted) -> Done {
     Done { from: archive.to_path_buf(), to: x.dir.clone() }
@@ -579,5 +744,45 @@ mod tests {
             code_of(&extract(&txt, None, Some(big()), &Progress::default()).unwrap_err()),
             ErrorCode::InvalidInput
         );
+    }
+
+    #[test]
+    fn packen_und_wieder_entpacken() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("r");
+        std::fs::create_dir_all(root.join("Ordner/unter")).unwrap();
+        std::fs::write(root.join("Ordner/a.txt"), b"aaa").unwrap();
+        std::fs::write(root.join("Ordner/unter/b.jpg"), b"bild").unwrap();
+        std::fs::write(root.join("brief.pdf"), b"pdf").unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", root.join("Ordner/link")).unwrap();
+        // Mehrere Quellen → „Archiv.zip“, Verknüpfung ausgelassen
+        let p = Progress::default();
+        let x = compress(&[root.join("Ordner"), root.join("brief.pdf")], None, &p).unwrap();
+        assert_eq!(x.archive, root.join("Archiv.zip"));
+        assert_eq!((x.files, x.bytes, x.skipped), (3, 10, 1));
+        assert_eq!(p.done_files.load(Ordering::Relaxed), 3);
+        // Name belegt → „(2)“; eine Datei → nach ihr benannt
+        let y = compress(&[root.join("Ordner"), root.join("brief.pdf")], None, &Progress::default()).unwrap();
+        assert_eq!(y.archive, root.join("Archiv (2).zip"));
+        let z = compress(&[root.join("brief.pdf")], None, &Progress::default()).unwrap();
+        assert_eq!(z.archive, root.join("brief.zip"));
+        assert!(compress(&[root.join("brief.pdf")], Some("../raus"), &Progress::default()).is_err());
+        // Rundreise: entpackt ergibt das Gleiche
+        std::fs::rename(&x.archive, d.path().join("Archiv.zip")).unwrap();
+        let back = extract(&d.path().join("Archiv.zip"), None, Some(big()), &Progress::default()).unwrap();
+        assert_eq!(
+            files_under(&back.dir),
+            ["Ordner", "Ordner/a.txt", "Ordner/unter", "Ordner/unter/b.jpg", "brief.pdf"]
+        );
+        assert_eq!(std::fs::read(back.dir.join("Ordner/unter/b.jpg")).unwrap(), b"bild");
+        // Abbruch hinterlässt nichts
+        let c = Progress::default();
+        c.cancel.store(true, Ordering::Relaxed);
+        assert_eq!(code_of(&compress(&[root.join("Ordner")], None, &c).unwrap_err()), ErrorCode::Cancelled);
+        assert!(!std::fs::read_dir(&root).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".snap-")));
     }
 }
