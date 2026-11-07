@@ -26,6 +26,12 @@ adb shell am start -W -n "$PKG/.MainActivity"
 sleep 30
 adb exec-out screencap -p > "$OUT/screen-2.png"
 
+# Sichtbare Texte (Bildschirminhalt) für das Log
+adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
+adb shell cat /sdcard/ui.xml > "$OUT/ui.xml" 2>/dev/null
+grep -oE 'text="[^"]+"' "$OUT/ui.xml" | sed 's/text=//' | tr '\n' ' ' > "$OUT/ui-texts.txt"
+echo "---- Sichtbare Texte ----"; cat "$OUT/ui-texts.txt"; echo
+
 PID="$(adb shell pidof "$PKG" | tr -d '\r')"
 adb logcat -d > "$OUT/logcat.txt"
 adb logcat -d -b crash > "$OUT/logcat-crash.txt"
@@ -44,4 +50,9 @@ if grep -q "FATAL EXCEPTION\|Fatal signal" "$OUT/logcat.txt"; then
   echo "FEHLER: Absturz im Log."
   exit 1
 fi
-echo "OK: App läuft (PID $PID)."
+# Dateiansicht mit Inhalt statt Fehler- oder Absturzbildschirm (Deutsch oder Englisch)
+if ! grep -qE "Documents" "$OUT/ui-texts.txt" || ! grep -qE "Dateien|Files" "$OUT/ui-texts.txt"; then
+  echo "FEHLER: Die Dateiansicht wird nicht angezeigt."
+  exit 1
+fi
+echo "OK: App läuft (PID $PID) und zeigt die Dateien."
