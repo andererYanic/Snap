@@ -4,23 +4,21 @@
 // - Markieren: lang halten – und ohne Loslassen über weitere Dateien wischen. Beim Loslassen
 //   erscheint das Menü dort, wo der Finger zuerst lag (wie bei iOS).
 // - Bilder und Videos öffnen in der eingebauten Anzeige, alles andere mit der passenden App.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, BackHandler, Dimensions, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  LinearTransition, runOnJS,
-} from 'react-native-reanimated';
+import Animated, { runOnJS } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
 import * as core from './core';
-import { humanSize, joinPath, parentOf, request, type DirEntry } from './core';
+import { humanSize, joinPath, parentOf, request, shortDate, type DirEntry } from './core';
 import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
-import { BottomSheet, Glyph, Tap, type SheetAction } from './ui';
+import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
 import Viewer from './Viewer';
-import { DUR, EASE_OUT, fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
+import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
 interface Props {
   theme: Theme;
@@ -415,6 +413,28 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     .onUpdate((e) => runOnJS(dragMove)(e.x, e.y))
     .onFinalize(() => runOnJS(dragEnd)());
 
+  // Zeilen sind memoisiert: Beim Markieren wird nur die geänderte Zeile neu gezeichnet.
+  const openRef = useRef(open);
+  openRef.current = open;
+  const onOpen = useCallback((e: Item) => openRef.current(e), []);
+  const selecting = sel.size > 0;
+  const renderItem = useCallback(
+    ({ item }: { item: Item }) => (
+      <FileRow
+        e={item}
+        on={sel.has(item.path)}
+        grid={grid}
+        tile={tile}
+        tileH={tileH}
+        theme={theme}
+        inSearch={!!hits}
+        selecting={selecting}
+        onOpen={onOpen}
+      />
+    ),
+    [sel, grid, tile, tileH, theme, hits, selecting, onOpen],
+  );
+
   // ------------------------------------------------------------ Startseite
   if (path === null && !hits) {
     const used = storage ? storage.total - storage.free : 0;
@@ -499,51 +519,6 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: hidden ? t('Versteckte Dateien ausblenden') : t('Versteckte Dateien anzeigen'), onPress: () => setHidden(!hidden) },
   ];
 
-  const renderItem = ({ item: e }: { item: Item }) => {
-    const on = sel.has(e.path);
-    if (grid) {
-      return (
-        <Animated.View style={{ width: tile, height: tileH }}>
-          <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} delayLongPress={LONG_PRESS} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
-            <View style={[s.tileThumb, { width: tile - 12, height: tile - 12 }]}>
-              <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
-              {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
-              {on && (
-                <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
-                  <Text style={{ color: theme.onAccent }}>✓</Text>
-                </Animated.View>
-              )}
-            </View>
-            <Text style={s.tileName} numberOfLines={2}>{e.name}</Text>
-          </Tap>
-        </Animated.View>
-      );
-    }
-    return (
-      <Animated.View>
-        <Tap theme={theme} onPress={() => open(e)} onLongPress={() => {}} delayLongPress={LONG_PRESS} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
-          <View style={s.iconBox}>
-            <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
-            {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
-            {on && (
-              <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.check, { backgroundColor: theme.accent }]}>
-                <Text style={{ color: theme.onAccent }}>✓</Text>
-              </Animated.View>
-            )}
-          </View>
-          <View style={s.rowText}>
-            <Text style={[s.name, e.hidden && s.dim]} numberOfLines={1}>{e.name}</Text>
-            <Text style={s.meta} numberOfLines={1}>
-              {e.fuzzy ? `${t('ähnlich')} · ` : ''}
-              {hits ? e.path : `${e.kind === 'Dir' ? t('Ordner') : humanSize(e.size, locale())} • ${new Date(e.mtime * 1000).toLocaleDateString(locale())}`}
-            </Text>
-          </View>
-          {e.kind === 'Dir' && !sel.size && <Text style={s.chev}>›</Text>}
-        </Tap>
-      </Animated.View>
-    );
-  };
-
   return (
     <View style={s.fill}>
       {/* Kopfzeile */}
@@ -595,8 +570,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
           style={s.fill}
           onLayout={(e) => (listH.current = e.nativeEvent.layout.height)}
         >
-          <Animated.FlatList
-            ref={listRef as any}
+          <FlatList
+            ref={listRef}
             data={shown}
             numColumns={grid ? cols : 1}
             key={grid ? 'grid' : 'list'}
@@ -604,11 +579,15 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
             contentContainerStyle={grid ? s.gridList : s.list}
             columnWrapperStyle={grid ? s.gridRow : undefined}
             getItemLayout={grid ? undefined : (_: unknown, i: number) => ({ length: ROW, offset: ROW * i, index: i })}
-            itemLayoutAnimation={m(LinearTransition.duration(DUR.page).easing(EASE_OUT))}
             scrollEnabled={scrollEnabled}
-            onScroll={(e: any) => (scrollY.current = e.nativeEvent.contentOffset.y)}
-            scrollEventThrottle={16}
+            // Scrollstand nur am Ende einer Bewegung merken (statt 60 JS-Aufrufe pro Sekunde)
+            onScrollEndDrag={(e) => (scrollY.current = e.nativeEvent.contentOffset.y)}
+            onMomentumScrollEnd={(e) => (scrollY.current = e.nativeEvent.contentOffset.y)}
             onScrollBeginDrag={() => setMenu(null)}
+            initialNumToRender={14}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
             onRefresh={hits ? undefined : load}
             refreshing={false}
             keyboardShouldPersistTaps="handled"
@@ -719,6 +698,65 @@ function SearchField({ theme, value, onChange, autoFocus }: { theme: Theme; valu
   );
 }
 
+interface RowProps {
+  e: Item;
+  on: boolean;
+  grid: boolean;
+  tile: number;
+  tileH: number;
+  theme: Theme;
+  inSearch: boolean;
+  selecting: boolean;
+  onOpen: (e: Item) => void;
+}
+
+const noop = () => {};
+
+const FileRow = memo(function FileRow({ e, on, grid, tile, tileH, theme, inSearch, selecting, onOpen }: RowProps) {
+  const s = styles(theme);
+  const press = () => onOpen(e);
+  if (grid) {
+    return (
+      <View style={{ width: tile, height: tileH }}>
+        <Tap theme={theme} onPress={press} onLongPress={noop} delayLongPress={LONG_PRESS} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
+          <View style={[s.tileThumb, { width: tile - 12, height: tile - 12 }]}>
+            <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
+            {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
+            {on && (
+              <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
+                <Text style={{ color: theme.onAccent }}>✓</Text>
+              </Animated.View>
+            )}
+          </View>
+          <Text style={s.tileName} numberOfLines={2}>{e.name}</Text>
+        </Tap>
+      </View>
+    );
+  }
+  const loc = locale();
+  return (
+    <Tap theme={theme} onPress={press} onLongPress={noop} delayLongPress={LONG_PRESS} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
+      <View style={s.iconBox}>
+        <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
+        {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
+        {on && (
+          <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.check, { backgroundColor: theme.accent }]}>
+            <Text style={{ color: theme.onAccent }}>✓</Text>
+          </Animated.View>
+        )}
+      </View>
+      <View style={s.rowText}>
+        <Text style={[s.name, e.hidden && s.dim]} numberOfLines={1}>{e.name}</Text>
+        <Text style={s.meta} numberOfLines={1}>
+          {e.fuzzy ? `${t('ähnlich')} · ` : ''}
+          {inSearch ? e.path : `${e.kind === 'Dir' ? t('Ordner') : humanSize(e.size, loc)} • ${shortDate(e.mtime, loc)}`}
+        </Text>
+      </View>
+      {e.kind === 'Dir' && !selecting && <Text style={s.chev}>›</Text>}
+    </Tap>
+  );
+});
+
 function BarBtn({ label, onPress, theme, disabled, strong }: { label: string; onPress: () => void; theme: Theme; disabled?: boolean; strong?: boolean }) {
   const s = styles(theme);
   return (
@@ -728,7 +766,7 @@ function BarBtn({ label, onPress, theme, disabled, strong }: { label: string; on
   );
 }
 
-const styles = (th: Theme) =>
+const styles = themed((th: Theme) =>
   StyleSheet.create({
     fill: { flex: 1 },
     grow: { flex: 1 },
@@ -815,4 +853,4 @@ const styles = (th: Theme) =>
     modalTitle: { color: th.text, fontSize: 18, fontWeight: '600', marginBottom: 12 },
     input: { color: th.text, fontSize: 16, borderBottomWidth: 2, borderBottomColor: th.accent, paddingVertical: 8 },
     modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 },
-  });
+  }));

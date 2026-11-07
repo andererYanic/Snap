@@ -11,7 +11,7 @@ import { initLanguage, t } from './src/i18n';
 import { Devices, More } from './src/Pages';
 import Photos from './src/Photos';
 import { materialTheme, snapTheme, type Theme } from './src/theme';
-import { NavIcon } from './src/ui';
+import { NavIcon, themed } from './src/ui';
 import { initMotion, m, toastIn, toastOut } from './src/motion';
 
 type Tab = 'files' | 'photos' | 'devices' | 'more';
@@ -181,7 +181,7 @@ export default function App() {
   );
 }
 
-const styles = (th: Theme) =>
+const styles = themed((th: Theme) =>
   StyleSheet.create({
     bg: { flex: 1, backgroundColor: th.bg },
     // Weicher Farbverlauf der Snap-Optik (zweite Farbe als Schleier oben)
@@ -211,4 +211,4 @@ const styles = (th: Theme) =>
     toastText: { flex: 1, color: th.dark ? '#1b1b1f' : '#f1f1f4', fontSize: 14 },
     toastBtn: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 16 },
     link: { color: th.dark ? '#3b6fe0' : '#9db8ff', fontSize: 15, fontWeight: '700' },
-  });
+  }));
