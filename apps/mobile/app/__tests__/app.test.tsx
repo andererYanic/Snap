@@ -95,6 +95,20 @@ function byLabel(r: ReactTestRenderer.ReactTestRenderer, label: string) {
   return r.root.find((n) => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function');
 }
 
+// Jede gerenderte App nach dem Test abbauen – sonst feuern Zeitgeber (z. B. Hinweise mit
+// „Rückgängig“) noch, nachdem Jest die Umgebung abgebaut hat.
+const mounted: ReactTestRenderer.ReactTestRenderer[] = [];
+function mount(el: React.ReactElement): ReactTestRenderer.ReactTestRenderer {
+  const r = ReactTestRenderer.create(el);
+  mounted.push(r);
+  return r;
+}
+afterEach(async () => {
+  for (const r of mounted.splice(0)) {
+    await act(async () => { r.unmount(); });
+  }
+});
+
 beforeEach(() => {
   calls.length = 0;
   allFiles = true;
@@ -103,7 +117,7 @@ beforeEach(() => {
 
 test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   await flush();
   // Startseite: Speicher mit Belegung und vorhandene Standardordner
@@ -145,7 +159,7 @@ test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
 test('Ohne Dateizugriff: Hinweis und Knopf zu den Systemeinstellungen', async () => {
   allFiles = false;
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   expect(allText(r)).toContain('Zugriff erlauben');
   expect(NativeModules.SnapCore.start).not.toHaveBeenCalledTimes(99);
@@ -158,7 +172,7 @@ test('Absturz beim letzten Start: Bericht und „Erneut versuchen“ statt erneu
   crashReport = '[1] Thread snap-core: panicked at core/src/x.rs:1:1';
   NativeModules.SnapCore.start.mockClear();
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   expect(allText(r)).toContain('panicked at core/src/x.rs');
   expect(NativeModules.SnapCore.start).not.toHaveBeenCalled();
@@ -171,7 +185,7 @@ test('Absturz beim letzten Start: Bericht und „Erneut versuchen“ statt erneu
 
 test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textdatei an', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
@@ -190,7 +204,7 @@ test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textda
 
 test('Suche beim Tippen (ohne Enter), Tippfehler-Treffer markiert, Bild öffnet die eingebaute Anzeige', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   const field = r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Überall suchen');
   await act(async () => { field.props.onChangeText('urluab'); });
@@ -208,7 +222,7 @@ test('Suche beim Tippen (ohne Enter), Tippfehler-Treffer markiert, Bild öffnet 
 test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsichtbar bleibt', async () => {
   const spy = jest.spyOn(require('react-native').AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   const animated = r.root.findAll((n) => n.props && 'entering' in n.props);
   expect(animated.length).toBeGreaterThan(0);
@@ -221,7 +235,7 @@ test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsi
 
 test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt bis alles abgewählt, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
@@ -279,7 +293,7 @@ test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt b
 
 test('Suchfeld bleibt beim ersten Buchstaben dasselbe Feld (Tastatur schließt nicht)', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   const find = () => r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Überall suchen');
   const node = () => (find() as any)._fiber.stateNode;
@@ -298,7 +312,7 @@ test('Suchfeld bleibt beim ersten Buchstaben dasselbe Feld (Tastatur schließt n
 
 test('ZIP: mehrere Dateien packen, Archiv mit Passwort entpacken, Rückgängig', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await act(async () => { r = mount(<App />); });
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
