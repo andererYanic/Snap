@@ -30,6 +30,7 @@ sleep 3
 tap_text "Download"; sleep 3
 tap_text "perf"; sleep 5
 adb exec-out screencap -p > "$OUT/perf-ordner.png"
+echo "---- Sichtbar vor der Messung ----"; ui | grep -oE 'text="[^"]+"' | sed 's/text=//' | head -12 | tr '\n' ' '; echo
 
 W="$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1)"; WX="${W%x*}"; WY="${W#*x}"
 X=$(( WX / 2 )); TOP=$(( WY * 30 / 100 )); BOT=$(( WY * 80 / 100 ))
