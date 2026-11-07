@@ -422,3 +422,27 @@ Messung `apps/mobile/core-ffi` → `tests::perf_ffi_list_dir` (Release):
   einzige Umwandlung.
 - Telefone sind langsamer als die Messmaschine (grob Faktor 3–5). Eine Ordnerseite bleibt auch dort
   deutlich unter 16 ms.
+
+## Review 19 – Tippfehler-tolerante Suche, native Vorschaubilder (4c, 2026-11-07)
+
+Messung `core/tests/perf.rs` (Release, Index mit 1 Mio. Einträgen, kalter Cache):
+
+| Anfrage | Ergebnis |
+|---|---|
+| Tippfehler „rechnnug“, „projket“ (nur ähnliche Treffer) | **5–6 ms** |
+| „vertrrag-0001“, „urlaub-00005“ (lange Anfragen, bis 3 Fehler) | **5–6 ms** |
+| „vertrag“ mit Filter „nur PDF“ ohne Treffer | **87 ms** |
+
+- Erst läuft die exakte Trigramm-Suche. Nur wenn sie weniger als 5 Treffer liefert und die Anfrage
+  mindestens 6 Zeichen hat, sucht der Kern ähnliche Namen. Nach dem Schubfachprinzip muss ein
+  Teilstück der Anfrage wörtlich vorkommen; diese Kandidaten liefert der FTS-Index (höchstens 20 000
+  Indexzeilen, 4 000 Kandidaten), danach entscheidet der Damerau-Levenshtein-Abstand.
+- Die 87 ms im letzten Fall stammen aus der **exakten** Suche, wenn ein Filter alles ausschließt.
+  Das bestand schon vorher (bisher nicht gemessen) und liegt unter dem Suchbudget von 100 ms. Die
+  App sucht beim Tippen mit 160 ms Pause und verwirft veraltete Antworten, die Oberfläche blockiert
+  nie. **Offen:** Filter in die FTS-Abfrage ziehen.
+- Vorschaubilder auf Android erzeugt jetzt das System (`ThumbnailUtils`, nutzt eingebettete
+  EXIF-Vorschauen und Hardware-Dekoder) statt der Kern. Höchstens 4 gleichzeitig, Ergebnis als JPEG
+  im App-Cache (begrenzt auf 200 MB). Ein zweiter Aufruf liest nur noch die Cache-Datei; die App
+  hält zusätzlich die URIs im Speicher und lädt die ersten 40 Bilder der Zeitachse vorab.
+- Animationen laufen über Reanimated auf dem UI-Thread, also unabhängig von JS-Last.

@@ -2,6 +2,8 @@
 // Gestaltung: docs/MOBILE_UX.md (Snap-Optik, Android-Bedienung, Material You wahlweise).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Pressable, ScrollView, StatusBar, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { FadeIn, FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as core from './src/core';
 import Files from './src/Files';
@@ -83,7 +85,8 @@ export default function App() {
 
   if (ready !== 'ok') {
     return (
-      <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+    <SafeAreaProvider>
         <View style={s.bg}>
           {bar}
           <View style={s.tint} />
@@ -118,6 +121,7 @@ export default function App() {
           </SafeAreaView>
         </View>
       </SafeAreaProvider>
+    </GestureHandlerRootView>
     );
   }
 
@@ -129,27 +133,28 @@ export default function App() {
   ];
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider>
       <View style={s.bg}>
         {bar}
         <View style={s.tint} />
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab !== 'files' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
-          <View style={s.fill}>
+          <Animated.View key={tab} entering={FadeIn.duration(180)} style={s.fill}>
             {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} />}
             {tab === 'photos' && <Photos theme={theme} />}
             {tab === 'devices' && <Devices theme={theme} notify={notify} />}
             {tab === 'more' && <More theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} />}
-          </View>
+          </Animated.View>
           {toast && (
-            <View style={[s.toast, selecting && s.toastHigh]}>
+            <Animated.View entering={FadeInDown.springify().damping(18)} exiting={FadeOutDown.duration(150)} style={[s.toast, selecting && s.toastHigh]}>
               <Text style={s.toastText}>{toast.text}</Text>
               {toast.undo && (
                 <Pressable onPress={() => { toast.undo?.(); setToast(null); }} style={s.toastBtn}>
                   <Text style={s.link}>{t('Rückgängig')}</Text>
                 </Pressable>
               )}
-            </View>
+            </Animated.View>
           )}
         </SafeAreaView>
         {!selecting && (
@@ -157,7 +162,7 @@ export default function App() {
             {tabs.map((x) => {
               const on = tab === x.key;
               return (
-                <Pressable key={x.key} style={s.navItem} onPress={() => setTab(x.key)} accessibilityRole="tab" accessibilityState={{ selected: on }}>
+                <Pressable key={x.key} style={s.navItem} onPress={() => { if (tab !== x.key) { core.haptic('tick'); } setTab(x.key); }} accessibilityRole="tab" accessibilityState={{ selected: on }}>
                   <View style={[s.navPill, on && s.navPillOn]}>
                     <NavIcon name={x.key} color={(on ? theme.accent : theme.text2) as string} />
                   </View>
@@ -169,6 +174,7 @@ export default function App() {
         )}
       </View>
     </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

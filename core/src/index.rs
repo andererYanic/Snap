@@ -13,7 +13,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -67,6 +67,9 @@ pub struct SearchHit {
     pub kind: NodeKind,
     pub size: u64,
     pub mtime: i64,
+    /// Ähnlicher Treffer (Tippfehler-Toleranz), nicht wörtlich enthalten.
+    #[serde(default)]
+    pub fuzzy: bool,
 }
 
 /// Filter für die Suche.
@@ -909,15 +912,58 @@ impl LocalIndex {
         let mut rows = rows;
         rows.sort_by_cached_key(|(_, name, ..)| (!name.to_lowercase().starts_with(&ql), name.chars().count()));
         rows.truncate(limit);
+        let mut out: Vec<(i64, String, i64, i64, i64, bool)> =
+            rows.into_iter().map(|(id, n, k, s, m)| (id, n, k, s, m, false)).collect();
+
+        // Tippfehler-Toleranz: reichen die wörtlichen Treffer nicht, ähnliche Namen ergänzen.
+        let max_err = fuzzy::max_errors(ql.chars().count());
+        // Nur wenn es kaum wörtliche Treffer gibt – sonst wäre es Rauschen.
+        if out.len() < 5.min(limit) && max_err > 0 {
+            let seen: HashSet<i64> = out.iter().map(|r| r.0).collect();
+            let chunks = fuzzy::chunks(&ql, max_err);
+            if !chunks.is_empty() {
+                // Kandidaten: Namen, die mindestens ein Stück wörtlich enthalten (Trigramm-Index).
+                let expr =
+                    chunks.iter().map(|c| format!("\"{}\"", c.replace('"', "\"\""))).collect::<Vec<_>>().join(" OR ");
+                // Höchstens SCAN Index-Zeilen lesen, erst dann filtern: Mit Filtern (z. B. nur PDF)
+                // bliebe die Arbeit sonst unbegrenzt.
+                let sql = format!(
+                    "WITH c AS (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?1 LIMIT ?3)
+                     SELECT n.id, n.name, n.kind, n.size, n.mtime FROM c JOIN nodes n ON n.id = c.rowid
+                     WHERE {where_sql} LIMIT ?2"
+                );
+                let mut stmt = conn.prepare_cached(&sql)?;
+                let cands = stmt
+                    .query_map(params![expr, fuzzy::CANDIDATES, fuzzy::SCAN], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<fuzzy::Row>>>()?;
+                let qv: Vec<char> = ql.chars().collect();
+                let mut fuzzy_hits: Vec<(usize, usize, fuzzy::Row)> = cands
+                    .into_iter()
+                    .filter(|c| !seen.contains(&c.0))
+                    .filter_map(|c| {
+                        let d = fuzzy::substring_distance(&qv, &c.1.to_lowercase(), max_err)?;
+                        Some((d, c.1.chars().count(), c))
+                    })
+                    .collect();
+                fuzzy_hits.sort_by_key(|(d, len, _)| (*d, *len));
+                for (_, _, (id, n, k, s, m)) in fuzzy_hits.into_iter().take(limit - out.len()) {
+                    out.push((id, n, k, s, m, true));
+                }
+            }
+        }
+
         let mut cache = HashMap::new();
-        rows.into_iter()
-            .map(|(id, name, kind, size, mtime)| {
+        out.into_iter()
+            .map(|(id, name, kind, size, mtime, fuzzy)| {
                 Ok(SearchHit {
                     path: Self::path_of(&conn, id, &mut cache)?,
                     name,
                     kind: NodeKind::from_code(kind),
                     size: size as u64,
                     mtime,
+                    fuzzy,
                 })
             })
             .collect()
@@ -935,9 +981,95 @@ impl LocalIndex {
     }
 }
 
+/// Ähnlichkeitssuche für Dateinamen (Tippfehler: vertauschte, fehlende, zusätzliche oder falsche
+/// Zeichen).
+pub(crate) mod fuzzy {
+    /// Kandidatenzeile: id, Name, Art, Größe, Änderungszeit.
+    pub(crate) type Row = (i64, String, i64, i64, i64);
+
+    /// Höchstens so viele Kandidaten werden bewertet (hält die Suche im Millisekundenbereich).
+    pub const CANDIDATES: i64 = 4_000;
+    /// Höchstens so viele Index-Zeilen werden für Kandidaten gelesen (vor den Filtern).
+    pub const SCAN: i64 = 20_000;
+
+    /// Erlaubte Fehler je nach Länge des Suchbegriffs.
+    pub fn max_errors(len: usize) -> usize {
+        match len {
+            0..=5 => 0,
+            6..=8 => 1,
+            9..=11 => 2,
+            _ => 3,
+        }
+    }
+
+    /// Zerlegt den Suchbegriff in `max_err + 1` Stücke (je mindestens 3 Zeichen, sonst Trigramme).
+    /// Schubfachprinzip: Bei höchstens `max_err` Fehlern bleibt mindestens ein Stück unversehrt.
+    pub fn chunks(q: &str, max_err: usize) -> Vec<String> {
+        let c: Vec<char> = q.chars().collect();
+        let parts = max_err + 1;
+        if c.len() / parts >= 3 {
+            let size = c.len() / parts;
+            (0..parts)
+                .map(|i| {
+                    let end = if i + 1 == parts { c.len() } else { (i + 1) * size };
+                    c[i * size..end].iter().collect()
+                })
+                .collect()
+        } else {
+            // Kurz: alle Trigramme des Begriffs (trifft Fehler am Rand zuverlässig)
+            c.windows(3).map(|w| w.iter().collect()).collect()
+        }
+    }
+
+    /// Kleinster Abstand (Damerau-Levenshtein, eingeschränkt) des Suchbegriffs zu einem beliebigen
+    /// Teilstück von `text`. `None`, wenn größer als `max`.
+    pub fn substring_distance(q: &[char], text: &str, max: usize) -> Option<usize> {
+        let t: Vec<char> = text.chars().collect();
+        let (n, m) = (q.len(), t.len());
+        if n == 0 {
+            return Some(0);
+        }
+        // dp[i][j]: Abstand von q[..i] zu einem bei j endenden Teilstück; Zeile 0 = 0 (freier Anfang)
+        let mut prev2 = vec![0usize; m + 1];
+        let mut prev = vec![0usize; m + 1];
+        let mut cur = vec![0usize; m + 1];
+        for i in 1..=n {
+            cur[0] = i;
+            for j in 1..=m {
+                let cost = usize::from(q[i - 1] != t[j - 1]);
+                let mut v = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+                if i > 1 && j > 1 && q[i - 1] == t[j - 2] && q[i - 2] == t[j - 1] {
+                    v = v.min(prev2[j - 2] + 1);
+                }
+                cur[j] = v;
+            }
+            std::mem::swap(&mut prev2, &mut prev);
+            std::mem::swap(&mut prev, &mut cur);
+        }
+        let best = prev.iter().copied().min().unwrap_or(n);
+        (best <= max).then_some(best)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fuzzy_distance_and_chunks() {
+        use super::fuzzy::*;
+        let q = |s: &str| s.chars().collect::<Vec<_>>();
+        assert_eq!(substring_distance(&q("urlaub"), "urlaub_2024.jpg", 1), Some(0));
+        assert_eq!(substring_distance(&q("urluab"), "urlaub_2024.jpg", 1), Some(1), "Vertauschung = 1 Fehler");
+        assert_eq!(substring_distance(&q("urlab"), "mein urlaub", 1), Some(1));
+        assert_eq!(substring_distance(&q("rechnung"), "urlaub", 2), None);
+        assert_eq!(max_errors(5), 0);
+        assert_eq!(max_errors(6), 1);
+        assert_eq!(max_errors(12), 3);
+        assert_eq!(chunks("rechnung", 1), ["rech", "nung"]);
+        assert_eq!(chunks("urlaub", 1), ["url", "aub"]);
+        assert_eq!(chunks("bilder", 1).len(), 2);
+    }
 
     fn tree() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -991,6 +1123,15 @@ mod tests {
         assert!(!idx.search("no", &SearchFilter::default(), 50).unwrap().is_empty());
         assert!(idx.search("%", &SearchFilter::default(), 50).unwrap().is_empty());
         assert!(idx.search("\0", &SearchFilter::default(), 50).unwrap().is_empty());
+        // Tippfehler: vertauscht, fehlend, zusätzlich – ähnliche Treffer hinter den wörtlichen
+        for typo in ["urluab", "urlaaub", "strnad"] {
+            let hits = idx.search(typo, &SearchFilter::default(), 50).unwrap();
+            assert!(!hits.is_empty(), "{typo}");
+            assert!(hits.iter().all(|h| h.fuzzy), "{typo}: alle ähnlich, keiner wörtlich");
+        }
+        let exact = idx.search("urlaub", &SearchFilter::default(), 50).unwrap();
+        assert!(exact.iter().any(|h| !h.fuzzy));
+        assert!(idx.search("xqzwvkj", &SearchFilter::default(), 50).unwrap().is_empty(), "nichts Ähnliches");
         assert!(idx.search("\0\0\0x", &SearchFilter::default(), 50).unwrap().is_empty());
         assert!(idx.search("\"; DROP TABLE nodes; --", &SearchFilter::default(), 50).unwrap().is_empty());
         assert!(idx.count().unwrap() > 0);

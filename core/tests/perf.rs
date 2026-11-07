@@ -472,6 +472,11 @@ fn local_index_million() {
         ("projekt 77", SearchFilter { kind: Some(NodeKind::Dir), ..Default::default() }),
         ("gibtsnicht", f.clone()),
         ("mu", f.clone()),
+        // Tippfehler (Ähnlichkeitssuche): vertauscht, fehlend, zusätzlich, viele Kandidaten
+        ("rechnnug", f.clone()),
+        ("projket", f.clone()),
+        ("vertrrag-0001", f.clone()),
+        ("urlaub-00005", f.clone()),
     ] {
         let t = Instant::now();
         let hits = idx.search(q, &filter, 100).unwrap();

@@ -46,6 +46,10 @@ export const lastCrash = (): Promise<string | null> => native().lastCrash();
 export const openFile = (path: string): Promise<void> => native().openFile(path);
 export const shareFiles = (paths: string[]): Promise<void> => native().shareFiles(paths);
 export const storageInfo = (): Promise<{ total: number; free: number }> => native().storageInfo();
+/** Vorschaubild über Android (schnell, mit Cache). `null`, wenn keins möglich ist. */
+export const thumbnail = (path: string, edge: number): Promise<string | null> => native().thumbnail(path, edge);
+/** Kurze Vibration: `select` (Markieren), `tick` (Auswahl erweitert), `confirm`. */
+export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();
 export const storageRoot = (): Promise<string> => native().storageRoot();
