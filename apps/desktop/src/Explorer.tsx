@@ -425,7 +425,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
           <div className="empty"><div><div className="big">{t("Ordner nicht lesbar")}</div>{error}</div></div>
         ) : !loading && sorted.length === 0 ? (
           <div className="empty">
-            <div><div className="big">{searching !== null ? "Keine Treffer" : isTrash ? "Der Papierkorb ist leer" : "Dieser Ordner ist leer"}</div></div>
+            <div><div className="big">{searching !== null ? t("Keine Treffer") : isTrash ? t("Der Papierkorb ist leer") : t("Dieser Ordner ist leer")}</div></div>
           </div>
         ) : view === "details" ? (
           <table className="details">

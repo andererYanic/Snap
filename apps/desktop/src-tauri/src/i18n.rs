@@ -77,8 +77,41 @@ mod tests {
         };
         scan("../src", "t(\"");
         scan("src", "tr(\"");
+        // Android-App teilt die Sprachdateien (TypeScript mit einfachen Anführungszeichen)
+        scan_single("../../mobile/app/src", &mut keys);
+        scan_single("../../mobile/app", &mut keys);
         keys.remove("…");
         keys
+    }
+
+    /// `t('…')` in der Android-App (nur Dateien direkt im Ordner, keine Unterordner).
+    fn scan_single(dir: &str, keys: &mut BTreeSet<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if !matches!(p.extension().and_then(|x| x.to_str()), Some("ts" | "tsx")) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap_or_default();
+            let mut rest = text.as_str();
+            while let Some(i) = rest.find("t('") {
+                let before = rest[..i].chars().next_back();
+                rest = &rest[i + 3..];
+                if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                    continue;
+                }
+                let mut out = String::new();
+                let mut chars = rest.chars();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => out.push(chars.next().unwrap_or_default()),
+                        '\'' => break,
+                        c => out.push(c),
+                    }
+                }
+                keys.insert(out);
+            }
+        }
     }
 
     fn placeholders(s: &str) -> BTreeSet<String> {

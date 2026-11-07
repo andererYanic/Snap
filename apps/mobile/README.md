@@ -1,6 +1,6 @@
 # Snap – Android-App
 
-Status: **4a – eingebetteter Kern (FFI)**. Die App-Oberfläche folgt in 4b; Gestaltung: [`docs/MOBILE_UX.md`](../../docs/MOBILE_UX.md).
+Status: **4b – erste lauffähige App**: Dateien, Fotos, Geräte, Mehr; Hintergrundarbeit über WorkManager. Gestaltung: [`docs/MOBILE_UX.md`](../../docs/MOBILE_UX.md).
 
 ## Grundsätze (Entscheidungen vom 2026-11-07)
 
@@ -18,7 +18,9 @@ Status: **4a – eingebetteter Kern (FFI)**. Die App-Oberfläche folgt in 4b; Ge
 ```
 apps/mobile/
   core-ffi/   Rust: Snap-Kern als Bibliothek (UniFFI) – läuft im App-Prozess
-  android/    (4b) React Native ohne Expo-Clouddienste + Kotlin-Modul, das core-ffi lädt
+  app/        React Native 0.88 ohne Expo-Clouddienste
+    App.tsx, src/   Oberfläche (Snap-Optik, Material You wahlweise), Übersetzungen aus apps/desktop/locales
+    android/        Kotlin: SnapCoreModule (Brücke), SyncWorker (WorkManager), Gradle-Aufgaben für Rust
 ```
 
 `core-ffi` stellt bereit:
@@ -42,3 +44,32 @@ cargo run -p snap-ffi --bin uniffi-bindgen -- generate --library target/debug/li
   (Android-Sandbox, Rechte 0600).
 - Ungültige Anfragen (kein JSON, unbekannte Art, zu groß) werden abgewiesen, ohne Absturz;
   getestet in `embedded_core_end_to_end`.
+
+## Bauen
+
+Voraussetzungen:
+- Android-SDK mit `platforms;android-37.0`, `build-tools;37.0.0` und `ndk;27.3.13750724`;
+- JDK 17, Node 22;
+- `rustup target add aarch64-linux-android`, `cargo install cargo-ndk`.
+
+```bash
+cd apps/mobile/app && npm ci
+```
+
+```bash
+cd apps/mobile/app/android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+```
+
+Gradle baut dabei den Rust-Kern (`cargo ndk`) und erzeugt die Kotlin-Anbindung automatisch. Die APK
+liegt unter `android/app/build/outputs/apk/release/`.
+
+**Signierung:** Noch mit dem Debug-Schlüssel. Für Veröffentlichungen auf GitHub folgt ein eigener
+Release-Schlüssel als GitHub-Secret.
+
+## Geprüft
+
+- Bildschirm-Tests (jest, nachgebildeter Kern): Liste, Auswahl per langem Drücken, Papierkorb mit
+  Rückgängig, Berechtigungsbildschirm, Sprachwahl nach Systemsprache.
+- CI prüft, dass die APK keine Google Play Services und kein Firebase enthält.
+- **Noch offen:** Test auf einem echten Gerät bzw. Emulator. In dieser Build-Umgebung gibt es keine
+  Virtualisierung (KVM).

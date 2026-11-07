@@ -69,6 +69,48 @@ jobs:
       - run: cargo test --locked
         working-directory: apps/desktop/src-tauri
 
+  android:
+    name: Android-App (APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/mobile/app
+    env:
+      ANDROID_NDK_VERSION: 27.3.13750724
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: cargo-ndk, Android-NDK und -Plattform (SDK ist auf dem Runner vorinstalliert)
+        run: |
+          cargo install cargo-ndk --locked --version 4.1.2
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
+      # Oberfläche: feste Versionen, Typprüfung, Bildschirm-Tests mit nachgebildetem Kern
+      - run: npm ci --no-fund --no-audit
+      - run: npx tsc --noEmit
+      - run: npx jest --ci
+      # APK (Release-Variante, ARM64) inkl. Rust-Kern und Kotlin-Anbindung
+      - name: APK bauen
+        working-directory: apps/mobile/app/android
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+      # Keine Google-Bibliotheken in der APK
+      - name: Ohne Google-Dienste
+        working-directory: apps/mobile/app/android
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          for d in $(unzip -l "$apk" | grep -oE "classes[0-9]*\.dex"); do unzip -p "$apk" "$d"; done > /tmp/dex
+          if grep -aqE "Lcom/google/android/gms/|Lcom/google/firebase/" /tmp/dex; then
+            echo "Google Play Services oder Firebase in der APK gefunden"; exit 1
+          fi
+
   supply-chain:
     name: Abhängigkeiten (audit, deny)
     runs-on: ubuntu-latest
@@ -91,6 +133,8 @@ jobs:
         working-directory: apps/desktop/src-tauri
       - run: npm audit --omit=dev --audit-level=moderate
         working-directory: apps/desktop
+      - run: npm audit --omit=dev --audit-level=moderate
+        working-directory: apps/mobile/app
 
   fuzz-smoke:
     name: Fuzzing (Kurzlauf)
