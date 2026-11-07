@@ -70,6 +70,8 @@ NativeModules.SnapCore = {
   pickFont: jest.fn(async () => 'Fira Code'),
   resetFont: jest.fn(async () => null),
   setFontFromFile: jest.fn(async () => 'MeineSchrift'),
+  editPreview: jest.fn(async () => '/cache/edit/vorschau.jpg'),
+  editSave: jest.fn(async (_p: string, _j: string, mode: string) => (mode === 'temp' ? '/storage/emulated/0/DCIM/.snap-edit-1.jpg' : '/storage/emulated/0/DCIM/urlaub (bearbeitet).jpg')),
   lastCrash: jest.fn(async () => crashReport),
   requestAllFilesAccess: jest.fn(),
   storageRoot: jest.fn(async () => '/storage/emulated/0'),
@@ -598,5 +600,57 @@ test('Unten Dateien/Fotos/Einstellungen; Geräte in den Einstellungen; Startseit
     expect(menu).not.toContain('Öffnen');
   } finally {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
+
+test('Bildbearbeitung: Seitenverhältnis, Drehen, als Kopie speichern bzw. Original ersetzen', async () => {
+  const { fitAspect } = require('../src/ImageEditor');
+  // Querformat 4:3, Ausschnitt 1:1 → mittig, volle Höhe
+  const sq = fitAspect(1, 4 / 3);
+  expect(sq.h).toBeCloseTo(1);
+  expect(sq.w).toBeCloseTo(0.75);
+  expect(sq.x).toBeCloseTo(0.125);
+  expect(fitAspect(null, 2)).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  const RN = require('react-native');
+  const getSize = jest.spyOn(RN.Image, 'getSize').mockImplementation((_u: any, ok: any) => ok(4000, 3000));
+  try {
+    for (const mode of ['copy', 'replace'] as const) {
+      calls.length = 0;
+      let r!: ReactTestRenderer.ReactTestRenderer;
+      await act(async () => { r = mount(<App />); });
+      await flush();
+      // Bild über die Suche finden und in der Anzeige auf „Bearbeiten“
+      const field = r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Überall suchen');
+      await act(async () => { field.props.onChangeText('urlaub'); });
+      await act(async () => { await new Promise<void>((resolve) => { setTimeout(() => resolve(), 260); }); });
+      await act(async () => { byLabel(r, 'urlaub.jpg').props.onPress(); });
+      await flush();
+      await act(async () => { byLabel(r, 'Bearbeiten').props.onPress(); });
+      await act(async () => { await new Promise<void>((resolve) => { setTimeout(() => resolve(), 150); }); });
+      expect(NativeModules.SnapCore.editPreview).toHaveBeenCalled();
+      // Ohne Änderung ist Speichern gesperrt; Drehen ändert etwas
+      expect(byLabel(r, 'Speichern').props.disabled).toBe(true);
+      await act(async () => { byLabel(r, 'Drehen').props.onPress(); });
+      expect(byLabel(r, 'Speichern').props.disabled).toBe(false);
+      await act(async () => { byLabel(r, 'Speichern').props.onPress(); });
+      await flush();
+      await act(async () => { await pressable(r, mode === 'copy' ? 'Als Kopie speichern' : 'Original ersetzen').props.onPress(); });
+      await flush();
+      const saveCall = NativeModules.SnapCore.editSave.mock.calls.at(-1);
+      expect(saveCall[0]).toBe('/storage/emulated/0/DCIM/urlaub.jpg');
+      expect(JSON.parse(saveCall[1]).rot).toBe(270);
+      if (mode === 'copy') {
+        expect(saveCall[2]).toBe('copy');
+        expect(allText(r)).toContain('Gespeichert als „urlaub (bearbeitet).jpg“.');
+      } else {
+        expect(saveCall[2]).toBe('temp');
+        expect(calls).toContainEqual({ FileOp: { op: { Replace: { path: '/storage/emulated/0/DCIM/urlaub.jpg', with: '/storage/emulated/0/DCIM/.snap-edit-1.jpg' } }, wait: true } });
+        expect(allText(r)).toContain('Das Original liegt im Papierkorb');
+      }
+      await act(async () => { r.unmount(); });
+      mounted.length = 0;
+    }
+  } finally {
+    getSize.mockRestore();
   }
 });

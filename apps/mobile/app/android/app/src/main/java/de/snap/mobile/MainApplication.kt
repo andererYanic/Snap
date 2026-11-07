@@ -25,6 +25,6 @@ class MainApplication : Application(), ReactApplication {
     CoreHolder.installCrashHandler(this)
     loadReactNative(this)
     SyncWorker.schedule(this)
-    Thread { Thumbnails.prune(this); PdfPages.prune(this) }.start()
+    Thread { Thumbnails.prune(this); PdfPages.prune(this); ImageEdit.prune(this) }.start()
   }
 }

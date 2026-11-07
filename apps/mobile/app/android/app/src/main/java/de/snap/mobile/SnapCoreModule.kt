@@ -301,6 +301,30 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     promise.resolve(null)
   }
 
+  /** Bildbearbeitung: Vorschau (Pfad zur JPEG im Cache). `withCrop` = Zuschnitt schon anwenden. */
+  @ReactMethod
+  fun editPreview(path: String, params: String, edge: Double, withCrop: Boolean, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(ImageEdit.preview(ctx.applicationContext, path, params, edge.toInt(), withCrop))
+      } catch (e: Throwable) {
+        promise.reject("edit", e.message ?: "Bild lässt sich nicht bearbeiten.")
+      }
+    }
+  }
+
+  /** Bildbearbeitung speichern: `copy` (neue Datei daneben) oder `temp` (für „Original ersetzen“). */
+  @ReactMethod
+  fun editSave(path: String, params: String, mode: String, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(ImageEdit.save(path, params, if (mode == "temp") "temp" else "copy"))
+      } catch (e: Throwable) {
+        promise.reject("edit", e.message ?: "Speichern fehlgeschlagen.")
+      }
+    }
+  }
+
   /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
   @ReactMethod
   fun printFile(path: String, promise: Promise) {

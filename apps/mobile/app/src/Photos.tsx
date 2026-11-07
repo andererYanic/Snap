@@ -9,6 +9,7 @@ import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { themed } from './ui';
 import { loadThumb, Thumb } from './thumbs';
+import ImageEditor from './ImageEditor';
 import Viewer from './Viewer';
 import { m } from './motion';
 
@@ -16,11 +17,12 @@ const COLS = 4;
 
 type Row = { head: string } | { cells: TimelineItem[]; offset: number };
 
-export default function Photos({ theme }: { theme: Theme }) {
+export default function Photos({ theme, notify }: { theme: Theme; notify?: (text: string, undo?: () => void) => void }) {
   const [items, setItems] = useState<TimelineItem[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewer, setViewer] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const size = Math.floor((Dimensions.get('window').width - 24 - (COLS - 1) * 3) / COLS);
   const s = styles(theme);
 
@@ -95,7 +97,27 @@ export default function Photos({ theme }: { theme: Theme }) {
           )
         }
       />
-      {viewer !== null && <Viewer items={media} start={viewer} onClose={() => setViewer(null)} />}
+      {viewer !== null && (
+        <Viewer
+          items={media}
+          start={viewer}
+          onClose={() => setViewer(null)}
+          onEdit={notify ? (it) => { setViewer(null); setEditing({ path: it.path, name: it.name }); } : undefined}
+        />
+      )}
+      {editing && notify && (
+        <ImageEditor
+          path={editing.path}
+          name={editing.name}
+          notify={notify}
+          onClose={(changed) => {
+            setEditing(null);
+            if (changed) {
+              more(null).catch(() => {});
+            }
+          }}
+        />
+      )}
     </View>
   );
 }
