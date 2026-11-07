@@ -769,3 +769,47 @@ test('Anderes Gerät durchsuchen: Freigaben, Ordner, Öffnen über den Cache, Vi
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Anderes Gerät: Archiv dort entpacken, mit Passwortabfrage', async () => {
+  const RemoteBrowser = require('../src/RemoteBrowser').default;
+  const RN = require('react-native');
+  const alert = jest.spyOn(RN.Alert, 'alert').mockImplementation((_t: any, _m: any, buttons: any) => {
+    buttons.find((b: any) => String(b.text).includes('entpacken')).onPress();
+  });
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  const zip = { origin: 'aaa', origin_name: 'Laptop', hash: '3'.repeat(64), name: 'tresor.zip', size: 10, created_at: 0, path: null, share: 'Fotos', rel_path: 'Archiv/tresor.zip' };
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    calls.push(req);
+    if (req.RemoteDir) return JSON.stringify({ RemoteDir: { dirs: [], files: [zip], next: null } });
+    if (req.RemoteOp) {
+      const ok = req.RemoteOp.op.password === 'richtig123';
+      return JSON.stringify(ok ? { Success: { message: 'Laptop: Erledigt' } } : { Error: { code: 'PasswordRequired', message: 'Passwort nötig.' } });
+    }
+    return origRequest(json);
+  });
+  try {
+    const notes: string[] = [];
+    const th = require('../src/theme').snapTheme(false);
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      r = mount(<RemoteBrowser device={{ node_id: 'aaa', name: 'Laptop', online: true }} theme={th} notify={(x: string) => notes.push(x)} onClose={() => {}} onOpen={() => {}} onStream={() => {}} />);
+    });
+    await flush();
+    await act(async () => { byLabel(r, 'tresor.zip').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ RemoteOp: { device: 'aaa', op: { op: 'Extract', share: 'Fotos', archive: 'Archiv/tresor.zip' } } });
+    // Passwort abfragen und erneut senden
+    const field = r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Passwort');
+    await act(async () => { field.props.onChangeText('richtig123'); });
+    await act(async () => { pressable(r, 'Entpacken').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ RemoteOp: { device: 'aaa', op: { op: 'Extract', share: 'Fotos', archive: 'Archiv/tresor.zip', password: 'richtig123' } } });
+    expect(notes.some((n) => n.includes('Auf Laptop entpackt'))).toBe(true);
+    await act(async () => { r.unmount(); });
+    mounted.length = 0;
+  } finally {
+    alert.mockRestore();
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

@@ -1,9 +1,10 @@
 //! Fernoperationen (snap/ops/1). Invarianten: Was die Prüfung besteht, hat nur gültige
 //! relative Pfade (kein `..`, nicht absolut, nicht leer – außer Zielordner), gültige Namen und
-//! höchstens MAX_PATHS Einträge; die Auflösung bleibt immer in der Freigabe.
+//! höchstens MAX_PATHS Einträge; die Auflösung bleibt immer in der Freigabe. Passwörter beim
+//! Entpacken sind begrenzt und erscheinen nicht in `Debug`.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use space_core::remote_ops::{decode_request, resolve_in_share, RemoteOp, MAX_IMPORT_BYTES, MAX_PATHS};
+use space_core::remote_ops::{decode_request, resolve_in_share, RemoteOp, MAX_IMPORT_BYTES, MAX_PASSWORD, MAX_PATHS};
 use std::path::{Component, Path};
 
 fn check_rel(p: &str, allow_empty: bool) {
@@ -52,6 +53,21 @@ fuzz_target!(|data: &[u8]| {
             assert!(!name.starts_with('.'), "versteckter Name {name:?}");
             assert!(hash.parse::<iroh_blobs::Hash>().is_ok());
             assert!(*size <= MAX_IMPORT_BYTES);
+        }
+        RemoteOp::Extract { archive, password, .. } => {
+            check_rel(archive, false);
+            assert!(space_core::fileops::archive::is_archive_name(archive), "{archive:?}");
+            if let Some(pw) = password {
+                assert!(!pw.0.is_empty() && pw.0.len() <= MAX_PASSWORD);
+                // Debug-Ausgabe und Beschreibung hängen nicht vom Passwort ab (es taucht nie auf)
+                let other = RemoteOp::Extract {
+                    share: share.to_string(),
+                    archive: archive.clone(),
+                    password: Some(space_core::fileops::archive::Password("anders".into())),
+                };
+                assert_eq!(format!("{:?}", req.op), format!("{other:?}"));
+                assert_eq!(req.op.summary(), other.summary());
+            }
         }
     }
 });

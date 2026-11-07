@@ -97,6 +97,37 @@ fn detect(path: &Path) -> Result<Kind> {
     api_bail!(InvalidInput, "{} ist kein unterstütztes Archiv (ZIP, tar, tar.gz).", path.display())
 }
 
+/// Name sieht nach einem unterstützten Archiv aus (Endung; der Inhalt wird beim Entpacken geprüft).
+pub fn is_archive_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    [".zip", ".tar", ".tar.gz", ".tgz"].iter().any(|e| n.ends_with(e))
+}
+
+/// Zählt die Einträge eines Archivs, höchstens bis `max` (danach wird abgebrochen). Für ZIP aus
+/// dem Inhaltsverzeichnis, für TAR durch Lesen der Kopfzeilen. Blockierend.
+pub fn count_entries(path: &Path, max: u64) -> Result<u64> {
+    let open = || std::fs::File::open(path).with_context(|| format!("{} nicht lesbar", path.display()));
+    let count_tar = |r: &mut dyn Read| -> Result<u64> {
+        let mut n = 0u64;
+        for e in tar::Archive::new(r).entries()? {
+            e?;
+            n += 1;
+            if n >= max {
+                break;
+            }
+        }
+        Ok(n)
+    };
+    match detect(path)? {
+        Kind::Zip => {
+            let z = zip::ZipArchive::new(std::io::BufReader::new(open()?)).context("ZIP nicht lesbar")?;
+            Ok((z.len() as u64).min(max))
+        }
+        Kind::Tar => count_tar(&mut std::io::BufReader::new(open()?)),
+        Kind::TarGz => count_tar(&mut flate2::read::MultiGzDecoder::new(std::io::BufReader::new(open()?))),
+    }
+}
+
 /// Zielname für den neuen Ordner: „Fotos.zip“ → „Fotos“, „Daten.tar.gz“ → „Daten“.
 pub fn folder_name(archive: &Path) -> String {
     let name = archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();

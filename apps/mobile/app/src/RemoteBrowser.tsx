@@ -3,13 +3,13 @@
 // Öffnen lädt die Datei in den Cache und zeigt sie mit den eingebauten Anzeigen; Videos werden
 // gestreamt. „Herunterladen“ legt eine Kopie in den Download-Ordner.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import * as core from './core';
 import { humanSize, request } from './core';
 import { locale, t } from './i18n';
 import { m, pageIn } from './motion';
-import { Text } from './text';
+import { Text, TextInput } from './text';
 import type { Theme } from './theme';
 import { isVideo } from './thumbs';
 import { Glyph, Tap, themed } from './ui';
@@ -33,6 +33,7 @@ interface Page {
 }
 type Row = { kind: 'dir'; name: string } | { kind: 'file'; item: CatalogItem };
 
+const ARCHIVE = /\.(zip|tar|tar\.gz|tgz)$/i;
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 /** Dateiname aus einem fremden Katalog als sicherer, einzelner Pfadteil. */
@@ -67,6 +68,7 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
   const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pw, setPw] = useState<{ item: CatalogItem; wrong: boolean; value: string } | null>(null);
   const gen = useRef(0);
 
   const query = useCallback(
@@ -156,6 +158,41 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
     return r.path;
   };
 
+  /** Archiv direkt auf dem anderen Gerät entpacken (Fernoperation, braucht dort files.write). */
+  const extractThere = async (item: CatalogItem, password?: string) => {
+    if (!item.share || !item.rel_path) {
+      notify(t('Nur Dateien in Freigaben lassen sich dort entpacken.'));
+      return;
+    }
+    setBusy(item.hash);
+    try {
+      await request({
+        RemoteOp: { device: device.node_id, op: { op: 'Extract', share: item.share, archive: item.rel_path, ...(password ? { password } : {}) } },
+      });
+      notify(t('Auf {device} entpackt. Der Ordner erscheint nach dem nächsten Abgleich.', { device: device.name }));
+    } catch (e: any) {
+      if (e?.code === 'PasswordRequired') {
+        setPw({ item, wrong: !!password, value: '' });
+      } else {
+        notify(String(e?.message ?? e));
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const tapFile = (item: CatalogItem) => {
+    if (!ARCHIVE.test(item.name)) {
+      openFile(item);
+      return;
+    }
+    Alert.alert(item.name, undefined, [
+      { text: t('Abbrechen'), style: 'cancel' },
+      { text: t('Herunterladen'), onPress: () => download(item) },
+      { text: t('Auf {device} entpacken', { device: device.name }), onPress: () => extractThere(item) },
+    ]);
+  };
+
   const openFile = async (item: CatalogItem) => {
     setBusy(item.hash);
     try {
@@ -218,7 +255,7 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
                 <Text style={s.chev}>›</Text>
               </Tap>
             ) : (
-              <Tap theme={theme} onPress={() => openFile(r.item)} onLongPress={() => download(r.item)} style={s.row} label={r.item.name}>
+              <Tap theme={theme} onPress={() => tapFile(r.item)} onLongPress={() => download(r.item)} style={s.row} label={r.item.name}>
                 <Glyph name={r.item.name} dir={false} theme={theme} />
                 <View style={s.grow}>
                   <Text style={s.name} numberOfLines={1}>{r.item.name}</Text>
@@ -236,6 +273,37 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
           }
         />
       )}
+      <Modal visible={!!pw} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setPw(null)}>
+        <View style={s.modalBg}>
+          <View style={s.modal}>
+            <Text style={s.title}>{t('Passwort')}</Text>
+            <Text style={s.meta}>{pw?.wrong ? t('Falsches Passwort.') : t('„{name}“ ist mit einem Passwort geschützt.', { name: pw?.item.name ?? '' })}</Text>
+            <TextInput
+              autoFocus
+              secureTextEntry
+              autoCorrect={false}
+              autoCapitalize="none"
+              value={pw?.value}
+              onChangeText={(v) => setPw((x) => (x ? { ...x, value: v } : x))}
+              style={s.input}
+              accessibilityLabel={t('Passwort')}
+            />
+            <View style={s.modalBtns}>
+              <Pressable onPress={() => setPw(null)} style={s.modalBtn} accessibilityRole="button">
+                <Text style={s.modalBtnText}>{t('Abbrechen')}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => pw && pw.value && (setPw(null), extractThere(pw.item, pw.value))}
+                disabled={!pw?.value}
+                style={s.modalBtn}
+                accessibilityRole="button"
+              >
+                <Text style={[s.modalBtnText, s.strong]}>{t('Entpacken')}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Animated.View>
   );
 }
@@ -257,5 +325,12 @@ const styles = themed((th: Theme) =>
     chev: { color: th.text2, fontSize: 22 },
     dl: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
     dlIcon: { color: th.accent, fontSize: 20 },
+    modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 28 },
+    modal: { backgroundColor: th.card, borderRadius: 24, padding: 22, gap: 10 },
+    input: { color: th.text, fontSize: 16, borderBottomWidth: 2, borderBottomColor: th.accent, paddingVertical: 8 },
+    modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 },
+    modalBtn: { minHeight: 44, paddingHorizontal: 14, justifyContent: 'center' },
+    modalBtnText: { color: th.accent, fontSize: 15 },
+    strong: { fontWeight: '700' },
   }),
 );

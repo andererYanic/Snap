@@ -558,3 +558,12 @@ Einträge. Alle Seiten liegen weit unter 16 ms.
   (kein JSON, kein Base64) und `FontFace`; Inconsolata liegt gebündelt bei (2 × 105 kB).
 - Linkliste: eine Abfrage beim Öffnen der Seite; Erstellen lädt verschlüsselt im Dienst hoch, die
   Oberfläche wartet nur auf das Ergebnis.
+
+## Review 28 – Entpacken auf anderen Geräten (2026-11-07)
+
+- Vor dem Entpacken zählt das Zielgerät die Einträge für den Massenschutz: bei ZIP aus dem
+  Inhaltsverzeichnis (ein Lesezugriff am Dateiende, µs), bei TAR/TAR.GZ durch Lesen der
+  Kopfzeilen (so teuer wie einmal Lesen bzw. Entpacken ohne Schreiben; bricht bei 100 001 ab).
+  Läuft in `spawn_blocking`, blockiert weder Netz noch Oberfläche.
+- Das Entpacken selbst ist der bestehende Dateiauftrag (Review 20), höchstens einer je Gerät.
+- Die App fragt nur einmal (Fernoperation) und wartet auf das Ergebnis; nichts läuft im UI-Thread.
