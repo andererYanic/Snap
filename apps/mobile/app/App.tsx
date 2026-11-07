@@ -134,7 +134,7 @@ export default function App() {
         {bar}
         <View style={s.tint} />
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
-          <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>
+          {tab !== 'files' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <View style={s.fill}>
             {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} />}
             {tab === 'photos' && <Photos theme={theme} />}

@@ -133,6 +133,11 @@ pub async fn mkdir(d: State<'_, Daemon>, parent: String, name: String) -> UiResu
     file_op(&d, FileOp::Mkdir { parent: ui_path(&parent)?, name }).await
 }
 
+#[tauri::command]
+pub async fn create_file(d: State<'_, Daemon>, parent: String, name: String) -> UiResult<Value> {
+    file_op(&d, FileOp::CreateFile { parent: ui_path(&parent)?, name }).await
+}
+
 /// In den Papierkorb – wiederherstellbar, daher ohne Rückfrage (wie in gängigen Dateimanagern).
 #[tauri::command]
 pub async fn trash(d: State<'_, Daemon>, items: Vec<String>) -> UiResult<Value> {

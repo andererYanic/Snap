@@ -80,6 +80,66 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  private fun mimeOf(file: java.io.File): String =
+    android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "*/*"
+
+  private fun contentUri(file: java.io.File): Uri =
+    androidx.core.content.FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
+
+  /** Prüft einen Pfad aus der Oberfläche: absolut, ohne „..“, existierende normale Datei. */
+  private fun regularFile(path: String): java.io.File? {
+    val f = java.io.File(path)
+    if (!f.isAbsolute || path.split('/').contains("..") || !f.isFile) return null
+    return f
+  }
+
+  /** Öffnet eine Datei mit der passenden App (Android fragt ggf. nach der App). */
+  @ReactMethod
+  fun openFile(path: String, promise: Promise) {
+    val f = regularFile(path) ?: return promise.reject("open", "Nur Dateien lassen sich öffnen.")
+    try {
+      val intent = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(contentUri(f), mimeOf(f))
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+      ctx.startActivity(intent)
+      promise.resolve(null)
+    } catch (e: android.content.ActivityNotFoundException) {
+      promise.reject("noapp", "Keine App zum Öffnen dieses Dateityps installiert.")
+    } catch (e: Throwable) {
+      promise.reject("open", e.message ?: e.toString())
+    }
+  }
+
+  /** Teilt Dateien über das Android-Teilen-Menü (nur lesend für die gewählte App). */
+  @ReactMethod
+  fun shareFiles(paths: com.facebook.react.bridge.ReadableArray, promise: Promise) {
+    try {
+      val files = (0 until paths.size()).mapNotNull { paths.getString(it)?.let(::regularFile) }
+      if (files.isEmpty()) return promise.reject("share", "Nur Dateien lassen sich teilen.")
+      val uris = ArrayList(files.map(::contentUri))
+      val intent = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).setType(mimeOf(files[0])).putExtra(Intent.EXTRA_STREAM, uris[0])
+      } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).setType("*/*").putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+      }
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      ctx.startActivity(Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      promise.resolve(null)
+    } catch (e: Throwable) {
+      promise.reject("share", e.message ?: e.toString())
+    }
+  }
+
+  /** Belegter und gesamter Platz des gemeinsamen Speichers (Bytes). */
+  @ReactMethod
+  fun storageInfo(promise: Promise) {
+    val st = android.os.StatFs(Environment.getExternalStorageDirectory().absolutePath)
+    val map = com.facebook.react.bridge.Arguments.createMap()
+    map.putDouble("total", st.totalBytes.toDouble())
+    map.putDouble("free", st.availableBytes.toDouble())
+    promise.resolve(map)
+  }
+
   /** Hat die App Zugriff auf alle Dateien (MANAGE_EXTERNAL_STORAGE)? */
   @ReactMethod
   fun hasAllFilesAccess(promise: Promise) {

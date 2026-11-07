@@ -35,6 +35,9 @@ NativeModules.SnapCore = {
     return JSON.stringify({ Success: { message: 'ok' } });
   }),
   hasAllFilesAccess: jest.fn(async () => allFiles),
+  storageInfo: jest.fn(async () => ({ total: 64e9, free: 20e9 })),
+  openFile: jest.fn(async () => null),
+  shareFiles: jest.fn(async () => null),
   lastCrash: jest.fn(async () => crashReport),
   requestAllFilesAccess: jest.fn(),
   storageRoot: jest.fn(async () => '/storage/emulated/0'),
@@ -83,6 +86,11 @@ test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
   await act(async () => { r = ReactTestRenderer.create(<App />); });
   await flush();
   await flush();
+  // Startseite: Speicher mit Belegung und vorhandene Standardordner
+  expect(allText(r)).toContain('Interner Speicher');
+  expect(allText(r)).toContain('von 60 GB belegt');
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
   const all = allText(r);
   expect(all).toContain('brief.pdf');
   expect(all).toContain('DCIM');
@@ -90,7 +98,7 @@ test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
   await act(async () => { byLabel(r, 'brief.pdf').props.onLongPress(); });
   expect(allText(r)).toContain('1 ausgewählt');
   // In den Papierkorb
-  const trashBtn = pressable(r, 'In den Papierkorb');
+  const trashBtn = pressable(r, 'Papierkorb');
   await act(async () => { await trashBtn.props.onPress(); });
   await flush();
   expect(calls).toContainEqual({ FileOp: { op: { Trash: { paths: ['/storage/emulated/0/brief.pdf'] } }, wait: true } });
@@ -126,5 +134,24 @@ test('Absturz beim letzten Start: Bericht und „Erneut versuchen“ statt erneu
   await act(async () => { await pressable(r, 'Erneut versuchen').props.onPress(); });
   await flush();
   expect(NativeModules.SnapCore.start).toHaveBeenCalledTimes(1);
-  expect(allText(r)).toContain('brief.pdf');
+  expect(allText(r)).toContain('Interner Speicher');
+});
+
+test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textdatei an', async () => {
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  await act(async () => { byLabel(r, 'brief.pdf').props.onPress(); });
+  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  // „+“ → „Neue Textdatei“ → Name bestätigen
+  await act(async () => { byLabel(r, 'Neu').props.onPress(); });
+  await act(async () => { pressable(r, 'Neue Textdatei').props.onPress(); });
+  await flush();
+  const input = r.root.find((n) => (n.type as any) === 'TextInput' && n.props.autoFocus);
+  await act(async () => { input.props.onChangeText('einkauf.txt'); });
+  await act(async () => { await pressable(r, 'Speichern').props.onPress(); });
+  await flush();
+  expect(calls).toContainEqual({ FileOp: { op: { CreateFile: { parent: '/storage/emulated/0', name: 'einkauf.txt' } }, wait: true } });
 });

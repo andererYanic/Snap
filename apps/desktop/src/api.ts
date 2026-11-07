@@ -95,6 +95,7 @@ export const api = {
   move: (sources: string[], dest: string) => invoke<{ job: number }>("move_items", { sources, dest }),
   rename: (path: string, newName: string) => invoke<{ job: number }>("rename", { path, newName }),
   mkdir: (parent: string, name: string) => invoke<{ job: number }>("mkdir", { parent, name }),
+  createFile: (parent: string, name: string) => invoke<{ job: number }>("create_file", { parent, name }),
   trash: (items: string[]) => invoke<{ job: number }>("trash", { items }),
   deletePermanently: (items: string[]) => invoke<{ job: number }>("delete_permanently", { items }),
   undo: () => invoke<{ message: string }>("undo"),

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dateien, die Snap anderen Apps zum Öffnen/Teilen übergeben darf (nur lesend, je Aufruf). -->
+<paths>
+    <external-path name="speicher" path="." />
+    <!-- SD-Karten und weitere Speicher unter /storage -->
+    <root-path name="weitere" path="storage" />
+</paths>

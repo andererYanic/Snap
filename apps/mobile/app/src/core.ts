@@ -43,6 +43,9 @@ export function onEvent(cb: (ev: { type: string; [k: string]: any }) => void) {
 }
 
 export const lastCrash = (): Promise<string | null> => native().lastCrash();
+export const openFile = (path: string): Promise<void> => native().openFile(path);
+export const shareFiles = (paths: string[]): Promise<void> => native().shareFiles(paths);
+export const storageInfo = (): Promise<{ total: number; free: number }> => native().storageInfo();
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();
 export const storageRoot = (): Promise<string> => native().storageRoot();

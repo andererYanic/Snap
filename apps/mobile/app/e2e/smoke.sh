@@ -51,7 +51,7 @@ if grep -q "FATAL EXCEPTION\|Fatal signal" "$OUT/logcat.txt"; then
   exit 1
 fi
 # Dateiansicht mit Inhalt statt Fehler- oder Absturzbildschirm (Deutsch oder Englisch)
-if ! grep -qE "Documents" "$OUT/ui-texts.txt" || ! grep -qE "Dateien|Files" "$OUT/ui-texts.txt"; then
+if ! grep -qE "Documents|Dokumente" "$OUT/ui-texts.txt" || ! grep -qE "Interner Speicher|Internal storage" "$OUT/ui-texts.txt"; then
   echo "FEHLER: Die Dateiansicht wird nicht angezeigt."
   exit 1
 fi

@@ -386,6 +386,23 @@ pub fn mkdir(parent: &Path, name: &str) -> Result<PathBuf> {
     }
 }
 
+/// Legt eine leere Datei an (nie überschreiben, kein Symlink-Folgen durch `create_new`).
+pub fn create_file(parent: &Path, name: &str) -> Result<PathBuf> {
+    require_abs(parent)?;
+    validate_name(name)?;
+    let p = parent.join(name);
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+        Ok(_) => Ok(p),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            api_bail!(AlreadyExists, "{} existiert bereits.", p.display())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            api_bail!(NotFound, "{} existiert nicht.", parent.display())
+        }
+        Err(e) => Err(e).with_context(|| format!("{} nicht anlegbar", p.display())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
