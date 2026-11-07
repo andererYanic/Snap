@@ -1,6 +1,6 @@
 # Snap – Android-App
 
-Status: **4a – eingebetteter Kern (FFI)**. Die App-Oberfläche folgt in 4b.
+Status: **4a – eingebetteter Kern (FFI)**. Die App-Oberfläche folgt in 4b; Gestaltung: [`docs/MOBILE_UX.md`](../../docs/MOBILE_UX.md).
 
 ## Grundsätze (Entscheidungen vom 2026-11-07)
 
