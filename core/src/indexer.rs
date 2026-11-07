@@ -338,15 +338,15 @@ mod tests {
     fn mount_table_parsing() {
         let mounts = "\
 /dev/sda1 / ext4 rw 0 0
-/dev/sdb1 /media/yanic/USB\\040Stick vfat rw 0 0
-/dev/sdc1 /run/media/yanic/Backup exfat rw 0 0
-server:/x /media/yanic/nas nfs4 rw 0 0
+/dev/sdb1 /media/nutzer/USB\\040Stick vfat rw 0 0
+/dev/sdc1 /run/media/nutzer/Backup exfat rw 0 0
+server:/x /media/nutzer/nas nfs4 rw 0 0
 /dev/sdd1 /media/anderer/Fremd vfat rw 0 0
-/dev/sde1 /media/yanic/../../etc ext4 rw 0 0
+/dev/sde1 /media/nutzer/../../etc ext4 rw 0 0
 kaputt
 ";
-        let d = drives_from_mounts(mounts, "yanic");
-        assert_eq!(d, [PathBuf::from("/media/yanic/USB Stick"), PathBuf::from("/run/media/yanic/Backup")]);
+        let d = drives_from_mounts(mounts, "nutzer");
+        assert_eq!(d, [PathBuf::from("/media/nutzer/USB Stick"), PathBuf::from("/run/media/nutzer/Backup")]);
         assert_eq!(unescape_mount("a\\134b\\0"), "a\\b\\0");
         assert_eq!(unescape_mount("\\777x"), "\\777x");
     }
