@@ -51,6 +51,8 @@ webpki-roots = "1"
 zip = { version = "9.4", default-features = false, features = ["aes-crypto", "deflate-flate2", "deflate64"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 tar = { version = "0.4", default-features = false }
+# DOCX-Leseansicht: XML lesen ohne DTD/Entitäten-Auflösung (keine XXE-Angriffe möglich).
+quick-xml = "0.42"
 
 [dev-dependencies]
 tempfile = "3"

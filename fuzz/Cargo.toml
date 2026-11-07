@@ -17,6 +17,7 @@ chrono = "0.4"
 tokio = { version = "1", features = ["rt", "io-util"] }
 tempfile = "3"
 walkdir = "2"
+zip = { version = "9.4", default-features = false, features = ["deflate-flate2"] }
 
 # Eigener Workspace, damit das Haupt-Workspace stabil (ohne nightly) baut.
 [workspace]
@@ -116,6 +117,13 @@ bench = false
 [[bin]]
 name = "archive_extract"
 path = "fuzz_targets/archive_extract.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docx_read"
+path = "fuzz_targets/docx_read.rs"
 test = false
 doc = false
 bench = false

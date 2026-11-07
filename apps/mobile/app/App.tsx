@@ -12,7 +12,7 @@ import { Devices, More } from './src/Pages';
 import Photos from './src/Photos';
 import { materialTheme, snapTheme, type Theme } from './src/theme';
 import { NavIcon, themed } from './src/ui';
-import { initMotion, m, toastIn, toastOut } from './src/motion';
+import { fadeIn, initMotion, m, toastIn, toastOut } from './src/motion';
 
 type Tab = 'files' | 'photos' | 'devices' | 'more';
 
@@ -27,7 +27,9 @@ export default function App() {
   const [materialAvailable, setMaterialAvailable] = useState(false);
   const [crash, setCrash] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
-  const [selecting, setSelecting] = useState(false);
+  const [, setSelecting] = useState(false);
+  // Inhalt des unteren Platzes von „Dateien“ (Aktionsleiste, „Hier einfügen“); null = Hauptmenü
+  const [bottomBar, setBottomBar] = useState<React.ReactNode>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const theme: Theme = material && materialAvailable ? materialTheme(dark) : snapTheme(dark);
 
@@ -144,13 +146,13 @@ export default function App() {
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab !== 'files' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
-            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} home={filesHome} />}
+            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} />}
             {tab === 'photos' && <Photos theme={theme} />}
             {tab === 'devices' && <Devices theme={theme} notify={notify} />}
             {tab === 'more' && <More theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} />}
           </Animated.View>
           {toast && (
-            <Animated.View entering={m(toastIn)} exiting={m(toastOut)} style={[s.toast, selecting && s.toastHigh]}>
+            <Animated.View entering={m(toastIn)} exiting={m(toastOut)} style={s.toast}>
               <Text style={s.toastText}>{toast.text}</Text>
               {toast.undo && (
                 <Pressable onPress={() => { toast.undo?.(); setToast(null); }} style={s.toastBtn}>
@@ -160,9 +162,13 @@ export default function App() {
             </Animated.View>
           )}
         </SafeAreaView>
-        {!selecting && (
-          <SafeAreaView edges={['bottom']} style={s.nav}>
-            {tabs.map((x) => {
+        {/* Fester Platz unten: Hauptmenü oder – beim Markieren – die Leiste von „Dateien“.
+            Gleiche Höhe in beiden Fällen, damit die Liste darüber nie springt. */}
+        <SafeAreaView edges={['bottom']} style={s.nav}>
+          {tab === 'files' && bottomBar ? (
+            <Animated.View key="bar" entering={m(fadeIn)} style={s.slot}>{bottomBar}</Animated.View>
+          ) : (
+            tabs.map((x) => {
               const on = tab === x.key;
               return (
                 <Pressable key={x.key} style={s.navItem} onPress={() => { if (tab !== x.key) { core.haptic('tick'); } else if (x.key === 'files') { setFilesHome((n) => n + 1); } setTab(x.key); }} accessibilityRole="tab" accessibilityState={{ selected: on }}>
@@ -172,9 +178,9 @@ export default function App() {
                   <Text style={[s.navLabel, on && s.navLabelOn]}>{x.label}</Text>
                 </Pressable>
               );
-            })}
-          </SafeAreaView>
-        )}
+            })
+          )}
+        </SafeAreaView>
       </View>
     </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -198,6 +204,7 @@ const styles = themed((th: Theme) =>
     btnText: { color: th.onAccent, fontSize: 16, fontWeight: '600' },
     header: { color: th.text, fontSize: 26, fontWeight: '700', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
     nav: { flexDirection: 'row', backgroundColor: th.card, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.stroke },
+    slot: { flex: 1, flexDirection: 'row', minHeight: 64 },
     navItem: { flex: 1, alignItems: 'center', paddingTop: 10, paddingBottom: 8, minHeight: 64 },
     navPill: { width: 60, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
     navPillOn: { backgroundColor: th.accentSoft },
@@ -207,7 +214,6 @@ const styles = themed((th: Theme) =>
       position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', minHeight: 52,
       paddingLeft: 16, borderRadius: 14, backgroundColor: th.dark ? '#e8e8ee' : '#2b2d35', elevation: 8,
     },
-    toastHigh: { bottom: 84 },
     toastText: { flex: 1, color: th.dark ? '#1b1b1f' : '#f1f1f4', fontSize: 14 },
     toastBtn: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 16 },
     link: { color: th.dark ? '#3b6fe0' : '#9db8ff', fontSize: 15, fontWeight: '700' },

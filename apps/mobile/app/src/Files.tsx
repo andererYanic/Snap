@@ -17,6 +17,8 @@ import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
+import PdfViewer from './PdfViewer';
+import TextViewer, { isText } from './TextViewer';
 import Viewer from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
@@ -25,6 +27,11 @@ interface Props {
   root: string;
   notify: (text: string, undo?: () => void) => void;
   selectionChanged: (active: boolean) => void;
+  /**
+   * Platz der unteren Leiste (feste Höhe): Files stellt dort die Aktionsleiste bzw. „Hier
+   * einfügen“ hinein; `null` = Hauptmenü. So ändert sich die Höhe der Liste nie.
+   */
+  bottomSlot?: (node: React.ReactNode) => void;
   /** Zähler: ändert er sich, geht es zurück zur Startansicht (erneutes Antippen von „Dateien“). */
   home?: number;
 }
@@ -45,7 +52,7 @@ const FOLDERS: [string, string][] = [
   ['Movies', 'Videos'],
 ];
 
-export default function Files({ theme, root, notify, selectionChanged, home = 0 }: Props) {
+export default function Files({ theme, root, notify, selectionChanged, bottomSlot, home = 0 }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [items, setItems] = useState<Item[]>([]);
@@ -67,6 +74,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Item[] | null>(null);
   const [searching, setSearching] = useState(false); // Anfrage läuft noch
+  const [pdf, setPdf] = useState<{ path: string; name: string } | null>(null);
+  const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
   const [viewer, setViewer] = useState<{ items: Item[]; start: number } | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
   const [folders, setFolders] = useState<[string, string][]>([]);
@@ -246,6 +255,12 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     } else if (e.kind === 'Dir') {
       setQuery('');
       go(e.path, 'forward');
+    } else if (isText(e.name)) {
+      // Text und Markdown zeigt die App selbst an
+      setTextFile({ path: e.path, name: e.name });
+    } else if (/\.pdf$/i.test(e.name)) {
+      // PDFs zeigt die App selbst (Android zeichnet die Seiten)
+      setPdf({ path: e.path, name: e.name });
     } else if (isMedia(e.name)) {
       // Alle Dateien des Ordners bzw. der Treffer: Wischen führt zur nächsten/vorigen Datei
       const files = shown.filter((x) => x.kind === 'File');
@@ -547,9 +562,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   const zips = selected.filter((e) => e.kind === 'File' && ARCHIVE.test(e.name)).map((e) => e.path);
   const menuActions: MenuAction[] = [
     ...(single && single.kind === 'File' ? [{ label: t('Öffnen'), onPress: () => open({ ...single }) }] : []),
-    // Je nach Format: Archive entpacken
-    ...(single && zips.length === 1 ? [{ label: t('Entpacken'), onPress: () => extractAll(zips) }] : []),
-    { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
+    // Je nach Dateiformat
+    ...(single && single.kind === 'File' ? formatActions(single) : []),
     { label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
     { label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
@@ -557,6 +571,21 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: t('In den Papierkorb'), separate: true, onPress: trash },
     { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
+  /** Aktionen, die nur für bestimmte Formate passen (Menü am Finger, eine Datei). */
+  function formatActions(e: Item): MenuAction[] {
+    const done = () => setSel(new Set());
+    if (ARCHIVE.test(e.name)) {
+      return [{ label: t('Entpacken'), onPress: () => extractAll([e.path]) }];
+    }
+    if (/\.pdf$/i.test(e.name) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(e.name)) {
+      return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
+    }
+    if (/\.(docx?|odt|rtf|xlsx?|ods|pptx?|odp)$/i.test(e.name)) {
+      return [{ label: t('Mit Office-App öffnen'), onPress: () => { done(); core.openFile(e.path).catch(fail); } }];
+    }
+    return [];
+  }
+
   const toClip = (mode: 'copy' | 'move') => {
     setClip({ mode, paths: selected.map((e) => e.path) });
     setSel(new Set());
@@ -581,6 +610,35 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: t('Nach Größe sortieren'), onPress: () => setSort('size'), disabled: sort === 'size' },
     { label: hidden ? t('Versteckte Dateien ausblenden') : t('Versteckte Dateien anzeigen'), onPress: () => setHidden(!hidden) },
   ];
+
+  // Untere Leiste: Aktionsleiste (ab zwei Dateien) oder „Hier einfügen“ im festen Platz der App
+  const bottomNode = onLanding ? null : showBar ? (
+    <View style={s.actionBar} accessibilityRole="toolbar">
+      {barActions.map((a) => (
+        <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
+          <Text style={[s.actionIcon, a.danger && { color: theme.danger }]}>{a.icon}</Text>
+          <Text style={[s.actionText, a.danger && { color: theme.danger }]} numberOfLines={1}>{a.label}</Text>
+        </Tap>
+      ))}
+    </View>
+  ) : clip ? (
+    <View style={s.bar}>
+      <Text style={s.clipText} numberOfLines={2}>
+        {clip.mode === 'copy' ? t('{n} zum Kopieren ausgewählt', { n: clip.paths.length }) : t('{n} zum Verschieben ausgewählt', { n: clip.paths.length })}
+      </Text>
+      <BarBtn theme={theme} label={t('Abbrechen')} onPress={() => setClip(null)} />
+      <BarBtn theme={theme} label={t('Hier einfügen')} strong disabled={!!hits || path === null} onPress={paste} />
+    </View>
+  ) : null;
+  const slotRef = useRef(bottomSlot);
+  slotRef.current = bottomSlot;
+  // Nur neu setzen, wenn sich Auswahl, Ablage oder Ansicht ändern (sonst Endlosschleife über die App)
+  const nodeRef = useRef(bottomNode);
+  nodeRef.current = bottomNode;
+  useEffect(() => {
+    slotRef.current?.(nodeRef.current);
+  }, [showBar, clip, onLanding, sel, hits, path, theme, shown]);
+  useEffect(() => () => slotRef.current?.(null), []);
 
   return (
     <View style={s.fill}>
@@ -676,32 +734,26 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
       )}
 
       {/* Unten: Aktionsleiste (ab zwei Dateien), „Hier einfügen“ oder „+“ */}
-      {onLanding ? null : showBar ? (
-        <Animated.View entering={m(toastIn)} style={s.actionBar} accessibilityRole="toolbar">
-          {barActions.map((a) => (
-            <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
-              <Text style={[s.actionIcon, a.danger && { color: theme.danger }]}>{a.icon}</Text>
-              <Text style={[s.actionText, a.danger && { color: theme.danger }]} numberOfLines={1}>{a.label}</Text>
-            </Tap>
-          ))}
-        </Animated.View>
-      ) : clip ? (
-        <Animated.View entering={m(toastIn)} style={s.bar}>
-          <Text style={s.clipText} numberOfLines={2}>
-            {clip.mode === 'copy' ? t('{n} zum Kopieren ausgewählt', { n: clip.paths.length }) : t('{n} zum Verschieben ausgewählt', { n: clip.paths.length })}
-          </Text>
-          <BarBtn theme={theme} label={t('Abbrechen')} onPress={() => setClip(null)} />
-          <BarBtn theme={theme} label={t('Hier einfügen')} strong disabled={!!hits || path === null} onPress={paste} />
-        </Animated.View>
-      ) : !hits && sel.size === 0 ? (
-        <Animated.View entering={m(popIn)} exiting={m(popOut)} style={s.fabBox}>
+      {onLanding || showBar || clip ? null : !hits && sel.size === 0 ? (        <Animated.View entering={m(popIn)} exiting={m(popOut)} style={s.fabBox}>
           <Pressable style={s.fab} onPress={() => setSheet('create')} android_ripple={{ color: 'rgba(255,255,255,0.3)' }} accessibilityLabel={t('Neu')}>
             <Text style={s.fabText}>+</Text>
           </Pressable>
         </Animated.View>
       ) : null}
 
-      {menu && sel.size > 0 && <ContextMenu x={menu.x} y={menu.y} theme={theme} actions={menuActions} onClose={() => setMenu(null)} />}
+      {menu && sel.size > 0 && <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          theme={theme}
+          actions={menuActions}
+          onClose={() => {
+            setMenu(null);
+            // Nur zum Öffnen des Menüs markiert → beim Schließen wieder abwählen
+            if (!showBar) {
+              setSel(new Set());
+            }
+          }}
+        />}
 
       <BottomSheet
         visible={sheet === 'create'}
@@ -771,6 +823,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </View>
       </Modal>
 
+      {textFile && <TextViewer path={textFile.path} name={textFile.name} theme={theme} onClose={() => setTextFile(null)} />}
+      {pdf && <PdfViewer path={pdf.path} name={pdf.name} onClose={() => setPdf(null)} />}
       {viewer && <Viewer items={viewer.items} start={viewer.start} onClose={() => setViewer(null)} />}
     </View>
   );
@@ -933,17 +987,11 @@ const styles = themed((th: Theme) =>
     emptyIcon: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
     emptyPlus: { fontSize: 30 },
     emptyTitle: { color: th.text, fontSize: 18, fontWeight: '700', marginBottom: 6, textAlign: 'center' },
-    bar: {
-      position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', borderRadius: 18,
-      backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke, elevation: 6, overflow: 'hidden',
-    },
+    bar: { flex: 1, flexDirection: 'row', alignItems: 'center' },
     barBtn: { flex: 1, minHeight: 56, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
     barText: { color: th.text, fontSize: 13, fontWeight: '600' },
     clipText: { flex: 1.6, color: th.text2, fontSize: 13, paddingLeft: 16 },
-    actionBar: {
-      position: 'absolute', left: 0, right: 0, bottom: 0, height: 72, flexDirection: 'row', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 10,
-      backgroundColor: th.dark ? '#2b2d36' : '#ffffff', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.stroke, elevation: 12,
-    },
+    actionBar: { flex: 1, flexDirection: 'row', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 6 },
     actionBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 14, overflow: 'hidden' },
     actionIcon: { color: th.text, fontSize: 19, lineHeight: 24 },
     actionText: { color: th.text, fontSize: 12, marginTop: 2 },

@@ -488,6 +488,20 @@ Anlass: Der Nutzer meldete starke Bildeinbrüche und träge Menüs. Neue Messung
 - **Offen:** Messung auf echter Hardware  wäre aussagekräftiger;
   bis dahin zählt die Rückmeldung vom Gerät.
 
+## Review 22 – Eingebaute Anzeigen: PDF, Text/Markdown, DOCX (2026-11-07)
+
+| Messung | Ergebnis |
+|---|---|
+| DOCX lesen: 646 KB XML, 3 250 Blöcke (Überschriften, Absätze, 50 Tabellen) | **5,5 ms** (Release) |
+
+- DOCX liest der Kern in `spawn_blocking`; die App zeigt die Blöcke in einer virtualisierten
+  Liste. Auch auf dem Telefon (Faktor 3–5) bleibt ein langes Dokument deutlich unter 50 ms.
+- PDF: Android rendert Seiten bei Bedarf (nur sichtbare ± 2), als PNG im Cache (150 MB); eine
+  Seite in Bildschirmbreite braucht auf Mittelklasse-Telefonen typischerweise 20–60 ms und läuft
+  außerhalb des UI-Threads.
+- Text/Markdown: höchstens 2 MB werden gelesen; lange Texte in Abschnitten zu 60 Zeilen
+  (virtualisierte Liste), Markdown auf höchstens 5 000 Blöcke begrenzt.
+
 ## Review 23 – Speichermeldung der Geräte (4f, 2026-11-07)
 
 - Der eigene Speicher wird beim Verbindungsaufbau und danach alle 5 Minuten bestimmt (`statvfs`

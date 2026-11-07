@@ -1105,6 +1105,39 @@ fn print_response(res: Response) -> ExitCode {
             println!("Freigaben:      {}", i.shared_files);
             println!("Warteschlange:  {} wartend", i.pending_jobs);
         }
+        Response::Docx(doc) => {
+            // CLI: reinen Text ausgeben (Leseansicht ist für die Apps gedacht)
+            for b in &doc.blocks {
+                use space_core::docx::DocBlock;
+                let text = |spans: &[space_core::docx::Span]| spans.iter().map(|s| s.text.as_str()).collect::<String>();
+                match b {
+                    DocBlock::Heading { level, inline } => {
+                        println!("\n{} {}\n", "#".repeat(*level as usize), text(inline))
+                    }
+                    DocBlock::Paragraph { inline } => println!("{}\n", text(inline)),
+                    DocBlock::List { ordered, items } => {
+                        for (i, it) in items.iter().enumerate() {
+                            if *ordered {
+                                println!("{}. {}", i + 1, text(it))
+                            } else {
+                                println!("• {}", text(it))
+                            }
+                        }
+                        println!();
+                    }
+                    DocBlock::Table { rows } => {
+                        for r in rows {
+                            println!("| {} |", r.join(" | "));
+                        }
+                        println!();
+                    }
+                    DocBlock::Image { file } => println!("[Bild: {}]\n", file.display()),
+                }
+            }
+            if doc.truncated {
+                println!("… (gekürzt)");
+            }
+        }
         Response::SearchResults { hits } => {
             if hits.is_empty() {
                 println!("Nichts gefunden.");

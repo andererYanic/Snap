@@ -33,6 +33,14 @@ NativeModules.SnapCore = {
     const req = JSON.parse(json);
     calls.push(req);
     if (req.ListDir) return JSON.stringify(listing);
+    if (req.ReadDocx) {
+      return JSON.stringify({ Docx: { truncated: false, blocks: [
+        { type: 'heading', level: 1, inline: [{ text: 'Bewerbung' }] },
+        { type: 'paragraph', inline: [{ text: 'Sehr geehrte ' }, { text: 'Damen', bold: true }] },
+        { type: 'table', rows: [['Jahr', 'Firma'], ['2024', 'Snap GmbH']] },
+        { type: 'list', ordered: false, items: [[{ text: 'Punkt' }]] },
+      ] } });
+    }
     if (req.Search) {
       return JSON.stringify({ SearchResults: { hits: [
         { path: '/storage/emulated/0/DCIM/urlaub.jpg', name: 'urlaub.jpg', kind: 'File', size: 1, mtime: 1700000000, fuzzy: true },
@@ -189,8 +197,8 @@ test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textda
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
-  await act(async () => { byLabel(r, 'brief.pdf').props.onPress(); });
-  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  await act(async () => { byLabel(r, 'urlaub.zip').props.onPress(); });
+  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/urlaub.zip');
   // „+“ → „Neue Textdatei“ → Name bestätigen
   await act(async () => { byLabel(r, 'Neu').props.onPress(); });
   await act(async () => { pressable(r, 'Neue Textdatei').props.onPress(); });
@@ -233,7 +241,7 @@ test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsi
   await require('../src/motion').initMotion();
 });
 
-test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt bis alles abgewählt, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
+test('Feedback 2–4: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt bis alles abgewählt, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => { r = mount(<App />); });
   await flush();
@@ -250,13 +258,22 @@ test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt b
   await flush();
   expect(allText(r)).toContain('1 ausgewählt');
   expect(allText(r)).toContain('In den Papierkorb');
-  // … mit Abdunkelung: Antippen daneben schließt nur das Menü, die Auswahl bleibt
+  // Menü am Finger zeigt keine ZIP-Option (die gibt es nur in der Leiste)
+  expect(allText(r)).not.toContain('Als ZIP packen');
+  // Schließen ohne Aktion: die nur dafür markierte Datei wird wieder abgewählt
   await act(async () => { byLabel(r, 'Menü schließen').props.onPress(); });
   await flush();
-  expect(allText(r)).toContain('1 ausgewählt');
+  expect(allText(r)).not.toContain('ausgewählt');
   expect(allText(r)).not.toContain('In den Papierkorb');
-  // Zweite Datei antippen: Aktionsleiste unten erscheint
-  await act(async () => { pressable(r, 'liste.txt').props.onPress(); });
+  // Zwei Dateien per Halten-und-Wischen: Aktionsleiste unten erscheint
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+      { state: State.END, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+    ]);
+  });
   await flush();
   expect(allText(r)).toContain('2 ausgewählt');
   const toolbar = () => r.root.findAll((n) => n.props.accessibilityRole === 'toolbar' && typeof n.type !== 'string');
@@ -362,4 +379,126 @@ test('ZIP: mehrere Dateien packen, Archiv mit Passwort entpacken, Rückgängig',
   expect(allText(r)).toContain('Entpackt nach „urlaub“.');
   // Passwort taucht nirgends sichtbar auf
   expect(allText(r)).not.toContain('geheim');
+});
+
+test('PDF öffnet die eingebaute Anzeige; Menü je Format (PDF: Drucken, DOCX: Office-App)', async () => {
+  NativeModules.SnapCore.pdfInfo = jest.fn(async () => ({ pages: 2, ratios: [1.414, 1.414] }));
+  NativeModules.SnapCore.pdfPage = jest.fn(async () => '/cache/pdf/seite.png');
+  NativeModules.SnapCore.printFile = jest.fn(async () => null);
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  // Antippen: eigene Anzeige statt fremder App
+  NativeModules.SnapCore.openFile.mockClear();
+  await act(async () => { byLabel(r, 'brief.pdf').props.onPress(); });
+  await flush();
+  await flush();
+  expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+  expect(NativeModules.SnapCore.pdfInfo).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  expect(allText(r)).toContain('Seite 1 von 2');
+  await act(async () => { byLabel(r, 'Drucken').props.onPress(); });
+  expect(NativeModules.SnapCore.printFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  await act(async () => { byLabel(r, 'Schließen').props.onPress(); });
+  await flush();
+  // Lange drücken auf das PDF: Menü bietet „Drucken“, aber kein „Als ZIP packen“
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.END, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+    ]);
+  });
+  await flush();
+  expect(allText(r)).toContain('Drucken');
+  expect(allText(r)).not.toContain('Als ZIP packen');
+  NativeModules.SnapCore.printFile.mockClear();
+  await act(async () => { pressable(r, 'Drucken').props.onPress(); });
+  await flush();
+  expect(NativeModules.SnapCore.printFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  expect(allText(r)).not.toContain('ausgewählt');
+});
+
+test('Markdown-Leser: Blöcke und Hervorhebungen, kein HTML', () => {
+  const { parseMarkdown } = require('../src/markdown');
+  const b = parseMarkdown('# Titel\n\nText mit **fett**, *kursiv* und `code`.\n\n- [x] erledigt\n- offen\n\n> Zitat\n\n```\nlet a = 1;\n```\n\n---\n<script>alert(1)</script>');
+  expect(b.map((x: any) => x.type)).toEqual(['heading', 'paragraph', 'list', 'quote', 'code', 'rule', 'paragraph']);
+  expect(b[1].inline.filter((x: any) => x.bold || x.italic || x.code).map((x: any) => x.text)).toEqual(['fett', 'kursiv', 'code']);
+  expect(b[2].items.map((x: any) => x.checked)).toEqual([true, undefined]);
+  // HTML bleibt reiner Text
+  expect(b[6].inline).toEqual([{ text: '<script>alert(1)</script>' }]);
+  // Begrenzung bei riesigen Dateien
+  expect(parseMarkdown('a\n\n'.repeat(10000), 100)).toHaveLength(100);
+});
+
+test('Textdatei öffnet die eingebaute Anzeige statt einer fremden App', async () => {
+  NativeModules.SnapCore.readText = jest.fn(async () => ({ text: 'Zeile eins\nZeile zwei', truncated: false }));
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  NativeModules.SnapCore.openFile.mockClear();
+  await act(async () => { byLabel(r, 'liste.txt').props.onPress(); });
+  await flush();
+  await flush();
+  expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+  expect(NativeModules.SnapCore.readText).toHaveBeenCalled();
+  expect(allText(r)).toContain('Zeile eins');
+});
+
+test('Untere Leiste behält beim Markieren ihren Platz (Liste rutscht nicht)', async () => {
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  const slot = () => r.root.findAll((n) => Array.isArray(n.props.edges) && n.props.edges.length === 1 && n.props.edges[0] === 'bottom')[0];
+  const tabs = () => r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function');
+  const before = slot();
+  expect(tabs().length).toBe(4);
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+      { state: State.END, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+    ]);
+  });
+  await flush();
+  // Gleicher Platz, nur der Inhalt wechselt: statt der Tabs die Aktionsleiste
+  expect(slot()).toBe(before);
+  expect(tabs()).toHaveLength(0);
+  expect(r.root.findAll((n) => n.props.accessibilityRole === 'toolbar' && typeof n.type !== 'string').length).toBeGreaterThan(0);
+  await act(async () => { byLabel(r, 'Auswahl aufheben').props.onPress(); });
+  await flush();
+  expect(slot()).toBe(before);
+  expect(tabs().length).toBe(4);
+});
+
+test('DOCX öffnet die Leseansicht (Kern liest, App zeigt Überschrift, Tabelle, Liste)', async () => {
+  NativeModules.SnapCore.docxImageDir = jest.fn(async () => '/cache/docx');
+  listing.DirListing.entries.push({ name: 'zz-bewerbung.docx', kind: 'File', size: 9000, mtime: 1700000000, hidden: false });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+    await flush();
+    NativeModules.SnapCore.openFile.mockClear();
+    await act(async () => { byLabel(r, 'zz-bewerbung.docx').props.onPress(); });
+    await flush();
+    await flush();
+    expect(calls).toContainEqual({ ReadDocx: { path: '/storage/emulated/0/zz-bewerbung.docx', image_dir: '/cache/docx' } });
+    expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+    const text = allText(r);
+    expect(text).toContain('Bewerbung');
+    expect(text).toContain('Damen');
+    expect(text).toContain('Snap GmbH');
+    expect(text).toContain('Leseansicht');
+    expect(text).toContain('Original mit Office-App öffnen');
+  } finally {
+    listing.DirListing.entries.pop();
+  }
 });

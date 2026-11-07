@@ -152,6 +152,93 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /** PDF: Seitenzahl und Seitenverhältnisse (Höhe/Breite) oder null, wenn nicht lesbar. */
+  @ReactMethod
+  fun pdfInfo(path: String, promise: Promise) {
+    scope.launch {
+      try {
+        val info = PdfPages.info(path) ?: return@launch promise.resolve(null)
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        map.putInt("pages", info.first)
+        val arr = com.facebook.react.bridge.Arguments.createArray()
+        info.second.forEach { arr.pushDouble(it) }
+        map.putArray("ratios", arr)
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** PDF: Seite als PNG (Pfad) in der gewünschten Breite. */
+  @ReactMethod
+  fun pdfPage(path: String, index: Double, width: Double, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(PdfPages.page(ctx.applicationContext, path, index.toInt(), width.toInt()))
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /**
+   * Liest eine Textdatei für die Anzeige (höchstens `maxBytes`, UTF-8; ungültige Bytes werden
+   * ersetzt). Ergebnis: `{ text, truncated }`.
+   */
+  @ReactMethod
+  fun readText(path: String, maxBytes: Double, promise: Promise) {
+    val f = regularFile(path) ?: return promise.reject("read", "Nur Dateien lassen sich anzeigen.")
+    scope.launch {
+      try {
+        val limit = maxBytes.toLong().coerceIn(1024, 8L * 1024 * 1024)
+        val buf = ByteArray(minOf(limit, f.length()).toInt())
+        var n = 0
+        f.inputStream().use { input ->
+          while (n < buf.size) {
+            val r = input.read(buf, n, buf.size - n)
+            if (r < 0) break
+            n += r
+          }
+        }
+        // Nicht mitten in einem UTF-8-Zeichen abschneiden
+        var end = n
+        if (f.length() > n) {
+          while (end > 0 && (buf[end - 1].toInt() and 0xC0) == 0x80) end--
+          if (end > 0 && (buf[end - 1].toInt() and 0x80) != 0) end--
+        }
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        map.putString("text", String(buf, 0, end, Charsets.UTF_8))
+        map.putBoolean("truncated", f.length() > n)
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.reject("read", e.message ?: e.toString())
+      }
+    }
+  }
+
+  /** Ordner im App-Cache für Bilder aus Word-Dateien (wird mit dem Cache begrenzt). */
+  @ReactMethod
+  fun docxImageDir(promise: Promise) {
+    val dir = java.io.File(ctx.cacheDir, "docx").apply { mkdirs() }
+    promise.resolve(dir.absolutePath)
+  }
+
+  /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
+  @ReactMethod
+  fun printFile(path: String, promise: Promise) {
+    val f = regularFile(path) ?: return promise.reject("print", "Nur Dateien lassen sich drucken.")
+    val activity = ctx.currentActivity ?: return promise.reject("print", "App ist nicht im Vordergrund.")
+    activity.runOnUiThread {
+      try {
+        Printing.print(activity, f)
+        promise.resolve(null)
+      } catch (e: Throwable) {
+        promise.reject("print", e.message ?: e.toString())
+      }
+    }
+  }
+
   /** Kurze Vibration über das System (ohne Berechtigung): `select` beim Markieren, `tick` beim Erweitern. */
   @ReactMethod
   fun haptic(kind: String) {

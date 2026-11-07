@@ -223,10 +223,11 @@ pub fn read_tags<R: Read + Seek>(reader: &mut R, info: &mut MediaInfo) {
     use lofty::file::{AudioFile, TaggedFileExt};
     use lofty::tag::Accessor;
     let Ok(probe) = lofty::probe::Probe::new(reader).guess_file_type() else { return };
-    // lofty 0.25.5 läuft bei ADTS-AAC mit einer Frame-Länge von 0 beim Berechnen der Dauer in
-    // eine Endlosschleife (gefunden per Fuzzing, aac/read.rs). Für AAC daher nur Tags lesen.
-    let is_aac = probe.file_type() == Some(lofty::file::FileType::Aac);
-    let opts = lofty::config::ParseOptions::new().read_cover_art(false).read_properties(!is_aac);
+    // lofty 0.25.5 rechnet die Dauer bei zwei Formaten fehlerhaft (beides per Fuzzing gefunden):
+    // ADTS-AAC mit Frame-Länge 0 → Endlosschleife (aac/read.rs); Musepack SV8 mit riesiger
+    // Sample-Zahl → Überlauf mit Panik (musepack/sv8/properties.rs). Dort daher nur Tags lesen.
+    let fragile = matches!(probe.file_type(), Some(lofty::file::FileType::Aac | lofty::file::FileType::Mpc));
+    let opts = lofty::config::ParseOptions::new().read_cover_art(false).read_properties(!fragile);
     let probe = probe.options(opts);
     let Ok(tagged) = probe.read() else { return };
     let d = tagged.properties().duration().as_secs_f64();
@@ -631,5 +632,13 @@ mod regression {
             let _ = tx.send(());
         });
         assert!(rx.recv_timeout(std::time::Duration::from_secs(10)).is_ok(), "read_tags hängt");
+    }
+    /// Fuzzing-Fund: Musepack-SV8-Kopf mit riesiger Sample-Zahl ließ lofty bei der Dauer überlaufen.
+    #[test]
+    fn musepack_sample_overflow_does_not_panic() {
+        let data: &[u8] = include_bytes!("../tests/data/lofty-mpc-overflow.bin");
+        let mut info = super::MediaInfo::default();
+        super::read_tags(&mut std::io::Cursor::new(data), &mut info);
+        assert_eq!(info.duration_secs, None);
     }
 }
