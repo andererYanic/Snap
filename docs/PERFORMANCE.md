@@ -567,3 +567,16 @@ Einträge. Alle Seiten liegen weit unter 16 ms.
   Läuft in `spawn_blocking`, blockiert weder Netz noch Oberfläche.
 - Das Entpacken selbst ist der bestehende Dateiauftrag (Review 20), höchstens einer je Gerät.
 - Die App fragt nur einmal (Fernoperation) und wartet auf das Ergebnis; nichts läuft im UI-Thread.
+
+## Review 29 – rusqlite 0.32 → 0.41 (SQLite 3.5x, 2026-11-07)
+
+Ohne Codeänderung; Messung `perf.rs::db_hot_paths` (Release) nach dem Wechsel:
+
+| Messung | vorher | nachher |
+|---|---|---|
+| `is_shared` | 7–9 µs | 4,0 µs |
+| Lesen während Schreiblast p50 / p99 / max | – / 0,06 ms / 0,8 ms | 4,1 µs / 0,02 ms / 1,0 ms |
+| `apply_remote_entries` (10k) | – | 11,4 µs je Eintrag |
+| `entries_since` (Seite 1000) | – | 1,5 ms |
+
+Keine Verschlechterung; `cargo deny check` und `cargo audit` grün.
