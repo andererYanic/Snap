@@ -548,3 +548,13 @@ Messung (`perf.rs::remote_dir_tree`, Release, 105k Katalogeinträge eines Gerät
 Lehre: Die Obergrenze muss als echte Bereichsbedingung in der Abfrage stehen; mit `?4 IS NULL OR`
 nutzt SQLite sie nicht für den Indexbereich und liest nach dem letzten Kind alle folgenden
 Einträge. Alle Seiten liegen weit unter 16 ms.
+
+## Review 27 – Desktop: Links, Speicheranalyse, Schriftart (2026-11-07)
+
+- Speicheranalyse und Duplikatsuche nutzen die bereits gemessenen Abfragen (Review 13: Ordner mit
+  10 000 Dateien 8 ms, 1,1 Mio. Einträge 0,57 s). Die Seite rechnet asynchron mit Ladeanzeige,
+  Duplikate erst auf Knopfdruck; die Oberfläche blockiert nie.
+- Eigene Schrift: einmal beim Start bzw. nach der Wahl als Bytes über `tauri::ipc::Response`
+  (kein JSON, kein Base64) und `FontFace`; Inconsolata liegt gebündelt bei (2 × 105 kB).
+- Linkliste: eine Abfrage beim Öffnen der Seite; Erstellen lädt verschlüsselt im Dienst hoch, die
+  Oberfläche wartet nur auf das Ergebnis.

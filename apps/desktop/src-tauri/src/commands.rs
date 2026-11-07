@@ -455,3 +455,187 @@ pub async fn setting_set(d: State<'_, Daemon>, key: String, value: Option<i64>) 
 pub fn set_language(code: String) {
     crate::i18n::set(&code);
 }
+
+// ---------------------------------------------------------------- Freigabelinks
+
+#[tauri::command]
+pub async fn links(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::LinkList).await
+}
+
+/// Freigabelinks einrichten. Das Geheimnis geht nur an den Dienst und kommt nie zurück.
+#[tauri::command]
+pub async fn link_setup(
+    d: State<'_, Daemon>,
+    base_url: String,
+    endpoint: String,
+    bucket: String,
+    access_key_id: String,
+    secret_access_key: String,
+) -> UiResult<Value> {
+    if [&base_url, &endpoint, &bucket, &access_key_id, &secret_access_key].iter().any(|s| s.len() > 512) {
+        return Err(UiError::new("InvalidInput", "Eingabe zu lang."));
+    }
+    let s3 = space_core::links::s3::S3Config {
+        endpoint: endpoint.trim().to_string(),
+        bucket: bucket.trim().to_string(),
+        region: "auto".into(),
+        access_key_id: access_key_id.trim().to_string(),
+        secret_access_key,
+    };
+    d.request(Request::LinkSetup(space_core::links::LinkSettings { base_url: base_url.trim().to_string(), s3 })).await
+}
+
+/// Link für eine Datei erstellen. Die Datei wird verschlüsselt hochgeladen – daher bestätigt
+/// der Nutzer im nativen Dialog (eine manipulierte Web-Ansicht kann so nichts unbemerkt teilen).
+#[tauri::command]
+pub async fn link_create(
+    app: AppHandle,
+    d: State<'_, Daemon>,
+    path: String,
+    days: Option<u32>,
+    max_downloads: Option<u32>,
+    password: Option<String>,
+) -> UiResult<Value> {
+    let p = ui_path(&path)?;
+    if password.as_ref().is_some_and(|pw| pw.len() > 256) {
+        return Err(UiError::new("InvalidInput", "Passwort zu lang."));
+    }
+    let name = summary(std::slice::from_ref(&p)).trim_start_matches("• ").to_string();
+    // Ziel aus dem Dienst (nicht aus der Web-Ansicht) anzeigen: eine manipulierte Einrichtung
+    // fiele hier auf.
+    let target = d
+        .request(Request::LinkList)
+        .await
+        .ok()
+        .and_then(|v| v.get("base_url").and_then(|u| u.as_str()).map(|u| short_text(u, 120)))
+        .unwrap_or_default();
+    let text = tr(
+        "„{name}“ verschlüsselt hochladen und einen Link erstellen? Wer den Link hat, kann die Datei herunterladen.\n\nZiel: {target}",
+        &[("name", &name), ("target", &target)],
+    );
+    if !confirm(&app, tr("Link erstellen", &[]), text, tr("Link erstellen", &[])).await {
+        return Err(cancelled());
+    }
+    let password = password.filter(|pw| !pw.is_empty());
+    d.request(Request::LinkCreate { path: p, days, max_downloads, password }).await
+}
+
+#[tauri::command]
+pub async fn link_revoke(d: State<'_, Daemon>, id: String) -> UiResult<Value> {
+    if id.is_empty() || id.len() > 128 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(UiError::new("InvalidInput", "Ungültige Link-ID."));
+    }
+    d.request(Request::LinkRevoke { id }).await
+}
+
+// ---------------------------------------------------------------- Speicheranalyse
+
+#[tauri::command]
+pub async fn space_usage(d: State<'_, Daemon>, path: String) -> UiResult<Value> {
+    d.request(Request::SpaceUsage { path: ui_path(&path)?, limit: 50 }).await
+}
+
+#[tauri::command]
+pub async fn duplicates(d: State<'_, Daemon>, path: Option<String>) -> UiResult<Value> {
+    let path = path.map(|p| ui_path(&p)).transpose()?;
+    d.request(Request::Duplicates { path, min_size: Some(1024 * 1024), limit: 200 }).await
+}
+
+// ---------------------------------------------------------------- Schriftart
+
+/// Höchstgröße einer eigenen Schriftdatei.
+const MAX_FONT: u64 = 16 * 1024 * 1024;
+
+fn font_dir() -> UiResult<std::path::PathBuf> {
+    directories::ProjectDirs::from("de", "snap", "snap")
+        .map(|d| d.data_dir().join("fonts"))
+        .ok_or_else(|| UiError::new("Internal", "Kein Datenordner."))
+}
+
+/// Erkennt TrueType/OpenType an den ersten Bytes (keine weitere Auswertung hier – die
+/// Schrift lädt die Web-Ansicht in ihrem eigenen Prozess).
+pub fn is_font(head: &[u8]) -> bool {
+    matches!(head.get(..4), Some([0, 1, 0, 0]) | Some(b"OTTO") | Some(b"true"))
+}
+
+/// Gespeicherte eigene Schriftart (Bytes) oder leer.
+#[tauri::command]
+pub async fn font_get() -> UiResult<tauri::ipc::Response> {
+    let file = font_dir()?.join("eigene.font");
+    let bytes = match std::fs::metadata(&file) {
+        Ok(m) if m.is_file() && m.len() <= MAX_FONT => std::fs::read(&file).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    Ok(tauri::ipc::Response::new(if is_font(&bytes) { bytes } else { Vec::new() }))
+}
+
+/// Schriftdatei im nativen Dialog wählen, prüfen und als eigene Schrift speichern.
+/// Ergebnis: Dateiname (zur Anzeige) oder Abbruch.
+#[tauri::command]
+pub async fn font_pick(app: AppHandle) -> UiResult<String> {
+    let app2 = app.clone();
+    let picked = tokio::task::spawn_blocking(move || {
+        app2.dialog().file().add_filter("Schriftart", &["ttf", "otf"]).blocking_pick_file()
+    })
+    .await
+    .map_err(|e| UiError::new("Internal", e.to_string()))?;
+    let Some(picked) = picked else { return Err(cancelled()) };
+    let src = picked.into_path().map_err(|_| UiError::new("InvalidInput", "Ungültige Datei."))?;
+    let meta = std::fs::metadata(&src).map_err(|e| UiError::new("NotFound", e.to_string()))?;
+    if !meta.is_file() || meta.len() > MAX_FONT {
+        return Err(UiError::new("InvalidInput", "Keine Schriftdatei (höchstens 16 MB)."));
+    }
+    let bytes = std::fs::read(&src).map_err(|e| UiError::new("Internal", e.to_string()))?;
+    if !is_font(&bytes) {
+        return Err(UiError::new("InvalidInput", "Keine TrueType- oder OpenType-Schrift."));
+    }
+    let dir = font_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| UiError::new("Internal", e.to_string()))?;
+    let tmp = dir.join(".eigene.font.tmp");
+    std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, dir.join("eigene.font"))).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        UiError::new("Internal", e.to_string())
+    })?;
+    let name = src
+        .file_stem()
+        .map(|n| n.to_string_lossy().chars().filter(|c| !c.is_control()).take(80).collect())
+        .unwrap_or_default();
+    let _ = std::fs::write(dir.join("eigene.name"), &name);
+    Ok(name)
+}
+
+/// Name der eigenen Schrift (leer = Inconsolata).
+#[tauri::command]
+pub async fn font_name() -> UiResult<String> {
+    let dir = font_dir()?;
+    if !dir.join("eigene.font").is_file() {
+        return Ok(String::new());
+    }
+    Ok(std::fs::read_to_string(dir.join("eigene.name")).unwrap_or_default().chars().take(80).collect())
+}
+
+/// Zurück zu Inconsolata.
+#[tauri::command]
+pub async fn font_reset() -> UiResult<()> {
+    let dir = font_dir()?;
+    let _ = std::fs::remove_file(dir.join("eigene.font"));
+    let _ = std::fs::remove_file(dir.join("eigene.name"));
+    Ok(())
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::is_font;
+
+    #[test]
+    fn erkennt_nur_schriftdateien() {
+        assert!(is_font(&[0, 1, 0, 0, 9]));
+        assert!(is_font(b"OTTO...."));
+        assert!(is_font(b"true...."));
+        assert!(!is_font(b"wOFF")); // Web-Schrift: nicht unterstützt
+        assert!(!is_font(b"<svg"));
+        assert!(!is_font(&[]));
+        assert!(!is_font(&[0, 1]));
+    }
+}

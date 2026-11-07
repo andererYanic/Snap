@@ -7,6 +7,7 @@ import {
 } from "./api";
 import type { Clipboard, Tab, Toast } from "./App";
 import { FileGlyph, Icon } from "./icons";
+import { LinkDialog } from "./Tools";
 
 interface Item {
   path: string;
@@ -55,6 +56,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
   const [progress, setProgress] = useState<{ job: number; pct: number } | null>(null);
   const [preview, setPreview] = useState<{ item: Item; video?: string } | null>(null);
   const [dropOver, setDropOver] = useState(false);
+  const [linking, setLinking] = useState<string | null>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -503,6 +505,9 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
               <button onClick={() => setClip({ mode: "copy", paths: selected.map((i) => i.path) })}><Icon.copy /> {t("Kopieren")} <span className="key">{t("Strg+C")}</span></button>
               <button disabled={selected.length !== 1} onClick={() => setRenaming(menu.on!.path)}><Icon.rename /> {t("Umbenennen")} <span className="key">F2</span></button>
               <hr />
+              {!menu.on.dir && selected.length === 1 && <button onClick={() => setLinking(menu.on!.path)}><Icon.link /> {t("Link erstellen …")}</button>}
+              {menu.on.dir && selected.length === 1 && <button onClick={() => openTab("storage", menu.on!.path)}><Icon.chart /> {t("Speicher analysieren")}</button>}
+              <hr />
               <button onClick={() => trash(selected)}><Icon.trash /> {t("In den Papierkorb")} <span className="key">{t("Entf")}</span></button>
               <button className="danger" onClick={() => deleteForever(selected)}><Icon.trash /> {t("Endgültig löschen")} <span className="key">{t("Umschalt+Entf")}</span></button>
             </>
@@ -518,10 +523,13 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
               <hr />
               <button onClick={undo}><Icon.undo /> {t("Rückgängig")} <span className="key">{t("Strg+Z")}</span></button>
               <button onClick={load}><Icon.refresh /> {t("Aktualisieren")} <span className="key">F5</span></button>
+              {searching === null && <button onClick={() => openTab("storage", tab.path)}><Icon.chart /> {t("Speicher analysieren")}</button>}
             </>
           )}
         </ContextMenu>
       )}
+
+      {linking && createPortal(<LinkDialog path={linking} notify={notify} onClose={() => setLinking(null)} />, document.body)}
 
       {preview && createPortal(
         <div className="overlay" onClick={() => setPreview(null)} onKeyDown={(e) => e.key === "Escape" && setPreview(null)} tabIndex={-1} ref={(el) => el?.focus()}>

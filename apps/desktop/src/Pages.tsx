@@ -1,7 +1,7 @@
 // Geräte, Sicherungen und Einstellungen (Phase 3b).
 import { LANGUAGES, lang, locale, setLanguage, t } from "./i18n";
 import { useCallback, useEffect, useState } from "react";
-import { api3, errorText, formatDate, humanSize, isCancelled, type Approval, type BackupJob, type Device, type Peer, type Setting, type Snapshot } from "./api";
+import { api3, api5, applyFont, errorText, formatDate, humanSize, isCancelled, type Approval, type BackupJob, type Device, type Peer, type Setting, type Snapshot } from "./api";
 import type { Toast } from "./App";
 import { Icon } from "./icons";
 
@@ -320,6 +320,7 @@ export function SettingsPage({ notify }: { notify: Notify }) {
           <span className="muted small grow">{t("Eigene Sprache hinzufügen: eine Datei in apps/desktop/locales/ ablegen – Anleitung in docs/TRANSLATING.md.")}</span>
         </div>
       </section>
+      <FontPanel notify={notify} />
       <section className="panel">
         <h2>{t("Grenzen und Regeln")}</h2>
         <p className="muted">{t("Änderungen wirken sofort, ohne Neustart. „Standard“ setzt den Wert aus der Konfiguration zurück.")}</p>
@@ -348,5 +349,26 @@ function SettingRow({ s, notify, reload }: { s: Setting; notify: Notify; reload:
       <button className="btn" disabled={!valid || n === s.value} onClick={() => save(n)}>{t("Speichern")}</button>
       <button className="btn" disabled={!s.overridden} onClick={() => save(null)}>{t("Standard")}</button>
     </div>
+  );
+}
+
+function FontPanel({ notify }: { notify: Notify }) {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    api5.fontName().then(setName).catch(() => setName(""));
+  }, []);
+  const pick = () =>
+    api5.fontPick().then(async (n) => { setName(n); await applyFont(); notify({ text: t("Schriftart „{name}“ wird verwendet.", { name: n }) }); }).catch(fail(notify));
+  const reset = () => api5.fontReset().then(async () => { setName(""); await applyFont(); }).catch(fail(notify));
+  return (
+    <section className="panel">
+      <h2>{t("Schriftart")}</h2>
+      <div className="line">
+        <span className="grow">{name ? name : t("Inconsolata (Standard)")}</span>
+        <button className="btn" onClick={pick}>{t("Schriftdatei wählen …")}</button>
+        <button className="btn" disabled={!name} onClick={reset}>{t("Zurück zu Inconsolata")}</button>
+      </div>
+      <p className="muted small">{t("TrueType- oder OpenType-Datei (.ttf, .otf), höchstens 16 MB.")}</p>
+    </section>
   );
 }

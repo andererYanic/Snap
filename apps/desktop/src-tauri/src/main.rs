@@ -124,6 +124,16 @@ fn main() {
             commands::backup_remove,
             commands::settings,
             commands::setting_set,
+            commands::links,
+            commands::link_setup,
+            commands::link_create,
+            commands::link_revoke,
+            commands::space_usage,
+            commands::duplicates,
+            commands::font_get,
+            commands::font_pick,
+            commands::font_name,
+            commands::font_reset,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

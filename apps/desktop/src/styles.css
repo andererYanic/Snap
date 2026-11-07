@@ -1,8 +1,11 @@
+/* Standardschrift Inconsolata (SIL Open Font License, siehe assets/fonts/Inconsolata-OFL.txt) */
+@font-face { font-family: "Inconsolata"; src: url("./assets/fonts/Inconsolata-Regular.ttf") format("truetype"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Inconsolata"; src: url("./assets/fonts/Inconsolata-Bold.ttf") format("truetype"); font-weight: 600 700; font-display: block; }
 /* Snap – Fluent-Designsprache: Mica-Hintergrund, Acryl-Flächen, abgerundete Ecken.
    Hell/Dunkel folgt dem System. */
 
 :root {
-  --font: "Segoe UI Variable Text", "Segoe UI", "Inter", "Cantarell", system-ui, sans-serif;
+  --font: "Inconsolata", ui-monospace, monospace;
   --accent: #3b6fe0;
   --accent-soft: rgba(59, 111, 224, 0.14);
   --accent-strong: rgba(59, 111, 224, 0.26);
@@ -367,3 +370,26 @@ textarea.field { height: auto; padding: 8px 10px; resize: vertical; font-family:
 .small-table td { height: 38px; }
 .btn:disabled { opacity: 0.45; }
 label { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px; }
+
+/* ---- Phase 5: Link-Dialog, Formulare, Speicheranalyse ---- */
+.overlay.dim { background: rgba(0, 0, 0, 0.45); }
+.dialog {
+  background: var(--layer-solid, var(--layer)); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 20px 22px; width: min(520px, 92vw); display: flex; flex-direction: column; gap: 12px; user-select: text;
+}
+.dialog h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.form { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 12px; }
+.form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.typebar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; }
+.typebar .seg { min-width: 3px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 13px; }
+.legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px; vertical-align: -1px; }
+.c0 { background: #4f8cff; } .c1 { background: #2fae63; } .c2 { background: #e0a020; }
+.c3 { background: #d0508a; } .c4 { background: #8a63d2; } .c5 { background: #7a8290; }
+.usage { display: flex; align-items: center; gap: 12px; padding: 5px 6px; border-radius: 6px; }
+.usage.link { cursor: pointer; }
+.usage.link:hover { background: var(--layer-hover); }
+.usage .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage .bar { width: 40%; height: 8px; border-radius: 4px; background: var(--layer-hover); overflow: hidden; }
+.usage .bar span { display: block; height: 100%; background: var(--accent); }
+.usage .size { width: 80px; text-align: right; }
