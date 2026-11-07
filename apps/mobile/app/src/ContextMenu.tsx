@@ -2,9 +2,9 @@
 // Bildschirmrändern nach innen geschoben, schließt beim Tippen daneben oder mit „Zurück“.
 import { useEffect } from 'react';
 import { BackHandler, Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import type { Theme } from './theme';
-import { m } from './motion';
+import { m, popIn, popOut } from './motion';
 
 export interface MenuAction {
   label: string;
@@ -18,8 +18,10 @@ export interface MenuAction {
 const WIDTH = 236;
 const ROW = 50;
 
-export default function ContextMenu({ x, y, actions, onClose, theme }: {
+export default function ContextMenu({ x, y, actions, onClose, theme, passThrough = false }: {
   x: number; y: number; actions: MenuAction[]; onClose: () => void; theme: Theme;
+  /** Berührungen neben dem Menü gehen an den Inhalt darunter (z. B. weitere Dateien markieren). */
+  passThrough?: boolean;
 }) {
   const { width: W, height: H } = Dimensions.get('window');
   const height = actions.length * ROW + 12;
@@ -38,12 +40,14 @@ export default function ContextMenu({ x, y, actions, onClose, theme }: {
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <Animated.View entering={m(FadeIn.duration(120))} exiting={m(FadeOut.duration(120))} style={StyleSheet.absoluteFill}>
-        <Pressable style={[StyleSheet.absoluteFill, styles.scrim]} onPress={onClose} accessibilityLabel="Menü schließen" />
-      </Animated.View>
+      {!passThrough && (
+        <Animated.View entering={m(FadeIn.duration(120))} exiting={m(FadeOut.duration(120))} style={StyleSheet.absoluteFill}>
+          <Pressable style={[StyleSheet.absoluteFill, styles.scrim]} onPress={onClose} accessibilityLabel="Menü schließen" />
+        </Animated.View>
+      )}
       <Animated.View
-        entering={m(ZoomIn.springify().damping(18).stiffness(260))}
-        exiting={m(ZoomOut.duration(110))}
+        entering={m(popIn)}
+        exiting={m(popOut)}
         style={[
           styles.menu,
           { left, top, width: WIDTH, backgroundColor: theme.dark ? '#2b2d36' : '#ffffff', borderColor: theme.stroke },

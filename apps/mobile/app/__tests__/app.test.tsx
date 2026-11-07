@@ -205,3 +205,49 @@ test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsi
   await act(async () => { r.unmount(); });
   await require('../src/motion').initMotion();
 });
+
+test('Feedback 2: Menü lässt weiteres Markieren zu, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = ReactTestRenderer.create(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  // Markieren per Halten-und-Wischen öffnet das Menü am Finger …
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.END, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+    ]);
+  });
+  await flush();
+  expect(allText(r)).toContain('1 ausgewählt');
+  expect(allText(r)).toContain('In den Papierkorb');
+  // … ohne Abdeckung: Ein Tipp auf eine weitere Datei markiert sie, das Menü bleibt
+  expect(r.root.findAll((n) => n.props.accessibilityLabel === 'Menü schließen')).toHaveLength(0);
+  await act(async () => { pressable(r, 'liste.txt').props.onPress(); });
+  await flush();
+  expect(allText(r)).toContain('2 ausgewählt');
+  expect(allText(r)).toContain('In den Papierkorb');
+  // Auswahl beenden (währenddessen ist die untere Leiste ausgeblendet) …
+  await act(async () => { byLabel(r, 'Auswahl aufheben').props.onPress(); });
+  await flush();
+  expect(allText(r)).toContain('brief.pdf');
+  // … und erneutes Antippen von „Dateien“ unten führt zur Startansicht
+  await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[0].props.onPress(); });
+  await flush();
+  expect(allText(r)).toContain('Interner Speicher');
+  expect(allText(r)).not.toContain('brief.pdf');
+  // Schon der erste Buchstabe wechselt sofort in die Suchansicht (vor der Antwort des Kerns)
+  const field = r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === 'Überall suchen');
+  await act(async () => { field.props.onChangeText('u'); });
+  expect(allText(r)).not.toContain('Interner Speicher');
+  expect(allText(r)).not.toContain('Keine Treffer');
+  await act(async () => { await new Promise<void>((resolve) => { setTimeout(() => resolve(), 260); }); });
+  expect(calls).toContainEqual({ Search: { query: 'u', filter: {}, limit: 200 } });
+  expect(allText(r)).toContain('urlaub.jpg');
+  // Anzeige: Ohne Zoom ist das Verschieben im Bild aus, damit Wischen zur nächsten Datei führt
+  await act(async () => { byLabel(r, 'urlaub.jpg').props.onPress(); });
+  await flush();
+  expect((getByGestureTestId('viewer-pan') as any).config.enabled).toBe(false);
+});

@@ -1,17 +1,25 @@
 // Eingebaute Anzeige für Bilder und Videos.
 // - Bilder: Zoomen mit zwei Fingern, Doppeltippen, im Zoom verschieben.
-// - Wischen nach links/rechts: nächstes/vorheriges Element im Ordner bzw. in der Zeitachse.
+// - Wischen nach links/rechts: nächste/vorige Datei im Ordner bzw. in der Zeitachse. Andere
+//   Dateien (PDF, Text …) erscheinen als Karte mit „Öffnen mit …“.
 // - Nach unten wischen schließt; Videos laufen über Media3/ExoPlayer (lokal, ohne Google-Dienste).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Dimensions, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
-  FadeIn, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming,
+  FadeIn, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withTiming,
 } from 'react-native-reanimated';
 import Video from 'react-native-video';
 import * as core from './core';
 import { t } from './i18n';
-import { isVideo, useThumb } from './thumbs';
+import { isMedia, isVideo, useThumb } from './thumbs';
+import { EASE_OUT } from './motion';
+
+/** Weiche, klare Bewegung ohne Nachfedern (statt Feder). */
+const ease = (v: number) => {
+  'worklet';
+  return withTiming(v, { duration: 220, easing: EASE_OUT });
+};
 import { m } from './motion';
 
 export interface MediaItem {
@@ -41,7 +49,7 @@ export default function Viewer({ items, start, onClose }: { items: MediaItem[]; 
       if (e.translationY > 140 || e.velocityY > 1200) {
         dragY.value = withTiming(H, { duration: 180 }, () => runOnJS(onClose)());
       } else {
-        dragY.value = withSpring(0);
+        dragY.value = ease(0);
       }
     });
   const pageStyle = useAnimatedStyle(() => ({
@@ -69,7 +77,9 @@ export default function Viewer({ items, start, onClose }: { items: MediaItem[]; 
               windowSize={3}
               onMomentumScrollEnd={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / W))}
               renderItem={({ item: m, index: i }) =>
-                isVideo(m.name) ? (
+                !isMedia(m.name) ? (
+                  <FilePage item={m} />
+                ) : isVideo(m.name) ? (
                   <VideoPage item={m} active={i === index} />
                 ) : (
                   <ZoomImage item={m} onZoom={setZoomed} onTap={() => setChrome((c) => !c)} />
@@ -111,7 +121,14 @@ function ZoomImage({ item, onZoom, onTap }: { item: MediaItem; onZoom: (z: boole
   const sx = useSharedValue(0);
   const sy = useSharedValue(0);
 
-  const report = useCallback((z: boolean) => onZoom(z), [onZoom]);
+  const [isZoomed, setIsZoomed] = useState(false);
+  const report = useCallback(
+    (z: boolean) => {
+      setIsZoomed(z);
+      onZoom(z);
+    },
+    [onZoom],
+  );
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
@@ -120,14 +137,17 @@ function ZoomImage({ item, onZoom, onTap }: { item: MediaItem; onZoom: (z: boole
     .onEnd(() => {
       saved.value = scale.value;
       if (scale.value <= 1.01) {
-        tx.value = withSpring(0);
-        ty.value = withSpring(0);
+        tx.value = ease(0);
+        ty.value = ease(0);
         sx.value = 0;
         sy.value = 0;
       }
       runOnJS(report)(scale.value > 1.01);
     });
+  // Verschieben nur im Zoom: Ohne Zoom würde die Geste das Wischen zur nächsten Datei schlucken.
   const pan = Gesture.Pan()
+    .withTestId('viewer-pan')
+    .enabled(isZoomed)
     .averageTouches(true)
     .onUpdate((e) => {
       if (scale.value > 1.01) {
@@ -146,13 +166,13 @@ function ZoomImage({ item, onZoom, onTap }: { item: MediaItem; onZoom: (z: boole
     .onEnd((e) => {
       const zoomIn = scale.value <= 1.01;
       const target = zoomIn ? 2.5 : 1;
-      scale.value = withSpring(target);
+      scale.value = ease(target);
       saved.value = target;
       // Auf die getippte Stelle zoomen
       const nx = zoomIn ? (W / 2 - e.x) * (target - 1) : 0;
       const ny = zoomIn ? (H / 2 - e.y) * (target - 1) : 0;
-      tx.value = withSpring(nx);
-      ty.value = withSpring(ny);
+      tx.value = ease(nx);
+      ty.value = ease(ny);
       sx.value = nx;
       sy.value = ny;
       runOnJS(report)(zoomIn);
@@ -177,6 +197,23 @@ function ZoomImage({ item, onZoom, onTap }: { item: MediaItem; onZoom: (z: boole
         />
       </Animated.View>
     </GestureDetector>
+  );
+}
+
+/** Karte für Dateien, die die Anzeige nicht selbst darstellt. */
+function FilePage({ item }: { item: MediaItem }) {
+  const dot = item.name.lastIndexOf('.');
+  const ext = dot > 0 ? item.name.slice(dot + 1).toUpperCase().slice(0, 5) : '';
+  return (
+    <View style={styles.page}>
+      <View style={styles.fileBadge}>
+        <Text style={styles.fileExt}>{ext || '…'}</Text>
+      </View>
+      <Text style={styles.fileName} numberOfLines={2}>{item.name}</Text>
+      <Pressable onPress={() => core.openFile(item.path).catch(() => {})} style={styles.errorBtn} accessibilityRole="button">
+        <Text style={styles.btnSmall}>{t('Öffnen mit …')}</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -222,6 +259,9 @@ const styles = StyleSheet.create({
   titleBox: { flex: 1, marginHorizontal: 4 },
   title: { color: '#fff', fontSize: 15, fontWeight: '600' },
   counter: { color: '#bbb', fontSize: 12 },
+  fileBadge: { width: 120, height: 120, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: 18 },
+  fileExt: { color: '#fff', fontSize: 26, fontWeight: '700' },
+  fileName: { color: '#fff', fontSize: 17, fontWeight: '600', textAlign: 'center', marginHorizontal: 32, marginBottom: 18 },
   errorBox: { alignItems: 'center', padding: 24 },
   errorText: { color: '#eee', fontSize: 15, textAlign: 'center', marginBottom: 12 },
   errorBtn: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)' },

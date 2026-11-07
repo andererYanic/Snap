@@ -6,7 +6,7 @@ jest.mock('react-native-reanimated', () => {
   const RN = require('react-native');
   const anim = () => {
     const b = {
-      duration: () => b, delay: () => b, springify: () => b, damping: () => b, stiffness: () => b,
+      duration: () => b, delay: () => b, springify: () => b, damping: () => b, stiffness: () => b, easing: () => b,
     };
     return b;
   };
@@ -29,6 +29,8 @@ jest.mock('react-native-reanimated', () => {
     useEvent: () => () => {},
     useHandler: () => ({ context: {}, doDependenciesDiffer: false }),
     isSharedValue: () => false,
+    Keyframe: class { constructor(d) { this.d = d; } duration() { return this; } delay() { return this; } },
+    Easing: { bezier: () => (x) => x, out: (f) => f, in: (f) => f, cubic: (x) => x },
   };
 });
 jest.mock('react-native-worklets', () => ({ scheduleOnRN: (f, ...a) => f(...a) }));

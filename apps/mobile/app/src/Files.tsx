@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  FadeIn, LinearTransition, runOnJS, SlideInLeft, SlideInRight, ZoomIn, ZoomOut,
+  FadeIn, LinearTransition, runOnJS, SlideInLeft, SlideInRight,
 } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
 import * as core from './core';
@@ -20,13 +20,15 @@ import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, type SheetAction } from './ui';
 import Viewer from './Viewer';
-import { m } from './motion';
+import { m, popIn, popOut } from './motion';
 
 interface Props {
   theme: Theme;
   root: string;
   notify: (text: string, undo?: () => void) => void;
   selectionChanged: (active: boolean) => void;
+  /** Zähler: ändert er sich, geht es zurück zur Startansicht (erneutes Antippen von „Dateien“). */
+  home?: number;
 }
 
 interface Item extends DirEntry {
@@ -45,7 +47,7 @@ const FOLDERS: [string, string][] = [
   ['Movies', 'Videos'],
 ];
 
-export default function Files({ theme, root, notify, selectionChanged }: Props) {
+export default function Files({ theme, root, notify, selectionChanged, home = 0 }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [items, setItems] = useState<Item[]>([]);
@@ -60,6 +62,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Item[] | null>(null);
+  const [searching, setSearching] = useState(false); // Anfrage läuft noch
   const [viewer, setViewer] = useState<{ items: Item[]; start: number } | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
   const [folders, setFolders] = useState<[string, string][]>([]);
@@ -78,6 +81,24 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
     setDir(direction);
     setPath(next);
   }, []);
+
+  const homeSeen = useRef(home);
+  useEffect(() => {
+    if (home === homeSeen.current) {
+      return;
+    }
+    homeSeen.current = home;
+    setQuery('');
+    setSel(new Set());
+    setMenu(null);
+    setClip(null);
+    setPath((p) => {
+      if (p !== null) {
+        setDir('back');
+      }
+      return null;
+    });
+  }, [home]);
 
   // ------------------------------------------------------------ Laden
   const load = useCallback(async () => {
@@ -119,10 +140,15 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
   // Suche beim Tippen (entprellt; veraltete Antworten werden verworfen)
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) {
+    if (!q) {
+      ++searchGen.current;
       setHits(null);
+      setSearching(false);
       return;
     }
+    // Sofort in die Suchansicht wechseln; bis die erste Antwort da ist, bleibt die Liste leer.
+    setHits((h) => h ?? []);
+    setSearching(true);
     const gen = ++searchGen.current;
     const timer = setTimeout(async () => {
       try {
@@ -131,9 +157,13 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
         });
         if (gen === searchGen.current) {
           setHits(r.hits.map((h) => ({ ...h, hidden: h.name.startsWith('.') })));
+          setSearching(false);
         }
       } catch {
         // Suche fehlgeschlagen: alte Treffer stehen lassen
+        if (gen === searchGen.current) {
+          setSearching(false);
+        }
       }
     }, 160);
     return () => clearTimeout(timer);
@@ -194,13 +224,17 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
       const n = new Set(sel);
       n.has(e.path) ? n.delete(e.path) : n.add(e.path);
       setSel(n);
+      if (n.size === 0) {
+        setMenu(null);
+      }
       core.haptic('tick');
     } else if (e.kind === 'Dir') {
       setQuery('');
       go(e.path, 'forward');
     } else if (isMedia(e.name)) {
-      const media = shown.filter((x) => x.kind === 'File' && isMedia(x.name));
-      setViewer({ items: media, start: Math.max(0, media.findIndex((x) => x.path === e.path)) });
+      // Alle Dateien des Ordners bzw. der Treffer: Wischen führt zur nächsten/vorigen Datei
+      const files = shown.filter((x) => x.kind === 'File');
+      setViewer({ items: files, start: Math.max(0, files.findIndex((x) => x.path === e.path)) });
     } else {
       core.openFile(e.path).catch(fail);
     }
@@ -445,7 +479,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
               <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
               {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
               {on && (
-                <Animated.View entering={m(ZoomIn.duration(140))} exiting={m(ZoomOut.duration(100))} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
+                <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
                   <Text style={{ color: theme.onAccent }}>✓</Text>
                 </Animated.View>
               )}
@@ -462,7 +496,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
             <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
             {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
             {on && (
-              <Animated.View entering={m(ZoomIn.duration(140))} exiting={m(ZoomOut.duration(100))} style={[s.check, { backgroundColor: theme.accent }]}>
+              <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.check, { backgroundColor: theme.accent }]}>
                 <Text style={{ color: theme.onAccent }}>✓</Text>
               </Animated.View>
             )}
@@ -540,11 +574,12 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
             scrollEnabled={scrollEnabled}
             onScroll={(e: any) => (scrollY.current = e.nativeEvent.contentOffset.y)}
             scrollEventThrottle={16}
+            onScrollBeginDrag={() => setMenu(null)}
             onRefresh={hits ? undefined : load}
             refreshing={false}
             keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
-              <Animated.View entering={m(FadeIn.duration(200))} style={s.empty}>
+              hits && searching ? undefined : <Animated.View entering={m(FadeIn.duration(200))} style={s.empty}>
                 <View style={[s.emptyIcon, { backgroundColor: theme.accentSoft }]}>
                   <Text style={[s.emptyPlus, { color: theme.accent }]}>{hits ? '∅' : '+'}</Text>
                 </View>
@@ -567,14 +602,14 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
           <BarBtn theme={theme} label={t('Hier einfügen')} strong disabled={!!hits || path === null} onPress={paste} />
         </Animated.View>
       ) : !hits && sel.size === 0 ? (
-        <Animated.View entering={m(ZoomIn.springify().damping(16))} exiting={m(ZoomOut.duration(120))} style={s.fabBox}>
+        <Animated.View entering={m(popIn)} exiting={m(popOut)} style={s.fabBox}>
           <Pressable style={s.fab} onPress={() => setSheet('create')} android_ripple={{ color: 'rgba(255,255,255,0.3)' }} accessibilityLabel={t('Neu')}>
             <Text style={s.fabText}>+</Text>
           </Pressable>
         </Animated.View>
       ) : null}
 
-      {menu && sel.size > 0 && <ContextMenu x={menu.x} y={menu.y} theme={theme} actions={menuActions} onClose={() => setMenu(null)} />}
+      {menu && sel.size > 0 && <ContextMenu passThrough x={menu.x} y={menu.y} theme={theme} actions={menuActions} onClose={() => setMenu(null)} />}
 
       <BottomSheet
         visible={sheet === 'create'}
@@ -590,7 +625,7 @@ export default function Files({ theme, root, notify, selectionChanged }: Props) 
 
       <Modal visible={!!naming} transparent animationType="fade" onRequestClose={() => setNaming(null)}>
         <View style={s.modalBg}>
-          <Animated.View entering={m(ZoomIn.springify().damping(18))} style={s.modal}>
+          <Animated.View entering={m(popIn)} style={s.modal}>
             <Text style={s.modalTitle}>
               {naming?.mode === 'folder' ? t('Neuer Ordner') : naming?.mode === 'file' ? t('Neue Textdatei') : t('Umbenennen')}
             </Text>
