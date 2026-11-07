@@ -116,8 +116,10 @@ test('Liste, Auswahl, Papierkorb und Rückgängig', async () => {
   await flush();
   expect(allText(r)).toContain('2 ausgewählt');
   expect(NativeModules.SnapCore.haptic).toHaveBeenCalled();
-  // Menü am Finger: Papierkorb wählen
-  const trashBtn = pressable(r, 'In den Papierkorb');
+  // Zwei Dateien: kein Menü am Finger, sondern die Aktionsleiste unten
+  expect(allText(r)).not.toContain('In den Papierkorb');
+  expect(r.root.findAll((n) => n.props.accessibilityRole === 'toolbar').length).toBeGreaterThan(0);
+  const trashBtn = byLabel(r, 'Papierkorb');
   await act(async () => { await trashBtn.props.onPress(); });
   await flush();
   expect(calls).toContainEqual({ FileOp: { op: { Trash: { paths: ['/storage/emulated/0/brief.pdf', '/storage/emulated/0/liste.txt'] } }, wait: true } });
@@ -206,7 +208,7 @@ test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsi
   await require('../src/motion').initMotion();
 });
 
-test('Feedback 2: Menü lässt weiteres Markieren zu, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
+test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt bis alles abgewählt, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => { r = ReactTestRenderer.create(<App />); });
   await flush();
@@ -223,15 +225,27 @@ test('Feedback 2: Menü lässt weiteres Markieren zu, „Dateien“ führt zur S
   await flush();
   expect(allText(r)).toContain('1 ausgewählt');
   expect(allText(r)).toContain('In den Papierkorb');
-  // … ohne Abdeckung: Ein Tipp auf eine weitere Datei markiert sie, das Menü bleibt
-  expect(r.root.findAll((n) => n.props.accessibilityLabel === 'Menü schließen')).toHaveLength(0);
+  // … mit Abdunkelung: Antippen daneben schließt nur das Menü, die Auswahl bleibt
+  await act(async () => { byLabel(r, 'Menü schließen').props.onPress(); });
+  await flush();
+  expect(allText(r)).toContain('1 ausgewählt');
+  expect(allText(r)).not.toContain('In den Papierkorb');
+  // Zweite Datei antippen: Aktionsleiste unten erscheint
   await act(async () => { pressable(r, 'liste.txt').props.onPress(); });
   await flush();
   expect(allText(r)).toContain('2 ausgewählt');
-  expect(allText(r)).toContain('In den Papierkorb');
-  // Auswahl beenden (währenddessen ist die untere Leiste ausgeblendet) …
-  await act(async () => { byLabel(r, 'Auswahl aufheben').props.onPress(); });
+  const toolbar = () => r.root.findAll((n) => n.props.accessibilityRole === 'toolbar' && typeof n.type !== 'string');
+  expect(toolbar().length).toBeGreaterThan(0);
+  // Zurück auf eine Datei: die Leiste bleibt, bis alles abgewählt ist
+  await act(async () => { pressable(r, 'liste.txt').props.onPress(); });
   await flush();
+  expect(allText(r)).toContain('1 ausgewählt');
+  expect(toolbar().length).toBeGreaterThan(0);
+  // Letzte Datei abwählen: Leiste weg, Auswahl beendet …
+  await act(async () => { pressable(r, 'brief.pdf').props.onPress(); });
+  await flush();
+  expect(toolbar()).toHaveLength(0);
+  expect(allText(r)).not.toContain('ausgewählt');
   expect(allText(r)).toContain('brief.pdf');
   // … und erneutes Antippen von „Dateien“ unten führt zur Startansicht
   await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[0].props.onPress(); });
