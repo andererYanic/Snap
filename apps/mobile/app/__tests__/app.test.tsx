@@ -189,8 +189,8 @@ test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textda
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
-  await act(async () => { byLabel(r, 'liste.txt').props.onPress(); });
-  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/liste.txt');
+  await act(async () => { byLabel(r, 'urlaub.zip').props.onPress(); });
+  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/urlaub.zip');
   // „+“ → „Neue Textdatei“ → Name bestätigen
   await act(async () => { byLabel(r, 'Neu').props.onPress(); });
   await act(async () => { pressable(r, 'Neue Textdatei').props.onPress(); });
@@ -410,4 +410,32 @@ test('PDF öffnet die eingebaute Anzeige; Menü je Format (PDF: Drucken, DOCX: O
   await flush();
   expect(NativeModules.SnapCore.printFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
   expect(allText(r)).not.toContain('ausgewählt');
+});
+
+test('Markdown-Leser: Blöcke und Hervorhebungen, kein HTML', () => {
+  const { parseMarkdown } = require('../src/markdown');
+  const b = parseMarkdown('# Titel\n\nText mit **fett**, *kursiv* und `code`.\n\n- [x] erledigt\n- offen\n\n> Zitat\n\n```\nlet a = 1;\n```\n\n---\n<script>alert(1)</script>');
+  expect(b.map((x: any) => x.type)).toEqual(['heading', 'paragraph', 'list', 'quote', 'code', 'rule', 'paragraph']);
+  expect(b[1].inline.filter((x: any) => x.bold || x.italic || x.code).map((x: any) => x.text)).toEqual(['fett', 'kursiv', 'code']);
+  expect(b[2].items.map((x: any) => x.checked)).toEqual([true, undefined]);
+  // HTML bleibt reiner Text
+  expect(b[6].inline).toEqual([{ text: '<script>alert(1)</script>' }]);
+  // Begrenzung bei riesigen Dateien
+  expect(parseMarkdown('a\n\n'.repeat(10000), 100)).toHaveLength(100);
+});
+
+test('Textdatei öffnet die eingebaute Anzeige statt einer fremden App', async () => {
+  NativeModules.SnapCore.readText = jest.fn(async () => ({ text: 'Zeile eins\nZeile zwei', truncated: false }));
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  NativeModules.SnapCore.openFile.mockClear();
+  await act(async () => { byLabel(r, 'liste.txt').props.onPress(); });
+  await flush();
+  await flush();
+  expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+  expect(NativeModules.SnapCore.readText).toHaveBeenCalled();
+  expect(allText(r)).toContain('Zeile eins');
 });

@@ -18,6 +18,7 @@ import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
 import PdfViewer from './PdfViewer';
+import TextViewer, { isText } from './TextViewer';
 import Viewer from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
@@ -69,6 +70,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   const [hits, setHits] = useState<Item[] | null>(null);
   const [searching, setSearching] = useState(false); // Anfrage läuft noch
   const [pdf, setPdf] = useState<{ path: string; name: string } | null>(null);
+  const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
   const [viewer, setViewer] = useState<{ items: Item[]; start: number } | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
   const [folders, setFolders] = useState<[string, string][]>([]);
@@ -248,6 +250,9 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     } else if (e.kind === 'Dir') {
       setQuery('');
       go(e.path, 'forward');
+    } else if (isText(e.name)) {
+      // Text und Markdown zeigt die App selbst an
+      setTextFile({ path: e.path, name: e.name });
     } else if (/\.pdf$/i.test(e.name)) {
       // PDFs zeigt die App selbst (Android zeichnet die Seiten)
       setPdf({ path: e.path, name: e.name });
@@ -802,6 +807,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </View>
       </Modal>
 
+      {textFile && <TextViewer path={textFile.path} name={textFile.name} theme={theme} onClose={() => setTextFile(null)} />}
       {pdf && <PdfViewer path={pdf.path} name={pdf.name} onClose={() => setPdf(null)} />}
       {viewer && <Viewer items={viewer.items} start={viewer.start} onClose={() => setViewer(null)} />}
     </View>

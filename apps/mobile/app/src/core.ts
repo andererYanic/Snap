@@ -55,6 +55,9 @@ export const pdfInfo = (path: string): Promise<{ pages: number; ratios: number[]
 export const pdfPage = (path: string, index: number, width: number): Promise<string | null> => native().pdfPage(path, index, width);
 /** Druckdialog des Systems (PDF unverändert, Bilder auf eine Seite eingepasst). */
 export const printFile = (path: string): Promise<void> => native().printFile(path);
+/** Textdatei für die Anzeige lesen (begrenzt; `truncated`, wenn die Datei länger ist). */
+export const readText = (path: string, maxBytes = 2 * 1024 * 1024): Promise<{ text: string; truncated: boolean }> =>
+  native().readText(path, maxBytes);
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

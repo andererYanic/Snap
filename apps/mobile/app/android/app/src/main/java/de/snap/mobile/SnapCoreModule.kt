@@ -182,6 +182,41 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /**
+   * Liest eine Textdatei für die Anzeige (höchstens `maxBytes`, UTF-8; ungültige Bytes werden
+   * ersetzt). Ergebnis: `{ text, truncated }`.
+   */
+  @ReactMethod
+  fun readText(path: String, maxBytes: Double, promise: Promise) {
+    val f = regularFile(path) ?: return promise.reject("read", "Nur Dateien lassen sich anzeigen.")
+    scope.launch {
+      try {
+        val limit = maxBytes.toLong().coerceIn(1024, 8L * 1024 * 1024)
+        val buf = ByteArray(minOf(limit, f.length()).toInt())
+        var n = 0
+        f.inputStream().use { input ->
+          while (n < buf.size) {
+            val r = input.read(buf, n, buf.size - n)
+            if (r < 0) break
+            n += r
+          }
+        }
+        // Nicht mitten in einem UTF-8-Zeichen abschneiden
+        var end = n
+        if (f.length() > n) {
+          while (end > 0 && (buf[end - 1].toInt() and 0xC0) == 0x80) end--
+          if (end > 0 && (buf[end - 1].toInt() and 0x80) != 0) end--
+        }
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        map.putString("text", String(buf, 0, end, Charsets.UTF_8))
+        map.putBoolean("truncated", f.length() > n)
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.reject("read", e.message ?: e.toString())
+      }
+    }
+  }
+
   /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
   @ReactMethod
   fun printFile(path: String, promise: Promise) {
