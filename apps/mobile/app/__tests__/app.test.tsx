@@ -33,6 +33,14 @@ NativeModules.SnapCore = {
     const req = JSON.parse(json);
     calls.push(req);
     if (req.ListDir) return JSON.stringify(listing);
+    if (req.ReadDocx) {
+      return JSON.stringify({ Docx: { truncated: false, blocks: [
+        { type: 'heading', level: 1, inline: [{ text: 'Bewerbung' }] },
+        { type: 'paragraph', inline: [{ text: 'Sehr geehrte ' }, { text: 'Damen', bold: true }] },
+        { type: 'table', rows: [['Jahr', 'Firma'], ['2024', 'Snap GmbH']] },
+        { type: 'list', ordered: false, items: [[{ text: 'Punkt' }]] },
+      ] } });
+    }
     if (req.Search) {
       return JSON.stringify({ SearchResults: { hits: [
         { path: '/storage/emulated/0/DCIM/urlaub.jpg', name: 'urlaub.jpg', kind: 'File', size: 1, mtime: 1700000000, fuzzy: true },
@@ -467,4 +475,30 @@ test('Untere Leiste behält beim Markieren ihren Platz (Liste rutscht nicht)', a
   await flush();
   expect(slot()).toBe(before);
   expect(tabs().length).toBe(4);
+});
+
+test('DOCX öffnet die Leseansicht (Kern liest, App zeigt Überschrift, Tabelle, Liste)', async () => {
+  NativeModules.SnapCore.docxImageDir = jest.fn(async () => '/cache/docx');
+  listing.DirListing.entries.push({ name: 'zz-bewerbung.docx', kind: 'File', size: 9000, mtime: 1700000000, hidden: false });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+    await flush();
+    NativeModules.SnapCore.openFile.mockClear();
+    await act(async () => { byLabel(r, 'zz-bewerbung.docx').props.onPress(); });
+    await flush();
+    await flush();
+    expect(calls).toContainEqual({ ReadDocx: { path: '/storage/emulated/0/zz-bewerbung.docx', image_dir: '/cache/docx' } });
+    expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+    const text = allText(r);
+    expect(text).toContain('Bewerbung');
+    expect(text).toContain('Damen');
+    expect(text).toContain('Snap GmbH');
+    expect(text).toContain('Leseansicht');
+    expect(text).toContain('Original mit Office-App öffnen');
+  } finally {
+    listing.DirListing.entries.pop();
+  }
 });

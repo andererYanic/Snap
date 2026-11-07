@@ -217,6 +217,13 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /** Ordner im App-Cache für Bilder aus Word-Dateien (wird mit dem Cache begrenzt). */
+  @ReactMethod
+  fun docxImageDir(promise: Promise) {
+    val dir = java.io.File(ctx.cacheDir, "docx").apply { mkdirs() }
+    promise.resolve(dir.absolutePath)
+  }
+
   /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
   @ReactMethod
   fun printFile(path: String, promise: Promise) {

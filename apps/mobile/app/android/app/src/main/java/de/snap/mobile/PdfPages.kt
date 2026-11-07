@@ -110,8 +110,17 @@ object PdfPages {
     }
   }
 
-  /** Cache begrenzen (älteste zuerst löschen). */
+  /** Cache begrenzen (älteste zuerst löschen) – auch die Bilder aus Word-Dateien. */
   fun prune(context: Context, maxBytes: Long = 150L * 1024 * 1024) {
+    val docx = File(context.cacheDir, "docx").listFiles()?.sortedBy { it.lastModified() }
+    if (docx != null) {
+      var t = docx.sumOf { it.length() }
+      for (f in docx) {
+        if (t <= 100L * 1024 * 1024) break
+        t -= f.length()
+        f.delete()
+      }
+    }
     val files = File(context.cacheDir, "pdf").listFiles()?.sortedBy { it.lastModified() } ?: return
     var total = files.sumOf { it.length() }
     for (f in files) {

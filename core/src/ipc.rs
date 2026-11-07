@@ -216,6 +216,12 @@ pub enum Request {
         offset: u32,
         limit: u32,
     },
+    /// Word-Datei (DOCX) als einfache Leseansicht lesen. Bilder landen in `image_dir`. Nur lokal.
+    ReadDocx {
+        path: PathBuf,
+        #[serde(default)]
+        image_dir: Option<PathBuf>,
+    },
     /// Indexierte Orte anzeigen.
     IndexRoots,
     /// Ordner zur Suche hinzufügen (oder wieder aktivieren).
@@ -538,6 +544,7 @@ pub enum Response {
     SearchResults {
         hits: Vec<crate::index::SearchHit>,
     },
+    Docx(crate::docx::DocxDoc),
     DirListing {
         path: PathBuf,
         entries: Vec<DirEntryInfo>,

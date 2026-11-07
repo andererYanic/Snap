@@ -2,16 +2,35 @@
 // Markdown nativ dargestellt – ohne HTML oder WebView. Links öffnen nur nach Antippen und nur
 // http(s).
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Linking, Modal, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import * as core from './core';
 import { t } from './i18n';
-import { parseMarkdown, type Block, type Inline } from './markdown';
+import { fromDocx, parseMarkdown, type Block, type Inline } from './markdown';
 import type { Theme } from './theme';
 import { themed } from './ui';
 
 const MD = /\.(md|markdown)$/i;
+const DOCX = /\.docx$/i;
 /** Dateien, die die Textanzeige öffnet. */
-export const isText = (name: string) => /\.(txt|md|markdown|log|csv|json|xml|ini|conf|cfg|yaml|yml|toml)$/i.test(name);
+export const isText = (name: string) => /\.(txt|md|markdown|log|csv|json|xml|ini|conf|cfg|yaml|yml|toml|docx)$/i.test(name);
+
+/** Bild aus einer Word-Datei: Breite des Bildschirms, Seitenverhältnis aus dem Bild. */
+function DocImage({ file }: { file: string }) {
+  const [ratio, setRatio] = useState(0.6);
+  return (
+    <Image
+      source={{ uri: `file://${file}` }}
+      onLoad={(e) => {
+        const { width, height } = e.nativeEvent.source;
+        if (width > 0) {
+          setRatio(height / width);
+        }
+      }}
+      style={{ width: '100%', aspectRatio: 1 / ratio, marginBottom: 12, borderRadius: 6 }}
+      resizeMode="contain"
+    />
+  );
+}
 
 function Spans({ inline, s, theme }: { inline: Inline[]; s: ReturnType<typeof styles>; theme: Theme }) {
   return (
@@ -49,6 +68,22 @@ function BlockView({ b, s, theme }: { b: Block; s: ReturnType<typeof styles>; th
       );
     case 'rule':
       return <View style={[s.rule, { backgroundColor: theme.stroke }]} />;
+    case 'image':
+      return <DocImage file={b.file} />;
+    case 'table':
+      return (
+        <ScrollView horizontal style={s.tableWrap} showsHorizontalScrollIndicator={false}>
+          <View style={[s.table, { borderColor: theme.stroke }]}>
+            {b.rows.map((row, i) => (
+              <View key={i} style={[s.tr, i === 0 && { backgroundColor: theme.accentSoft }, { borderColor: theme.stroke }]}>
+                {row.map((cell, k) => (
+                  <Text key={k} style={[s.text, s.td, i === 0 && s.bold, { borderColor: theme.stroke }]} selectable>{cell}</Text>
+                ))}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      );
     case 'list':
       return (
         <View style={s.list}>
@@ -66,14 +101,28 @@ function BlockView({ b, s, theme }: { b: Block; s: ReturnType<typeof styles>; th
 export default function TextViewer({ path, name, theme, onClose }: { path: string; name: string; theme: Theme; onClose: () => void }) {
   const [doc, setDoc] = useState<{ text: string; truncated: boolean } | null | 'error'>(null);
   const [raw, setRaw] = useState(false);
+  const [docx, setDocx] = useState<Block[] | null>(null);
   const s = styles(theme);
   const md = MD.test(name);
+  const isDocx = DOCX.test(name);
 
   useEffect(() => {
-    core.readText(path).then(setDoc).catch(() => setDoc('error'));
-  }, [path]);
+    if (isDocx) {
+      // Word: der Kern liest Text, Überschriften, Listen, Tabellen und Bilder (Leseansicht)
+      core
+        .docxImageDir()
+        .then((dir) => core.request<{ blocks: any[]; truncated: boolean }>({ ReadDocx: { path, image_dir: dir } }))
+        .then((d) => {
+          setDocx(fromDocx(d.blocks));
+          setDoc({ text: '', truncated: d.truncated });
+        })
+        .catch(() => setDoc('error'));
+    } else {
+      core.readText(path).then(setDoc).catch(() => setDoc('error'));
+    }
+  }, [path, isDocx]);
 
-  const blocks = useMemo(() => (doc && doc !== 'error' && md ? parseMarkdown(doc.text) : null), [doc, md]);
+  const blocks = useMemo(() => (docx ? docx : doc && doc !== 'error' && md ? parseMarkdown(doc.text) : null), [doc, md, docx]);
   // Reiner Text: in Abschnitte teilen, damit lange Dateien flüssig scrollen (virtualisierte Liste)
   const chunks = useMemo(() => {
     if (!doc || doc === 'error') {
@@ -96,6 +145,7 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
             <Text style={s.btnText}>✕</Text>
           </Pressable>
           <Text style={s.title} numberOfLines={1}>{name}</Text>
+          {isDocx && <Text style={s.badge}>{t('Leseansicht')}</Text>}
           {md && (
             <Pressable onPress={() => setRaw((v) => !v)} style={s.btn} accessibilityLabel={raw ? t('Formatiert anzeigen') : t('Quelltext anzeigen')}>
               <Text style={s.small}>{raw ? t('Formatiert') : t('Quelltext')}</Text>
@@ -116,7 +166,13 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
             contentContainerStyle={s.body}
             initialNumToRender={20}
             renderItem={({ item }) => <BlockView b={item} s={s} theme={theme} />}
-            ListFooterComponent={doc.truncated ? <Text style={s.note}>{t('Nur der Anfang der Datei wird angezeigt (2 MB).')}</Text> : undefined}
+            ListFooterComponent={
+              doc.truncated ? <Text style={s.note}>{t('Nur der Anfang der Datei wird angezeigt (2 MB).')}</Text> : isDocx ? (
+                <Pressable onPress={() => core.openFile(path).catch(() => {})} style={s.officeBtn}>
+                  <Text style={s.small}>{t('Original mit Office-App öffnen')}</Text>
+                </Pressable>
+              ) : undefined
+            }
           />
         ) : (
           <FlatList
@@ -166,4 +222,10 @@ const styles = themed((th: Theme) =>
     liText: { flex: 1 },
     note: { color: th.text2, fontSize: 13, marginTop: 16, textAlign: 'center' },
     error: { padding: 24, textAlign: 'center', color: th.text2 },
+    tableWrap: { marginBottom: 12 },
+    table: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 6, overflow: 'hidden' },
+    tr: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth },
+    td: { minWidth: 90, maxWidth: 260, padding: 8, fontSize: 14, lineHeight: 20, borderRightWidth: StyleSheet.hairlineWidth },
+    badge: { color: th.text2, fontSize: 12, marginRight: 4 },
+    officeBtn: { alignSelf: 'center', marginTop: 20, minHeight: 48, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 14, backgroundColor: th.accentSoft },
   }));

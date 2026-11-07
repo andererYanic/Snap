@@ -58,6 +58,8 @@ export const printFile = (path: string): Promise<void> => native().printFile(pat
 /** Textdatei für die Anzeige lesen (begrenzt; `truncated`, wenn die Datei länger ist). */
 export const readText = (path: string, maxBytes = 2 * 1024 * 1024): Promise<{ text: string; truncated: boolean }> =>
   native().readText(path, maxBytes);
+/** Ordner für Bilder aus Word-Dateien (App-Cache). */
+export const docxImageDir = (): Promise<string> => native().docxImageDir();
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

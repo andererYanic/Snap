@@ -116,6 +116,7 @@ pub fn required_capability(req: &Request) -> Capability {
         // Lokaler Index und Dateisystem bleiben auf dem Gerät (kein Zugriff für Geräte).
         | Request::Search { .. }
         | Request::ListDir { .. }
+        | Request::ReadDocx { .. }
         | Request::IndexRoots
         | Request::IndexAdd { .. }
         | Request::IndexRemove { .. }

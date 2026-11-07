@@ -4085,6 +4085,7 @@ dependencies = [
  "lofty",
  "n0-future",
  "notify",
+ "quick-xml",
  "reqwest",
  "ring",
  "rusqlite",

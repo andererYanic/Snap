@@ -9,7 +9,36 @@ export type Block =
   | { type: 'list'; ordered: boolean; items: { inline: Inline[]; checked?: boolean }[] }
   | { type: 'quote'; inline: Inline[] }
   | { type: 'code'; text: string }
-  | { type: 'rule' };
+  | { type: 'rule' }
+  | { type: 'table'; rows: string[][] }
+  | { type: 'image'; file: string };
+
+/** Antwort des Kerns (DOCX-Leseansicht) in Anzeige-Blöcke übersetzen. */
+export function fromDocx(blocks: any[]): Block[] {
+  const out: Block[] = [];
+  for (const b of blocks ?? []) {
+    switch (b?.type) {
+      case 'heading':
+        out.push({ type: 'heading', level: Math.min(6, Math.max(1, Number(b.level) || 1)), inline: b.inline ?? [] });
+        break;
+      case 'paragraph':
+        out.push({ type: 'paragraph', inline: b.inline ?? [] });
+        break;
+      case 'list':
+        out.push({ type: 'list', ordered: !!b.ordered, items: (b.items ?? []).map((inline: Inline[]) => ({ inline })) });
+        break;
+      case 'table':
+        out.push({ type: 'table', rows: b.rows ?? [] });
+        break;
+      case 'image':
+        if (typeof b.file === 'string') {
+          out.push({ type: 'image', file: b.file });
+        }
+        break;
+    }
+  }
+  return out;
+}
 
 /** Zerlegt Text in Inline-Teile (ohne Verschachtelung über Grenzen hinweg). */
 export function parseInline(src: string): Inline[] {
