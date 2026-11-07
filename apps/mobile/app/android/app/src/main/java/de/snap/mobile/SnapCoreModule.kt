@@ -152,6 +152,51 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /** PDF: Seitenzahl und Seitenverhältnisse (Höhe/Breite) oder null, wenn nicht lesbar. */
+  @ReactMethod
+  fun pdfInfo(path: String, promise: Promise) {
+    scope.launch {
+      try {
+        val info = PdfPages.info(path) ?: return@launch promise.resolve(null)
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        map.putInt("pages", info.first)
+        val arr = com.facebook.react.bridge.Arguments.createArray()
+        info.second.forEach { arr.pushDouble(it) }
+        map.putArray("ratios", arr)
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** PDF: Seite als PNG (Pfad) in der gewünschten Breite. */
+  @ReactMethod
+  fun pdfPage(path: String, index: Double, width: Double, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(PdfPages.page(ctx.applicationContext, path, index.toInt(), width.toInt()))
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
+  @ReactMethod
+  fun printFile(path: String, promise: Promise) {
+    val f = regularFile(path) ?: return promise.reject("print", "Nur Dateien lassen sich drucken.")
+    val activity = ctx.currentActivity ?: return promise.reject("print", "App ist nicht im Vordergrund.")
+    activity.runOnUiThread {
+      try {
+        Printing.print(activity, f)
+        promise.resolve(null)
+      } catch (e: Throwable) {
+        promise.reject("print", e.message ?: e.toString())
+      }
+    }
+  }
+
   /** Kurze Vibration über das System (ohne Berechtigung): `select` beim Markieren, `tick` beim Erweitern. */
   @ReactMethod
   fun haptic(kind: String) {

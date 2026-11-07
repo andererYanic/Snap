@@ -49,6 +49,12 @@ export const storageInfo = (): Promise<{ total: number; free: number }> => nativ
 /** Vorschaubild über Android (schnell, mit Cache). `null`, wenn keins möglich ist. */
 export const thumbnail = (path: string, edge: number): Promise<string | null> => native().thumbnail(path, edge);
 /** Kurze Vibration: `select` (Markieren), `tick` (Auswahl erweitert), `confirm`. */
+/** PDF über Android (`PdfRenderer`): Seitenzahl und Seitenverhältnisse (Höhe/Breite). */
+export const pdfInfo = (path: string): Promise<{ pages: number; ratios: number[] } | null> => native().pdfInfo(path);
+/** PDF-Seite als PNG-Datei in der gewünschten Breite (Pixel). */
+export const pdfPage = (path: string, index: number, width: number): Promise<string | null> => native().pdfPage(path, index, width);
+/** Druckdialog des Systems (PDF unverändert, Bilder auf eine Seite eingepasst). */
+export const printFile = (path: string): Promise<void> => native().printFile(path);
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

@@ -17,6 +17,7 @@ import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { isMedia, Thumb } from './thumbs';
 import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
+import PdfViewer from './PdfViewer';
 import Viewer from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
@@ -67,6 +68,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Item[] | null>(null);
   const [searching, setSearching] = useState(false); // Anfrage läuft noch
+  const [pdf, setPdf] = useState<{ path: string; name: string } | null>(null);
   const [viewer, setViewer] = useState<{ items: Item[]; start: number } | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
   const [folders, setFolders] = useState<[string, string][]>([]);
@@ -246,6 +248,9 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     } else if (e.kind === 'Dir') {
       setQuery('');
       go(e.path, 'forward');
+    } else if (/\.pdf$/i.test(e.name)) {
+      // PDFs zeigt die App selbst (Android zeichnet die Seiten)
+      setPdf({ path: e.path, name: e.name });
     } else if (isMedia(e.name)) {
       // Alle Dateien des Ordners bzw. der Treffer: Wischen führt zur nächsten/vorigen Datei
       const files = shown.filter((x) => x.kind === 'File');
@@ -547,9 +552,8 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
   const zips = selected.filter((e) => e.kind === 'File' && ARCHIVE.test(e.name)).map((e) => e.path);
   const menuActions: MenuAction[] = [
     ...(single && single.kind === 'File' ? [{ label: t('Öffnen'), onPress: () => open({ ...single }) }] : []),
-    // Je nach Format: Archive entpacken
-    ...(single && zips.length === 1 ? [{ label: t('Entpacken'), onPress: () => extractAll(zips) }] : []),
-    { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
+    // Je nach Dateiformat
+    ...(single && single.kind === 'File' ? formatActions(single) : []),
     { label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
     { label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
@@ -557,6 +561,21 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
     { label: t('In den Papierkorb'), separate: true, onPress: trash },
     { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
+  /** Aktionen, die nur für bestimmte Formate passen (Menü am Finger, eine Datei). */
+  function formatActions(e: Item): MenuAction[] {
+    const done = () => setSel(new Set());
+    if (ARCHIVE.test(e.name)) {
+      return [{ label: t('Entpacken'), onPress: () => extractAll([e.path]) }];
+    }
+    if (/\.pdf$/i.test(e.name) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(e.name)) {
+      return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
+    }
+    if (/\.(docx?|odt|rtf|xlsx?|ods|pptx?|odp)$/i.test(e.name)) {
+      return [{ label: t('Mit Office-App öffnen'), onPress: () => { done(); core.openFile(e.path).catch(fail); } }];
+    }
+    return [];
+  }
+
   const toClip = (mode: 'copy' | 'move') => {
     setClip({ mode, paths: selected.map((e) => e.path) });
     setSel(new Set());
@@ -701,7 +720,19 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </Animated.View>
       ) : null}
 
-      {menu && sel.size > 0 && <ContextMenu x={menu.x} y={menu.y} theme={theme} actions={menuActions} onClose={() => setMenu(null)} />}
+      {menu && sel.size > 0 && <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          theme={theme}
+          actions={menuActions}
+          onClose={() => {
+            setMenu(null);
+            // Nur zum Öffnen des Menüs markiert → beim Schließen wieder abwählen
+            if (!showBar) {
+              setSel(new Set());
+            }
+          }}
+        />}
 
       <BottomSheet
         visible={sheet === 'create'}
@@ -771,6 +802,7 @@ export default function Files({ theme, root, notify, selectionChanged, home = 0 
         </View>
       </Modal>
 
+      {pdf && <PdfViewer path={pdf.path} name={pdf.name} onClose={() => setPdf(null)} />}
       {viewer && <Viewer items={viewer.items} start={viewer.start} onClose={() => setViewer(null)} />}
     </View>
   );

@@ -189,8 +189,8 @@ test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textda
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
-  await act(async () => { byLabel(r, 'brief.pdf').props.onPress(); });
-  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  await act(async () => { byLabel(r, 'liste.txt').props.onPress(); });
+  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/liste.txt');
   // „+“ → „Neue Textdatei“ → Name bestätigen
   await act(async () => { byLabel(r, 'Neu').props.onPress(); });
   await act(async () => { pressable(r, 'Neue Textdatei').props.onPress(); });
@@ -233,7 +233,7 @@ test('„Animationen entfernen“: keine Einblend-Animationen, damit nichts unsi
   await require('../src/motion').initMotion();
 });
 
-test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt bis alles abgewählt, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
+test('Feedback 2–4: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt bis alles abgewählt, „Dateien“ führt zur Startansicht, Suche ab dem 1. Buchstaben', async () => {
   let r!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => { r = mount(<App />); });
   await flush();
@@ -250,13 +250,22 @@ test('Feedback 2/3: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt b
   await flush();
   expect(allText(r)).toContain('1 ausgewählt');
   expect(allText(r)).toContain('In den Papierkorb');
-  // … mit Abdunkelung: Antippen daneben schließt nur das Menü, die Auswahl bleibt
+  // Menü am Finger zeigt keine ZIP-Option (die gibt es nur in der Leiste)
+  expect(allText(r)).not.toContain('Als ZIP packen');
+  // Schließen ohne Aktion: die nur dafür markierte Datei wird wieder abgewählt
   await act(async () => { byLabel(r, 'Menü schließen').props.onPress(); });
   await flush();
-  expect(allText(r)).toContain('1 ausgewählt');
+  expect(allText(r)).not.toContain('ausgewählt');
   expect(allText(r)).not.toContain('In den Papierkorb');
-  // Zweite Datei antippen: Aktionsleiste unten erscheint
-  await act(async () => { pressable(r, 'liste.txt').props.onPress(); });
+  // Zwei Dateien per Halten-und-Wischen: Aktionsleiste unten erscheint
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+      { state: State.END, x: 100, y: 148, absoluteX: 100, absoluteY: 364 },
+    ]);
+  });
   await flush();
   expect(allText(r)).toContain('2 ausgewählt');
   const toolbar = () => r.root.findAll((n) => n.props.accessibilityRole === 'toolbar' && typeof n.type !== 'string');
@@ -362,4 +371,43 @@ test('ZIP: mehrere Dateien packen, Archiv mit Passwort entpacken, Rückgängig',
   expect(allText(r)).toContain('Entpackt nach „urlaub“.');
   // Passwort taucht nirgends sichtbar auf
   expect(allText(r)).not.toContain('geheim');
+});
+
+test('PDF öffnet die eingebaute Anzeige; Menü je Format (PDF: Drucken, DOCX: Office-App)', async () => {
+  NativeModules.SnapCore.pdfInfo = jest.fn(async () => ({ pages: 2, ratios: [1.414, 1.414] }));
+  NativeModules.SnapCore.pdfPage = jest.fn(async () => '/cache/pdf/seite.png');
+  NativeModules.SnapCore.printFile = jest.fn(async () => null);
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+  await flush();
+  // Antippen: eigene Anzeige statt fremder App
+  NativeModules.SnapCore.openFile.mockClear();
+  await act(async () => { byLabel(r, 'brief.pdf').props.onPress(); });
+  await flush();
+  await flush();
+  expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+  expect(NativeModules.SnapCore.pdfInfo).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  expect(allText(r)).toContain('Seite 1 von 2');
+  await act(async () => { byLabel(r, 'Drucken').props.onPress(); });
+  expect(NativeModules.SnapCore.printFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  await act(async () => { byLabel(r, 'Schließen').props.onPress(); });
+  await flush();
+  // Lange drücken auf das PDF: Menü bietet „Drucken“, aber kein „Als ZIP packen“
+  await act(async () => {
+    fireGestureHandler(getByGestureTestId('files-select'), [
+      { state: State.BEGAN, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.ACTIVE, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+      { state: State.END, x: 100, y: 84, absoluteX: 100, absoluteY: 300 },
+    ]);
+  });
+  await flush();
+  expect(allText(r)).toContain('Drucken');
+  expect(allText(r)).not.toContain('Als ZIP packen');
+  NativeModules.SnapCore.printFile.mockClear();
+  await act(async () => { pressable(r, 'Drucken').props.onPress(); });
+  await flush();
+  expect(NativeModules.SnapCore.printFile).toHaveBeenCalledWith('/storage/emulated/0/brief.pdf');
+  expect(allText(r)).not.toContain('ausgewählt');
 });
