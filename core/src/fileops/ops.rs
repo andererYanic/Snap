@@ -93,8 +93,19 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let c = |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(|_| std::io::ErrorKind::InvalidInput);
     let (f, t) = (c(from)?, c(to)?);
+    // Direkter Systemaufruf statt libc-Funktion: Androids bionic bietet renameat2 erst ab API 30,
+    // der Kernel kann es seit 3.15 (alle unterstützten Android-Versionen).
     // SAFETY: gültige, NUL-terminierte Pfade; AT_FDCWD für relative Auflösung (Pfade sind absolut).
-    let r = unsafe { libc::renameat2(libc::AT_FDCWD, f.as_ptr(), libc::AT_FDCWD, t.as_ptr(), libc::RENAME_NOREPLACE) };
+    let r = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            f.as_ptr(),
+            libc::AT_FDCWD,
+            t.as_ptr(),
+            libc::RENAME_NOREPLACE as libc::c_uint,
+        )
+    };
     if r == 0 {
         return Ok(());
     }

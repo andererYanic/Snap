@@ -408,3 +408,17 @@ Release-Daemon, Ordner mit 2 000 Dateien):
 - **Offen:** Jede Ordnerseite liest den Ordner im Daemon neu ein. Bei sehr großen Ordnern
   (> 10 000 Einträge) wäre ein Cursor im Daemon günstiger. Eine virtualisierte Liste in der
   Oberfläche folgt, sobald Ordner dieser Größe im Alltag auffallen.
+
+## Review 18 – Mobiler Kern über FFI (4a, 2026-11-07)
+
+Messung `apps/mobile/core-ffi` → `tests::perf_ffi_list_dir` (Release):
+
+| Messung | Ergebnis |
+|---|---|
+| Ordnerseite mit 1 000 Einträgen (JSON-Anfrage → Kern → JSON-Antwort) | **1,8 ms** |
+| Kleine Anfrage (`Settings`) | **6 µs** |
+
+- Auf dem Telefon läuft der Kern im App-Prozess. Es gibt keinen Socket-Umweg; JSON ist die
+  einzige Umwandlung.
+- Telefone sind langsamer als die Messmaschine (grob Faktor 3–5). Eine Ordnerseite bleibt auch dort
+  deutlich unter 16 ms.

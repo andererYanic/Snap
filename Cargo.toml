@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "core",
-    "apps/daemon"
+    "apps/daemon",
+    "apps/mobile/core-ffi"
 ]
 resolver = "2"
 
@@ -11,3 +12,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Entwicklungs-Builds: nur Zeilentabellen (Backtraces bleiben lesbar), Abhängigkeiten ohne
+# Debug-Infos – spart viele GB im target-Ordner und beschleunigt das Linken.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
