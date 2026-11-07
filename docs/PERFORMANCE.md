@@ -501,3 +501,11 @@ Anlass: Der Nutzer meldete starke Bildeinbrüche und träge Menüs. Neue Messung
   außerhalb des UI-Threads.
 - Text/Markdown: höchstens 2 MB werden gelesen; lange Texte in Abschnitten zu 60 Zeilen
   (virtualisierte Liste), Markdown auf höchstens 5 000 Blöcke begrenzt.
+
+## Review 23 – Speichermeldung der Geräte (4f, 2026-11-07)
+
+- Der eigene Speicher wird beim Verbindungsaufbau und danach alle 5 Minuten bestimmt (`statvfs`
+  je Laufwerk der Freigaben, Mikrosekunden) und nur bei spürbarer Änderung (> 0,5 % bzw. > 100 MB)
+  gemeldet – eine Nachricht von < 100 Byte. Kein messbarer Einfluss auf Akku oder Netz.
+- `pair list` liest den zuletzt gemeldeten Wert aus dem Speicher (keine Netzabfrage) – die
+  Startseite blockiert nicht.

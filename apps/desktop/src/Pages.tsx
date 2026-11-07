@@ -94,6 +94,7 @@ export function Devices({ notify }: { notify: Notify }) {
                 <div className="muted small">
                   {status(d.node_id) === "online" ? t("Verbunden") : t("Nicht verbunden")} · {t("gekoppelt am {date}", { date: formatDate(d.paired_at) })}
                   {d.last_sync_at ? ` · ${t("zuletzt abgeglichen {date}", { date: formatDate(d.last_sync_at) })}` : ""}
+                  {d.storage ? ` · ${t("{free} von {total} frei", { free: humanSize(d.storage.free), total: humanSize(d.storage.total) })}` : ""}
                 </div>
               </div>
               <button className="btn" onClick={() => setGrantFor(grantFor?.node_id === d.node_id ? null : d)}>{t("Recht geben …")}</button>

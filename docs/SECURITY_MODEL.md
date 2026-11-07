@@ -41,6 +41,13 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   Ersatzquellen liefern nur, wenn sie selbst das Recht dazu vergeben haben.
 - **Live-Verbindungen:** nur Hinweise (keine Daten), nur mit `catalog.read` in beide Richtungen,
   Frames ≤ 4 KiB, ≤ 50 Nachrichten/s, strikte Nachrichtentypen; Entzug trennt sofort.
+  **Speichermeldung (Live-Protokoll 2):** Jede Seite meldet nur Summen (gesamt/frei) über die
+  Laufwerke ihrer Freigaben – keine Ordner- oder Laufwerksnamen – und nur an Geräte, die bei ihr
+  `catalog.read` haben (gleiche Prüfstelle). Empfangene Werte werden geprüft (0 < gesamt ≤ 1 EiB,
+  frei ≤ gesamt, keine Zusatzfelder); Unsinn beendet die Verbindung. Übernahme höchstens alle 5 s
+  je Gerät, Entkoppeln löscht den gemeldeten Wert. Gegenstellen mit Protokoll 1 bleiben verbunden,
+  bekommen aber keine Meldung. Angriffstests: fremd, alt, manipuliert (5 Varianten), Flut,
+  entzogenes Recht, entkoppelt.
 - **Lokale Suche & Explorer:** Index und Dateisystem-Zugriff sind nur lokal nutzbar (Recht `admin`,
   für Geräte gesperrt). Der Index liegt im privaten Datenordner (0700) und wird nicht repliziert.
   Die Snap-Daten werden weder indexiert noch als Suchort angenommen, auch nicht über Symlinks.
