@@ -813,3 +813,15 @@ test('Anderes Gerät: Archiv dort entpacken, mit Passwortabfrage', async () => {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('PDF-Zoom: Auflösungsstufen und Fingerpunkt bleibt stehen', () => {
+  const { renderStep, keepFocal, MAX_ZOOM } = require('../src/PdfViewer');
+  expect(renderStep(1)).toBe(1);
+  expect(renderStep(1.2)).toBe(1.5);
+  expect(renderStep(2.5)).toBe(3);
+  expect(renderStep(9)).toBe(MAX_ZOOM);
+  // Punkt bei 100 px im Ausschnitt, gescrollt 300 px, Zoom ×2: Inhalt an 400 → 800, also 700 scrollen
+  expect(keepFocal(300, 100, 2)).toBe(700);
+  // Herauszoomen nie unter 0
+  expect(keepFocal(10, 100, 0.5)).toBe(0);
+});

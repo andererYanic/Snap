@@ -27,6 +27,7 @@ jest.mock('react-native-reanimated', () => {
     withTiming: (v, _c, cb) => { if (cb) { cb(true); } return v; },
     runOnJS: (f) => f,
     useEvent: () => () => {},
+    useComposedEventHandler: (handlers) => (handlers && handlers.find(Boolean)) || (() => {}),
     useHandler: () => ({ context: {}, doDependenciesDiffer: false }),
     isSharedValue: () => false,
     Keyframe: class { constructor(d) { this.d = d; } duration() { return this; } delay() { return this; } },
