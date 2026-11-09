@@ -16,7 +16,11 @@ const FRAMES = 8;
 const MIN_MS = 500; // kürzester Ausschnitt
 const HANDLE = 22;
 
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+// Worklet: wird auch in Gesten auf dem UI-Thread aufgerufen (sonst Absturz „Remote Function“).
+const clamp = (v: number, a: number, b: number) => {
+  'worklet';
+  return Math.max(a, Math.min(b, v));
+};
 
 /** 75500 → „1:15“ (bzw. „1:02:03“). */
 export function clock(ms: number): string {

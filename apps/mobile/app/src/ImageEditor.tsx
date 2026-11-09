@@ -19,7 +19,11 @@ const ASPECTS: [string, number | null][] = [['Frei', null], ['1:1', 1], ['4:3', 
 const FILTERS: [string, string][] = [['', 'Original'], ['klar', 'Klar'], ['warm', 'Warm'], ['kuehl', 'Kühl'], ['sw', 'S/W'], ['matt', 'Matt']];
 const PX = Math.round(1080 * Math.min(2, PixelRatio.get() / 1.5));
 
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+// Worklet: wird auch in Gesten auf dem UI-Thread aufgerufen (sonst Absturz „Remote Function“).
+const clamp = (v: number, a: number, b: number) => {
+  'worklet';
+  return Math.max(a, Math.min(b, v));
+};
 
 /** Größter zentrierter Ausschnitt mit Seitenverhältnis `a` (Pixelverhältnis des Bildes `img`). */
 export function fitAspect(a: number | null, img: number): Rect {
