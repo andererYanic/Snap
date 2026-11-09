@@ -15,6 +15,7 @@
     "react-native-gesture-handler": "^3.5.0",
     "react-native-reanimated": "^4.7.1",
     "react-native-safe-area-context": "^5.5.2",
+    "react-native-svg": "^15.16.1",
     "react-native-video": "^6.19.3",
     "react-native-worklets": "^0.13.1"
   },

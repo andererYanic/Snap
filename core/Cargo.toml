@@ -53,6 +53,15 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 tar = { version = "0.4", default-features = false }
 # DOCX-Leseansicht: XML lesen ohne DTD/Entitäten-Auflösung (keine XXE-Angriffe möglich).
 quick-xml = "0.42"
+lopdf = { version = "0.47", default-features = false }
+# Nur die Datentypen (kein „builder“); RC-Version exakt festgelegt, siehe docs/DEPENDENCIES.md
+cms = { version = "=0.3.0-rc.1", default-features = false, features = ["std"] }
+x509-cert = { version = "0.3", default-features = false, features = ["std", "builder"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "alloc"] }
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+sha2 = "0.11"
+# Nur zum Prüfen fremder Signaturen (öffentliche Schlüssel)
+rsa = { version = "0.10", default-features = false, features = ["std", "encoding", "pkcs1v15"] }
 
 [dev-dependencies]
 tempfile = "3"

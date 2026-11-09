@@ -20,6 +20,7 @@ pub mod live;
 pub mod media;
 pub mod network;
 pub mod pairing;
+pub mod pdfsign;
 pub mod photos;
 pub mod pins;
 pub mod remote_ops;

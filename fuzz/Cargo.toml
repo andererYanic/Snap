@@ -127,3 +127,10 @@ path = "fuzz_targets/docx_read.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "pdf_signatures"
+path = "fuzz_targets/pdf_signatures.rs"
+test = false
+doc = false
+bench = false

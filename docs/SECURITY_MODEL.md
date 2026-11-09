@@ -203,6 +203,35 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   treffen dieselben Dekoder wie beim Abspielen; Bilder werden auf 24 MP begrenzt dekodiert.
 - Keine Google-Dienste und keine Tracker. Verteilung als signierte APK über GitHub.
 
+## PDF-Signaturen und Textmarker (entschieden 2026-11-09)
+
+- **Was eine Signatur belegt:** PAdES-B-B (`ETSI.CAdES.detached`, SHA-256, ECDSA P-256) über das ganze
+  Dokument. Prüfprogramme (Acrobat, Poppler, pyHanko – alle drei getestet) melden „gültig,
+  unverändert“; jede spätere Änderung fällt auf. Die Identität ist bei der eigenen, selbst
+  signierten ID **nicht** von einer Zertifizierungsstelle bestätigt; Empfänger können den
+  Fingerabdruck vergleichen (in den Einstellungen angezeigt). Keine qualifizierte Signatur (eIDAS).
+- **Schlüssel:** RustCrypto `p256`, privater Schlüssel nur verschlüsselt gespeichert (Argon2id
+  64 MiB/t=3 + AES-256-GCM, Zertifikat als AAD gegen Vertauschen), Datei 0600 im privaten
+  Datenordner, portabel als verschlüsselte `.snapid`-Datei. Das Passwort reist nur über die lokale
+  Schnittstelle (`Password`-Typ mit geschwärztem `Debug`), wird nie gespeichert oder protokolliert
+  und erreicht nie das Netz. Manipulierte ID-Dateien mit überhöhten Argon2-Kosten werden abgelehnt.
+- **Kein RSA zum Signieren** (RUSTSEC-2023-0071); RSA (`rsa` 0.10, PKCS#1 v1.5, ab 2048 Bit) nur zum
+  Prüfen fremder Signaturen mit öffentlichen Schlüsseln. Kryptobibliotheken der Generation mit
+  `crypto-bigint` ≥ 0.7.6 (RUSTSEC-2026-0387 behoben).
+- **Feindliche PDFs:** Größe ≤ 256 MB, verschlüsselte PDFs abgelehnt, Formularbaum mit
+  Zyklenschutz und Grenzen, CMS ≤ 512 KiB. Beim Prüfen muss die Lücke in `/ByteRange` exakt der
+  Hex-Wert von `/Contents` sein (gegen Umpacken), es darf kein zusätzlicher Inhalt hinter der
+  DER-Struktur stehen, und alles, was **nach** der Signatur angehängt wurde (inkrementelle
+  Änderungen, „Shadow“-Angriffe), meldet die Anzeige deutlich („danach geändert“). Fuzz-Ziel
+  `pdf_signatures`, Angriffstests in `core/src/pdfsign/mod.rs` (Byte geändert, Signatur
+  vertauscht, Bereich manipuliert, Anhang nach dem Signieren) und `core/tests/pdf.rs`.
+- **Schreiben:** immer als inkrementelles Update (Original bleibt Byte für Byte erhalten),
+  Ergebnis neben dem Original ohne Überschreiben; „Original ersetzen“ über den Kern mit Papierkorb.
+- **Sichtbarkeit:** Unterschrift und Textmarker werden Seiteninhalt (nicht Anmerkung), damit
+  jede Anzeige und jeder Drucker sie zeigt. Das Signaturfeld selbst ist unsichtbar.
+- **Offen:** Zeitstempel (RFC 3161, optional, neue Netzverbindung) und `.p12`-Import als eigene
+  Schritte mit eigener Prüfung.
+
 ## Betrieb in fremden Umgebungen (geprüft 2026-11-06)
 
 - **Mehrbenutzer-Rechner:**
