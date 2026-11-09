@@ -877,7 +877,7 @@ test('PDF: Textmarker zeichnen und speichern, Signieren mit ID, Hinweis zur Sign
     await act(async () => { pressable(r, 'Fertig').props.onPress(); });
     await act(async () => { await pressable(r, 'Als Kopie speichern').props.onPress(); });
     await flush();
-    const mark = calls.find((c) => c.PdfMark)?.PdfMark;
+    const mark = (calls as any[]).find((c) => c.PdfMark)?.PdfMark;
     expect(mark.mode).toBe('copy');
     expect(mark.layers[0].color).toBe('#ffe14d');
     expect(mark.layers[0].strokes[0].length).toBeGreaterThan(1);
@@ -901,7 +901,7 @@ test('PDF: Textmarker zeichnen und speichern, Signieren mit ID, Hinweis zur Sign
     });
     await act(async () => { await pressable(r, 'Übernehmen').props.onPress(); });
     await flush();
-    expect(calls.some((c) => c.SignatureSave)).toBe(true);
+    expect((calls as any[]).some((c) => c.SignatureSave)).toBe(true);
     await act(async () => { pressable(r, 'Weiter').props.onPress(); });
     await act(async () => { pressable(r, 'Original ersetzen').props.onPress(); });
     await act(async () => { field('Passwort').props.onChangeText('falsch-123'); });
@@ -911,7 +911,7 @@ test('PDF: Textmarker zeichnen und speichern, Signieren mit ID, Hinweis zur Sign
     await act(async () => { field('Passwort').props.onChangeText('geheim-123'); });
     await act(async () => { await pressable(r, 'Signieren').props.onPress(); });
     await flush();
-    const sign = calls.filter((c) => c.PdfSign).at(-1).PdfSign;
+    const sign = (calls as any[]).filter((c) => c.PdfSign).at(-1).PdfSign;
     expect(sign.mode).toBe('temp');
     expect(sign.placement.page).toBe(0);
     // Unterschrift liegt im platzierten Feld (rechts unten)
