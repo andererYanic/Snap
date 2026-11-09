@@ -77,7 +77,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Item[] | null>(null);
   const [searching, setSearching] = useState(false); // Anfrage läuft noch
-  const [pdf, setPdf] = useState<{ path: string; name: string } | null>(null);
+  const [pdf, setPdf] = useState<{ path: string; name: string; mode?: 'view' | 'mark' | 'sign' } | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
   const [viewer, setViewer] = useState<{ items: MediaItem[]; start: number } | null>(null);
@@ -637,6 +637,24 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     if (isVideo(e.name)) {
       return [{ label: t('Bearbeiten'), onPress: () => { done(); setEditing({ path: e.path, name: e.name }); } }];
     }
+    if (/\.pdf$/i.test(e.name)) {
+      return [
+        { label: t('Signieren'), onPress: () => { done(); setPdf({ path: e.path, name: e.name, mode: 'sign' }); } },
+        { label: t('Markieren'), onPress: () => { done(); setPdf({ path: e.path, name: e.name, mode: 'mark' }); } },
+        { label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } },
+      ];
+    }
+    if (/\.snapid$/i.test(e.name)) {
+      return [{
+        label: t('Als digitale ID importieren'),
+        onPress: () => {
+          done();
+          request<{ id: { name: string } | null }>({ SignIdImport: { path: e.path } })
+            .then((r) => notify(t('Digitale ID „{name}“ importiert.', { name: r.id?.name ?? '' })))
+            .catch(fail);
+        },
+      }];
+    }
     if (/\.pdf$/i.test(e.name) || /\.gif$/i.test(e.name)) {
       return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
     }
@@ -911,7 +929,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         </View>
       )}
       {textFile && <TextViewer path={textFile.path} name={textFile.name} theme={theme} onClose={() => setTextFile(null)} />}
-      {pdf && <PdfViewer path={pdf.path} name={pdf.name} onClose={() => setPdf(null)} />}
+      {pdf && <PdfViewer path={pdf.path} name={pdf.name} initialMode={pdf.mode} notify={notify} onChanged={load} onClose={() => setPdf(null)} />}
       {viewer && (
         <Viewer
           items={viewer.items}

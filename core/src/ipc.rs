@@ -91,6 +91,17 @@ pub struct RemoteDirPage {
     pub next: Option<String>,
 }
 
+/// Eine Textmarker-Ebene aus der Oberfläche.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PdfLayer {
+    pub page: usize,
+    pub strokes: Vec<crate::pdfsign::pdf::Stroke>,
+    /// Farbe als "#rrggbb".
+    pub color: String,
+    /// Strichbreite relativ zur Seitenbreite.
+    pub width: f32,
+}
+
 /// Ein Eintrag im Katalog, egal ob lokal oder auf einem anderen Gerät.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct CatalogItem {
@@ -241,6 +252,44 @@ pub enum Request {
         /// Fortsetzung hinter diesem Eintrag (`next` der vorigen Seite); hat Vorrang vor `offset`.
         #[serde(default)]
         after: Option<String>,
+    },
+    /// Digitale ID zum Signieren: Stand (ohne Geheimnisse). Nur lokal.
+    SignIdInfo,
+    /// Neue digitale ID (ersetzt keine bestehende). Nur lokal.
+    SignIdCreate {
+        name: String,
+        password: crate::fileops::archive::Password,
+    },
+    /// Verschlüsselte ID-Datei in den Ordner `dest` exportieren (zum Übertragen). Nur lokal.
+    SignIdExport {
+        dest: PathBuf,
+    },
+    /// ID-Datei importieren (ersetzt keine bestehende). Nur lokal.
+    SignIdImport {
+        path: PathBuf,
+    },
+    SignIdDelete,
+    /// Gezeichnete Unterschrift speichern bzw. lesen (Striche, normiert). Nur lokal.
+    SignatureSave {
+        strokes: Vec<crate::pdfsign::pdf::Stroke>,
+    },
+    SignatureGet,
+    /// Textmarker in ein PDF übernehmen. `mode`: "copy" (neue Datei) oder "temp" (für Ersetzen).
+    PdfMark {
+        path: PathBuf,
+        layers: Vec<PdfLayer>,
+        mode: String,
+    },
+    /// PDF signieren (sichtbar + PAdES). `mode` wie bei `PdfMark`. Nur lokal.
+    PdfSign {
+        path: PathBuf,
+        placement: crate::pdfsign::Placement,
+        password: crate::fileops::archive::Password,
+        mode: String,
+    },
+    /// Signaturen eines PDFs prüfen. Nur lokal.
+    PdfVerify {
+        path: PathBuf,
     },
     /// Word-Datei (DOCX) als einfache Leseansicht lesen. Bilder landen in `image_dir`. Nur lokal.
     ReadDocx {
@@ -572,6 +621,20 @@ pub enum Response {
         hits: Vec<crate::index::SearchHit>,
     },
     Docx(crate::docx::DocxDoc),
+    SignId {
+        id: Option<crate::pdfsign::id::IdInfo>,
+        /// Eine Unterschrift ist gespeichert.
+        has_signature: bool,
+    },
+    Signature {
+        strokes: Vec<crate::pdfsign::pdf::Stroke>,
+    },
+    PdfWritten {
+        path: PathBuf,
+    },
+    PdfSignatures {
+        items: Vec<crate::pdfsign::SignatureReport>,
+    },
     DirListing {
         path: PathBuf,
         entries: Vec<DirEntryInfo>,

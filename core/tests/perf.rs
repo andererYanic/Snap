@@ -1244,3 +1244,58 @@ fn explorer_paging_large_folder() {
     }
     report("explorer: 100k Dateien, Folgeseite (Cursor, Zwischenspeicher)", n, t.elapsed());
 }
+
+#[test]
+#[ignore]
+fn pdf_mark_sign_verify() {
+    // PDF mit 200 Seiten (je ein Inhaltsstrom), klassische Querverweise
+    use space_core::pdfsign::{self, id, pdf, Placement};
+    let n = 200;
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offs = vec![];
+    let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 3 + 2 * i)).collect();
+    let mut objs = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        format!("<< /Type /Pages /Kids [{}] /Count {n} /MediaBox [0 0 595 842] >>", kids.join(" ")),
+    ];
+    for i in 0..n {
+        objs.push(format!("<< /Type /Page /Parent 2 0 R /Contents {} 0 R /Resources << >> >>", 4 + 2 * i));
+        let body = "0 0 m 100 100 l S\n".repeat(200);
+        objs.push(format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len()));
+    }
+    for (i, o) in objs.iter().enumerate() {
+        offs.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let x = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offs {
+        out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{x}\n%%EOF\n", objs.len() + 1).as_bytes(),
+    );
+    println!("PDF: {n} Seiten, {:.1} MB", out.len() as f64 / 1e6);
+
+    let strokes: Vec<Vec<(f32, f32)>> =
+        (0..20).map(|i| (0..50).map(|j| (j as f32 / 50.0, i as f32 / 20.0)).collect()).collect();
+    let layer = pdf::Layer { page: 100, strokes, color: [1.0, 0.9, 0.0], width: 0.02, opacity: 0.4, multiply: true };
+    let t = Instant::now();
+    let marked = pdf::draw(&out, &[layer]).unwrap();
+    report("pdf: Textmarker (20 Striche, 1000 Punkte)", 1, t.elapsed());
+
+    let t = Instant::now();
+    let f = id::create("Max Muster", "geheim-123", 1_700_000_000).unwrap();
+    report("pdf: digitale ID erstellen (Argon2id 64 MiB)", 1, t.elapsed());
+    let t = Instant::now();
+    let u = id::unlock(&f, "geheim-123").unwrap();
+    report("pdf: digitale ID entsperren (Argon2id 64 MiB)", 1, t.elapsed());
+    let place = Placement { page: 0, strokes: vec![vec![(0.6, 0.8), (0.7, 0.78), (0.8, 0.82)]], width: 0.004 };
+    let t = Instant::now();
+    let signed = pdfsign::sign(&marked, &place, &u, "Max Muster", 1_700_000_100).unwrap();
+    report("pdf: signieren (ohne Entsperren)", 1, t.elapsed());
+    let t = Instant::now();
+    let reps = pdfsign::verify(&signed, None).unwrap();
+    report("pdf: Signaturen prüfen", 1, t.elapsed());
+    assert!(reps[0].valid && reps[0].covers_document);
+}

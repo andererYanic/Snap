@@ -9,6 +9,7 @@ pub mod error;
 pub mod explorer;
 pub mod fileops;
 pub mod files;
+pub mod pdf;
 pub mod pins;
 pub mod shares;
 pub mod transfer;
@@ -94,6 +95,16 @@ pub(crate) async fn handle_request(
         }
         Request::Search { query, filter, limit } => explorer::search(inner, query, filter, limit).await,
         Request::ReadDocx { path, image_dir } => read_docx(path, image_dir).await,
+        Request::SignIdInfo => pdf::id_info(inner),
+        Request::SignIdCreate { name, password } => pdf::id_create(inner, name, password).await,
+        Request::SignIdExport { dest } => pdf::id_export(inner, &dest),
+        Request::SignIdImport { path } => pdf::id_import(inner, &path),
+        Request::SignIdDelete => pdf::id_delete(inner),
+        Request::SignatureSave { strokes } => pdf::signature_save(inner, strokes),
+        Request::SignatureGet => pdf::signature_get(inner),
+        Request::PdfMark { path, layers, mode } => pdf::mark(path, layers, mode).await,
+        Request::PdfSign { path, placement, password, mode } => pdf::sign(inner, path, placement, password, mode).await,
+        Request::PdfVerify { path } => pdf::verify(inner, path).await,
         Request::ListDir { path, show_hidden, offset, limit, after } => {
             explorer::list_dir(path, show_hidden, offset, limit, after).await
         }
@@ -256,6 +267,16 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::Search { .. } => "search",
         Request::ListDir { .. } => "listdir",
         Request::ReadDocx { .. } => "docx.read",
+        Request::SignIdInfo => "sign.id",
+        Request::SignIdCreate { .. } => "sign.id.create",
+        Request::SignIdExport { .. } => "sign.id.export",
+        Request::SignIdImport { .. } => "sign.id.import",
+        Request::SignIdDelete => "sign.id.delete",
+        Request::SignatureSave { .. } => "sign.signature.save",
+        Request::SignatureGet => "sign.signature",
+        Request::PdfMark { .. } => "pdf.mark",
+        Request::PdfSign { .. } => "pdf.sign",
+        Request::PdfVerify { .. } => "pdf.verify",
         Request::IndexRoots => "index.roots",
         Request::IndexAdd { .. } => "index.add",
         Request::IndexRemove { .. } => "index.remove",

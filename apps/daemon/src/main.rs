@@ -1078,6 +1078,35 @@ fn print_response(res: Response) -> ExitCode {
             );
             println!("   {queued} Datei(en) werden geladen; neue und geänderte Dateien folgen automatisch.");
         }
+        Response::SignId { id, has_signature } => match id {
+            Some(i) => println!(
+                "Digitale ID: {} (Fingerabdruck {}){}",
+                i.name,
+                i.fingerprint,
+                if has_signature { ", Unterschrift gespeichert" } else { "" }
+            ),
+            None => println!("Keine digitale ID."),
+        },
+        Response::Signature { strokes } => println!("Unterschrift: {} Striche", strokes.len()),
+        Response::PdfWritten { path } => println!("Gespeichert: {}", path.display()),
+        Response::PdfSignatures { items } => {
+            if items.is_empty() {
+                println!("Keine Signaturen.");
+            }
+            for s in items {
+                let state = match (s.valid, s.covers_document) {
+                    (true, true) => "gültig, Dokument unverändert",
+                    (true, false) => "gültig, aber danach geändert",
+                    _ => "UNGÜLTIG",
+                };
+                println!(
+                    "{}: {} – {state}{}",
+                    s.field,
+                    s.signer,
+                    s.problem.map(|p| format!(" ({p})")).unwrap_or_default()
+                );
+            }
+        }
         Response::RemoteDir(page) => {
             for d in &page.dirs {
                 println!("{:<14} {:>10}  {d}/", "", "");

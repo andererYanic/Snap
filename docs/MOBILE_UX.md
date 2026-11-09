@@ -102,6 +102,15 @@ Eigene Ergänzungen:
   erscheint sofort ein 1024-px-Vorschaubild, dann das Original. Gewischt wird durch alle Dateien des
   Ordners; was die Anzeige nicht darstellt (PDF, Text …), erscheint als Karte mit „Öffnen mit …“. Videos über Media3/ExoPlayer; was
   nicht abspielbar ist, bietet „Mit anderer App öffnen“ an.
+- **PDFs markieren und signieren:** In der PDF-Anzeige unten „Markieren“ (Textmarker in Gelb, Grün,
+  Blau, Rosa; ✋ zum Verschieben, ↶ rückgängig) und „Signieren“. Beim ersten Signieren: digitale ID
+  anlegen (Name, Passwort) und Unterschrift zeichnen; danach die Unterschrift auf die Seite ziehen,
+  Ecke ziehen für die Größe, „Weiter“, Kopie oder Original ersetzen, Passwort. Markierungen und
+  Unterschrift sind danach fester Seiteninhalt (auch gedruckt). Öffnet man ein signiertes PDF,
+  zeigt ein Hinweis oben „Signiert von … – unverändert“ (grün), „– danach geändert“ bzw.
+  „Identität nicht bestätigt“ (gelb) oder „ungültig“ (rot); Antippen zeigt Details samt
+  Fingerabdruck. Die ID verwaltet „Einstellungen → Digitale ID“ (Export als verschlüsselte
+  `.snapid`-Datei, Import durch Antippen der Datei).
 - **Bilder bearbeiten:** im Menü am Finger und in der Bildanzeige. Zuschneiden (frei oder 1:1, 4:3,
   3:4, 16:9, Ecken ziehen, Drittel-Raster), Drehen, Helligkeit/Kontrast/Sättigung/Wärme, Filter. Android
   rechnet (Hardware), die Vorschau folgt den Reglern nach kurzer Pause. Speichern fragt: Kopie

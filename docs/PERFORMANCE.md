@@ -615,3 +615,19 @@ Messung (`perf.rs::explorer_paging_large_folder`, Release, 100 000 Dateien):
 
 Die erste Seite eines riesigen Ordners bleibt eine asynchrone Abfrage im Hintergrund (die
 Oberfläche blockiert nicht); erneutes Öffnen und Weiterblättern sind sofort da.
+
+## Review 32 – PDF: Textmarker, Signieren, Prüfen (2026-11-09)
+
+Messung (`perf.rs::pdf_mark_sign_verify`, Release, PDF mit 200 Seiten, 0,8 MB):
+
+| Schritt | Zeit |
+|---|---|
+| Textmarker übernehmen (20 Striche, 1 000 Punkte) | 1,6 ms |
+| Signieren (Update + CMS, ohne Entsperren) | 1,9 ms |
+| Signaturen prüfen | 1,3 ms |
+| Digitale ID entsperren (Argon2id 64 MiB, t=3) | 104 ms (PC; auf Telefonen bis ≈ 1 s) |
+
+- Alles läuft im Kern in `spawn_blocking`; die Oberfläche zeigt währenddessen einen Hinweis und
+  blockiert nicht. Argon2 ist absichtlich teuer (Schutz des Schlüssels gegen Raten).
+- Live-Zeichnen: ein SVG-Pfad je Strich, Punkte ausgedünnt (Mindestabstand 0,2 % der Fläche);
+  Prüfen beim Öffnen läuft parallel zum Laden der Seiten.

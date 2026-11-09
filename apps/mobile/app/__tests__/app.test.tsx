@@ -825,3 +825,106 @@ test('PDF-Zoom: Auflösungsstufen und Fingerpunkt bleibt stehen', () => {
   // Herauszoomen nie unter 0
   expect(keepFocal(10, 100, 0.5)).toBe(0);
 });
+
+test('PDF: Textmarker zeichnen und speichern, Signieren mit ID, Hinweis zur Signatur', async () => {
+  const { signatureSummary } = require('../src/PdfViewer');
+  const base = { field: 'Signatur1', issuer: 'Max', fingerprint: 'ab'.repeat(32), algorithm: 'ECDSA P-256 / SHA-256', signed_at: null, problem: null };
+  expect(signatureSummary([])).toBeNull();
+  expect(signatureSummary([{ ...base, valid: true, covers_document: true, signer: 'Max', self_signed: true, own: true }]).kind).toBe('ok');
+  expect(signatureSummary([{ ...base, valid: true, covers_document: true, signer: 'Eva', self_signed: true, own: false }]).kind).toBe('warn');
+  expect(signatureSummary([{ ...base, valid: true, covers_document: false, signer: 'Max', self_signed: false, own: false }]).text).toContain('danach geändert');
+  expect(signatureSummary([{ ...base, valid: false, covers_document: true, signer: 'Max', self_signed: false, own: false, problem: 'Hash passt nicht' }]).kind).toBe('bad');
+
+  NativeModules.SnapCore.pdfInfo = jest.fn(async () => ({ pages: 1, ratios: [1.414] }));
+  NativeModules.SnapCore.pdfPage = jest.fn(async () => '/cache/pdf/seite.png');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let hasId = false;
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    calls.push(req);
+    if (req.PdfVerify) return JSON.stringify({ PdfSignatures: { items: [] } });
+    if (req === 'SignIdInfo') return JSON.stringify({ SignId: { id: hasId ? { name: 'Max', created: 1, fingerprint: 'ab'.repeat(32) } : null, has_signature: hasId } });
+    if (req.SignIdCreate) { hasId = true; return JSON.stringify({ SignId: { id: { name: req.SignIdCreate.name, created: 1, fingerprint: 'ab'.repeat(32) }, has_signature: false } }); }
+    if (req.SignatureSave) return JSON.stringify({ Signature: { strokes: req.SignatureSave.strokes } });
+    if (req === 'SignatureGet') return JSON.stringify({ Signature: { strokes: [[[0.1, 0.5], [0.9, 0.5]]] } });
+    if (req.PdfMark) return JSON.stringify({ PdfWritten: { path: '/storage/emulated/0/brief (markiert).pdf' } });
+    if (req.PdfSign) {
+      if (req.PdfSign.password !== 'geheim-123') return JSON.stringify({ Error: { code: 'PasswordRequired', message: 'Falsches Passwort.' } });
+      return JSON.stringify({ PdfWritten: { path: '/storage/emulated/0/.snap-edit-1.pdf' } });
+    }
+    return origRequest(json);
+  });
+  try {
+    const PdfViewer = require('../src/PdfViewer').default;
+    const notes: string[] = [];
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      r = mount(<PdfViewer path="/storage/emulated/0/brief.pdf" name="brief.pdf" notify={(x: string) => notes.push(x)} onClose={() => {}} />);
+    });
+    await flush();
+    expect(calls).toContainEqual({ PdfVerify: { path: '/storage/emulated/0/brief.pdf' } });
+
+    // Textmarker: zeichnen (Geste auf der Seite), speichern als Kopie
+    await act(async () => { byLabel(r, 'Markieren').props.onPress(); });
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('mark-page-0'), [
+        { state: State.BEGAN, x: 10, y: 20 },
+        { state: State.ACTIVE, x: 100, y: 22 },
+        { state: State.ACTIVE, x: 200, y: 24 },
+        { state: State.END, x: 200, y: 24 },
+      ]);
+    });
+    await act(async () => { pressable(r, 'Fertig').props.onPress(); });
+    await act(async () => { await pressable(r, 'Als Kopie speichern').props.onPress(); });
+    await flush();
+    const mark = calls.find((c) => c.PdfMark)?.PdfMark;
+    expect(mark.mode).toBe('copy');
+    expect(mark.layers[0].color).toBe('#ffe14d');
+    expect(mark.layers[0].strokes[0].length).toBeGreaterThan(1);
+    expect(notes.some((n) => n.includes('Markierungen gespeichert'))).toBe(true);
+
+    // Signieren: erst ID anlegen, Unterschrift zeichnen, platzieren, Passwort (erst falsch)
+    await act(async () => { await byLabel(r, 'Signieren').props.onPress(); });
+    await flush();
+    const field = (label: string) => r.root.find((n) => (n.type as any) === 'TextInput' && n.props.accessibilityLabel === label);
+    await act(async () => { field('Name').props.onChangeText('Max Muster'); });
+    await act(async () => { field('Passwort').props.onChangeText('geheim-123'); });
+    await act(async () => { field('Passwort wiederholen').props.onChangeText('geheim-123'); });
+    await act(async () => { await pressable(r, 'Erstellen').props.onPress(); });
+    await flush();
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('signature-pad'), [
+        { state: State.BEGAN, x: 10, y: 50 },
+        { state: State.ACTIVE, x: 150, y: 40 },
+        { state: State.END, x: 150, y: 40 },
+      ]);
+    });
+    await act(async () => { await pressable(r, 'Übernehmen').props.onPress(); });
+    await flush();
+    expect(calls.some((c) => c.SignatureSave)).toBe(true);
+    await act(async () => { pressable(r, 'Weiter').props.onPress(); });
+    await act(async () => { pressable(r, 'Original ersetzen').props.onPress(); });
+    await act(async () => { field('Passwort').props.onChangeText('falsch-123'); });
+    await act(async () => { await pressable(r, 'Signieren').props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Falsches Passwort.');
+    await act(async () => { field('Passwort').props.onChangeText('geheim-123'); });
+    await act(async () => { await pressable(r, 'Signieren').props.onPress(); });
+    await flush();
+    const sign = calls.filter((c) => c.PdfSign).at(-1).PdfSign;
+    expect(sign.mode).toBe('temp');
+    expect(sign.placement.page).toBe(0);
+    // Unterschrift liegt im platzierten Feld (rechts unten)
+    expect(sign.placement.strokes[0][0][0]).toBeGreaterThan(0.5);
+    // Nach dem Speichern der markierten Kopie zeigt die Anzeige diese – signiert wird also sie
+    expect(sign.path).toBe('/storage/emulated/0/brief (markiert).pdf');
+    expect(calls).toContainEqual({ FileOp: { op: { Replace: { path: '/storage/emulated/0/brief (markiert).pdf', with: '/storage/emulated/0/.snap-edit-1.pdf' } }, wait: true } });
+    expect(notes.some((n) => n.includes('Signiert.'))).toBe(true);
+    // Passwort steht nirgends im sichtbaren Text
+    expect(allText(r)).not.toContain('geheim-123');
+    await act(async () => { r.unmount(); });
+    mounted.length = 0;
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

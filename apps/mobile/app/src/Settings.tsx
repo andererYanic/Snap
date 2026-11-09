@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Animated from 'react-native-reanimated';
-import { request } from './core';
+import { request, storageRoot } from './core';
+import { SignIdPage } from './SignId';
 import { t } from './i18n';
 import { m, pageIn } from './motion';
 import { Devices, General, TrashPage, type Device } from './Pages';
@@ -11,7 +12,7 @@ import { Text } from './text';
 import type { Theme } from './theme';
 import { themed } from './ui';
 
-type Sub = 'general' | 'devices' | 'trash' | 'about';
+type Sub = 'general' | 'devices' | 'sign' | 'trash' | 'about';
 
 interface Props {
   theme: Theme;
@@ -54,7 +55,7 @@ export default function Settings(p: Props) {
     setDir('forward');
     setSub(x);
   };
-  const title = { general: t('Allgemein'), devices: t('Geräte'), trash: t('Papierkorb'), about: t('Über Snap') };
+  const title = { general: t('Allgemein'), devices: t('Geräte'), sign: t('Digitale ID'), trash: t('Papierkorb'), about: t('Über Snap') };
   const online = devices?.filter((d) => d.online).length ?? 0;
 
   if (sub) {
@@ -71,6 +72,7 @@ export default function Settings(p: Props) {
           <General theme={p.theme} notify={p.notify} material={p.material} setMaterial={p.setMaterial} materialAvailable={p.materialAvailable} fontName={p.fontName} onFont={p.onFont} />
         )}
         {sub === 'devices' && <Devices theme={p.theme} notify={p.notify} />}
+        {sub === 'sign' && <SignIdPage theme={p.theme} notify={p.notify} downloads={async () => `${await storageRoot()}/Download`} />}
         {sub === 'trash' && <TrashPage theme={p.theme} notify={p.notify} />}
         {sub === 'about' && (
           <ScrollView contentContainerStyle={s.page}>
@@ -114,6 +116,8 @@ export default function Settings(p: Props) {
             label={t('Geräte')}
             meta={devices === null ? '' : t('{n} gekoppelt · {online} verbunden', { n: devices.length, online })}
           />
+          <View style={s.sep} />
+          <Row k="sign" icon="✍" label={t('Digitale ID')} meta={t('PDFs signieren, Unterschrift')} />
         </View>
         <View style={s.card}>
           <Row k="trash" icon="🗑" label={t('Papierkorb')} meta={t('Gelöschte Dateien wiederherstellen')} />

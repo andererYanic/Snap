@@ -10,6 +10,9 @@ davon über Iroh.
 | `iroh`, `iroh-blobs`, `n0-future` | P2P-Verbindungen (QUIC), Blob-Übertragung | Kern des Projekts. Aktiv gepflegt (n0). Größter Teil des Baums. |
 | `tokio` | Laufzeit | Standard, sehr gut gepflegt |
 | `rusqlite` (bundled SQLite) | Datenbank, Index, FTS5 | Gut gepflegt. SQLite wird mitgebaut, damit Versionsstand und FTS5 garantiert sind. Seit 2026-11-07 auf 0.41. |
+| `lopdf` (0.47, ohne Standardfunktionen) | PDF lesen für Signieren, Prüfen, Textmarker | MIT; feindliche Eingaben → Grenzen + Fuzz-Ziel `pdf_signatures`. Geschrieben wird nur das inkrementelle Update (eigener Code). |
+| RustCrypto `p256` 0.14, `x509-cert` 0.3 (`builder`), `cms` =0.3.0-rc.1 (nur Typen), `sha2` 0.11, `argon2` 0.5 | Digitale ID, Zertifikat, CMS-Signatur | Apache-2.0/MIT. `cms` ist ein Release-Kandidat und exakt festgelegt; genutzt werden nur Datentypen (kein „builder“, der `rsa` zum Signieren bräuchte). Neue Generation wegen RUSTSEC-2026-0387 (`crypto-bigint` < 0.7.6). |
+| `rsa` 0.10 (`pkcs1v15`, `encoding`) | Fremde RSA-Signaturen prüfen | Nur öffentliche Schlüssel; 0.10 behebt RUSTSEC-2023-0071. |
 | `ring` | AES-GCM, HKDF, HMAC, PBKDF2, SHA-256 | Etabliert und geprüft. Bewusst keine eigene Kryptografie. |
 | `rustls`, `webpki-roots`, `reqwest` | HTTPS zu S3/R2 | Standard. Nur HTTPS, eigene Wurzelzertifikate (kein System-Store). |
 | `hyper`, `hyper-util`, `http-body-util` | Lokaler Streaming-Server (127.0.0.1) | Standard |
@@ -40,6 +43,7 @@ davon über Iroh.
 | `react-native-reanimated`, `react-native-worklets` | Animationen auf dem UI-Thread | Von Software Mansion, Standard in React Native. Keine Netzwerkzugriffe. |
 | `react-native-gesture-handler` | Gesten (Wisch-Auswahl, Zoom, Wischen zum Schließen) | Von Software Mansion, Standard. |
 | `react-native-video` (Media3/ExoPlayer) | Videos in der App abspielen | Nur lokale Dateien. Google-IMA-Werbemodul sowie HLS/DASH/RTSP/SmoothStreaming in `gradle.properties` abgeschaltet; Media3 selbst ist quelloffen (Apache-2.0) und braucht keine Play-Dienste. |
+| `react-native-svg` | Textmarker und Unterschrift live zeichnen | MIT, ohne Google-Dienste; gespeichert wird im Kern als PDF-Inhalt. |
 | `androidx.media3:media3-transformer`, `media3-effect` (1.8.0) | Videos kürzen, drehen, Ton entfernen | Gleiche Media3-Version wie die Wiedergabe, Apache-2.0, ohne Play-Dienste; arbeitet nur mit lokalen Dateien. |
 
 ## Ergebnisse

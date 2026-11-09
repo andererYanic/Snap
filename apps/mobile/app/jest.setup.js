@@ -37,3 +37,12 @@ jest.mock('react-native-reanimated', () => {
 jest.mock('react-native-worklets', () => ({ scheduleOnRN: (f, ...a) => f(...a) }));
 
 require('react-native-gesture-handler/jestSetup');
+
+// SVG (Striche von Textmarker und Unterschrift) als einfache Views
+jest.mock('react-native-svg', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  const Svg = (p) => React.createElement(View, p);
+  const Path = (p) => React.createElement(View, { testID: 'svg-path', d: p.d, stroke: p.stroke });
+  return { __esModule: true, default: Svg, Svg, Path };
+});
