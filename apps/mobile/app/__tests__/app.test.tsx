@@ -928,3 +928,14 @@ test('PDF: Textmarker zeichnen und speichern, Signieren mit ID, Hinweis zur Sign
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Gesten-Callbacks rufen nur Worklets oder runOnJS auf (Absturz „Remote Function“)', () => {
+  // Hilfsfunktionen, die in Gesten (UI-Thread) laufen, müssen als Worklet markiert sein.
+  const fs = require('fs');
+  const path = require('path');
+  for (const f of ['PdfViewer.tsx', 'ImageEditor.tsx', 'VideoEditor.tsx']) {
+    const src: string = fs.readFileSync(path.join((globalThis as any).process.cwd(), 'src', f), 'utf8');
+    const m = src.match(/const clamp = \([^)]*\) => \{\s*'worklet';/);
+    expect({ f, worklet: !!m }).toEqual({ f, worklet: true });
+  }
+});

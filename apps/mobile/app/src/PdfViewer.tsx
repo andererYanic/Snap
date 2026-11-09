@@ -25,7 +25,11 @@ const PAGE_W = W - 2 * PAD;
 export const MIN_ZOOM = 1;
 export const MAX_ZOOM = 5;
 
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+// Worklet: wird auch in Gesten auf dem UI-Thread aufgerufen (sonst Absturz „Remote Function“).
+const clamp = (v: number, a: number, b: number) => {
+  'worklet';
+  return Math.max(a, Math.min(b, v));
+};
 
 /** Auflösungsstufe für eine Zoomstufe (nicht bei jedem Zwischenwert neu zeichnen). */
 export function renderStep(scale: number): number {
