@@ -142,6 +142,30 @@ export function shortDate(unixSecs: number, loc: string, utc = false): string {
   return f.format(new Date(unixSecs * 1000));
 }
 
+/**
+ * Kurzes, menschliches Datum für Listen: heute „14:30“, gestern `yesterday`, in den letzten
+ * sechs Tagen der Wochentag („Mo.“), im selben Jahr „3. Nov.“, sonst „3.11.2024“.
+ */
+export function relativeDate(unixSecs: number, loc: string, yesterday: string, nowSecs = Date.now() / 1000): string {
+  const d = new Date(unixSecs * 1000);
+  const now = new Date(nowSecs * 1000);
+  const day = (x: Date) => Math.floor((x.getTime() - x.getTimezoneOffset() * 60000) / 86400000);
+  const diff = day(now) - day(d);
+  if (diff === 0) {
+    return fmt(dateFmt, `${loc}|hm`, () => new Intl.DateTimeFormat(loc, { hour: '2-digit', minute: '2-digit' })).format(d);
+  }
+  if (diff === 1) {
+    return yesterday;
+  }
+  if (diff > 1 && diff < 7) {
+    return fmt(dateFmt, `${loc}|wd`, () => new Intl.DateTimeFormat(loc, { weekday: 'short' })).format(d);
+  }
+  if (d.getFullYear() === now.getFullYear() && diff >= 0) {
+    return fmt(dateFmt, `${loc}|dm`, () => new Intl.DateTimeFormat(loc, { day: 'numeric', month: 'short' })).format(d);
+  }
+  return fmt(dateFmt, `${loc}|dmy`, () => new Intl.DateTimeFormat(loc, { day: 'numeric', month: 'numeric', year: 'numeric' })).format(d);
+}
+
 /** Monat und Jahr (z. B. „November 2026“). */
 export function monthYear(unixSecs: number, loc: string): string {
   const f = fmt(dateFmt, `${loc}|my`, () => new Intl.DateTimeFormat(loc, { month: 'long', year: 'numeric', timeZone: 'UTC' }));

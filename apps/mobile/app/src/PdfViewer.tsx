@@ -14,6 +14,7 @@ import * as core from './core';
 import { request } from './core';
 import { t } from './i18n';
 import { fadeIn, m, popIn } from './motion';
+import { Icon } from './Icon';
 import { DrawArea, INK_WIDTH, MARKER_COLORS, MARKER_WIDTH, type Stroke, Strokes } from './Ink';
 import { AskPassword, CreateId, groupFingerprint, idInfo } from './SignId';
 import SignaturePad, { PAD_RATIO } from './SignaturePad';
@@ -21,6 +22,7 @@ import SignaturePad, { PAD_RATIO } from './SignaturePad';
 const { width: W } = Dimensions.get('window');
 const GAP = 8;
 const PAD = 8;
+const VIEWABILITY = { itemVisiblePercentThreshold: 40 };
 const PAGE_W = W - 2 * PAD;
 export const MIN_ZOOM = 1;
 export const MAX_ZOOM = 5;
@@ -171,6 +173,12 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
   const hScroll = useRef<any>(null);
   const vList = useRef<any>(null);
   const pos = useRef({ x: 0, y: 0 });
+  // Muss über die ganze Lebensdauer dieselbe Funktion bleiben (FlatList-Vorgabe)
+  const onViewable = useRef(({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
+    if (viewableItems[0]) {
+      setPage(viewableItems[0].index ?? 0);
+    }
+  });
   // Live-Zoom während der Geste (Transformation um den Fingerpunkt), danach übernommen
   const live = useSharedValue(1);
   const ox = useSharedValue(0);
@@ -361,22 +369,22 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
         <StatusBar barStyle="light-content" />
         <View style={styles.top}>
           <Pressable onPress={onClose} style={styles.btn} accessibilityLabel={t('Schließen')}>
-            <Text style={styles.btnText}>✕</Text>
+            <Icon name="back" color="#fff" />
           </Pressable>
           <View style={styles.titleBox}>
             <Text style={styles.title} numberOfLines={1}>{docName}</Text>
             {ok && <Text style={styles.counter}>{t('Seite {n} von {total}', { n: page + 1, total: ok.pages })}{scale > 1.01 ? `  ·  ${Math.round(scale * 100)} %` : ''}</Text>}
           </View>
           <Pressable onPress={() => core.printFile(doc).catch(() => {})} style={styles.btn} accessibilityLabel={t('Drucken')}>
-            <Text style={styles.small}>{t('Drucken')}</Text>
+            <Icon name="print" size={22} color="#fff" />
           </Pressable>
           <Pressable onPress={() => core.openFile(doc).catch(() => {})} style={styles.btn} accessibilityLabel={t('Öffnen mit …')}>
-            <Text style={styles.btnText}>⋯</Text>
+            <Icon name="more" size={22} color="#fff" strokeWidth={2.4} />
           </Pressable>
         </View>
         {summary && (
           <Pressable onPress={showDetails} style={[styles.banner, styles[summary.kind]]} accessibilityRole="button" accessibilityLabel={summary.text}>
-            <Text style={styles.bannerIcon}>{summary.kind === 'ok' ? '✓' : summary.kind === 'warn' ? '!' : '✕'}</Text>
+            <Icon name={summary.kind === 'ok' ? 'shieldCheck' : 'warning'} size={20} color={summary.kind === 'ok' ? '#8FD8B5' : summary.kind === 'warn' ? '#E9C46A' : '#F2B8B5'} />
             <Text style={styles.bannerText} numberOfLines={2}>{summary.text}</Text>
             <Text style={styles.bannerMore}>{t('Details')}</Text>
           </Pressable>
@@ -417,8 +425,8 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
                     windowSize={5}
                     onScroll={(e) => (pos.current.y = e.nativeEvent.contentOffset.y)}
                     scrollEventThrottle={32}
-                    onViewableItemsChanged={({ viewableItems }) => viewableItems[0] && setPage(viewableItems[0].index ?? 0)}
-                    viewabilityConfig={{ itemVisiblePercentThreshold: 40 }}
+                    onViewableItemsChanged={onViewable.current}
+                    viewabilityConfig={VIEWABILITY}
                     renderItem={({ item: i }) => {
                       const h = pageW * info.ratios[i];
                       const pageMarks = marks.filter((mk) => mk.page === i);
@@ -456,11 +464,11 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
         {ok && mode === 'view' && (
           <View style={styles.bar}>
             <Pressable onPress={() => setMode('mark')} style={styles.barBtn} accessibilityRole="button" accessibilityLabel={t('Markieren')}>
-              <Text style={styles.barIcon}>🖍</Text>
+              <Icon name="highlight" size={22} color="#EDEBE6" />
               <Text style={styles.barText}>{t('Markieren')}</Text>
             </Pressable>
             <Pressable onPress={startSign} style={styles.barBtn} accessibilityRole="button" accessibilityLabel={t('Signieren')}>
-              <Text style={styles.barIcon}>✍</Text>
+              <Icon name="sign" size={22} color="#EDEBE6" />
               <Text style={styles.barText}>{t('Signieren')}</Text>
             </Pressable>
           </View>
@@ -473,10 +481,12 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
               </Pressable>
             ))}
             <Pressable onPress={() => setHand((x) => !x)} style={styles.colorBtn} accessibilityRole="switch" accessibilityState={{ checked: hand }} accessibilityLabel={t('Verschieben')}>
-              <Text style={[styles.barIcon, hand && styles.handOn]}>✋</Text>
+              <Icon name="hand" size={22} color={hand ? '#72C7B2' : '#EDEBE6'} />
             </Pressable>
             <Pressable onPress={() => setMarks((x) => x.slice(0, -1))} disabled={marks.length === 0} style={styles.colorBtn} accessibilityLabel={t('Rückgängig')}>
-              <Text style={[styles.barIcon, marks.length === 0 && styles.dim]}>↶</Text>
+              <View style={marks.length === 0 && styles.dim}>
+                <Icon name="undo" size={22} color="#EDEBE6" />
+              </View>
             </Pressable>
             <View style={styles.grow} />
             <Pressable onPress={() => (marks.length ? setFlow('saveMark') : setMode('view'))} style={styles.doneBtn} accessibilityRole="button">
@@ -506,7 +516,7 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
             <Animated.View entering={m(popIn)} style={styles.sheet}>
               {flow === 'busy' ? (
                 <View style={styles.busy}>
-                  <ActivityIndicator color="#9fbcff" />
+                  <ActivityIndicator color="#72C7B2" />
                   <Text style={styles.sheetText}>{t('Wird gespeichert …')}</Text>
                 </View>
               ) : (
@@ -545,9 +555,9 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#1c1d22' },
+  root: { flex: 1, backgroundColor: '#161615' },
   fill: { flex: 1 },
-  top: { flexDirection: 'row', alignItems: 'center', paddingTop: 36, paddingHorizontal: 8, paddingBottom: 8, backgroundColor: '#25262c' },
+  top: { flexDirection: 'row', alignItems: 'center', paddingTop: 36, paddingHorizontal: 8, paddingBottom: 8, backgroundColor: '#1F1F1D' },
   btn: { minWidth: 48, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 },
   btnText: { color: '#fff', fontSize: 22 },
   small: { color: '#fff', fontSize: 15, fontWeight: '600' },
@@ -561,13 +571,13 @@ const styles = StyleSheet.create({
   errorText: { color: '#eee', fontSize: 15, textAlign: 'center', marginBottom: 12 },
   errorBtn: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)' },
   banner: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  ok: { backgroundColor: '#1f4d33' },
-  warn: { backgroundColor: '#5a4512' },
-  bad: { backgroundColor: '#6b2121' },
+  ok: { backgroundColor: '#1C2E27' },
+  warn: { backgroundColor: '#332B17' },
+  bad: { backgroundColor: '#3A1F1D' },
   bannerIcon: { color: '#fff', fontSize: 16, fontWeight: '700', width: 18, textAlign: 'center' },
   bannerText: { color: '#fff', fontSize: 13, flex: 1 },
   bannerMore: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingTop: 6, paddingBottom: 18, backgroundColor: '#25262c' },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingTop: 6, paddingBottom: 18, backgroundColor: '#1F1F1D' },
   barBtn: { minHeight: 52, paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 8 },
   barIcon: { color: '#fff', fontSize: 20 },
   barText: { color: '#f1f1f4', fontSize: 15 },
@@ -577,17 +587,17 @@ const styles = StyleSheet.create({
   handOn: { color: '#9fbcff' },
   dim: { opacity: 0.35 },
   grow: { flex: 1 },
-  doneBtn: { minHeight: 44, paddingHorizontal: 18, borderRadius: 22, backgroundColor: '#9fbcff', justifyContent: 'center' },
-  doneText: { color: '#0e0f12', fontSize: 15, fontWeight: '700' },
+  doneBtn: { minHeight: 44, paddingHorizontal: 20, borderRadius: 22, backgroundColor: '#72C7B2', justifyContent: 'center' },
+  doneText: { color: '#0B1F1A', fontSize: 15, fontWeight: '700' },
   placeHint: { position: 'absolute', left: 16, right: 16, bottom: 92, color: '#fff', fontSize: 13, textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, padding: 8 },
-  sigBox: { position: 'absolute', borderWidth: 1.5, borderColor: '#4f8cff', borderStyle: 'dashed', backgroundColor: 'rgba(79,140,255,0.08)' },
+  sigBox: { position: 'absolute', borderWidth: 1.5, borderColor: '#1F6B5C', borderStyle: 'dashed', backgroundColor: 'rgba(31,107,92,0.06)' },
   sigHandle: { position: 'absolute', right: -16, bottom: -16, width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
-  sigHandleDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#4f8cff', borderWidth: 2, borderColor: '#fff' },
+  sigHandleDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#1F6B5C', borderWidth: 2, borderColor: '#fff' },
   scrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#24262e', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingVertical: 14, paddingBottom: 28 },
+  sheet: { backgroundColor: '#1F1F1D', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingVertical: 14, paddingBottom: 28 },
   sheetTitle: { color: '#b4b6be', fontSize: 13, paddingHorizontal: 20, paddingBottom: 6 },
   sheetRow: { paddingHorizontal: 20, paddingVertical: 12, minHeight: 56 },
   sheetText: { color: '#f1f1f4', fontSize: 16 },
-  sheetHint: { color: '#8a8f9c', fontSize: 13, marginTop: 2 },
+  sheetHint: { color: '#8C8A83', fontSize: 13, marginTop: 2 },
   busy: { flexDirection: 'row', gap: 14, alignItems: 'center', padding: 20 },
 });

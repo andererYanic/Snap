@@ -13,6 +13,7 @@ import { Text, TextInput } from './text';
 import type { Theme } from './theme';
 import { isVideo } from './thumbs';
 import { Glyph, Tap, themed } from './ui';
+import { Icon } from './Icon';
 
 export interface RemoteDevice {
   node_id: string;
@@ -228,7 +229,7 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
     <Animated.View key={trail.join('/')} entering={m(pageIn(dir))} style={s.fill}>
       <View style={s.head}>
         <Pressable onPress={back} style={s.backBtn} accessibilityLabel={t('Zurück')} android_ripple={{ color: theme.accentSoft as string, borderless: true }}>
-          <Text style={s.backIcon}>‹</Text>
+          <Icon name="back" color={theme.text as string} />
         </Pressable>
         <View style={s.grow}>
           <Text style={s.title} numberOfLines={1}>{title}</Text>
@@ -252,7 +253,7 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
               <Tap theme={theme} onPress={() => enter(r.name)} style={s.row} label={r.name}>
                 <Glyph name={r.name} dir theme={theme} />
                 <Text style={[s.name, s.grow]} numberOfLines={1}>{r.name}</Text>
-                <Text style={s.chev}>›</Text>
+                <Icon name="chevron" size={20} color={theme.text3 as string} />
               </Tap>
             ) : (
               <Tap theme={theme} onPress={() => tapFile(r.item)} onLongPress={() => download(r.item)} style={s.row} label={r.item.name}>
@@ -265,7 +266,7 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
                   <ActivityIndicator color={theme.accent as string} />
                 ) : (
                   <Pressable onPress={() => download(r.item)} style={s.dl} accessibilityLabel={t('Herunterladen')} hitSlop={8}>
-                    <Text style={s.dlIcon}>⤓</Text>
+                    <Icon name="download" size={22} color={theme.accent as string} />
                   </Pressable>
                 )}
               </Tap>
@@ -312,24 +313,21 @@ const styles = themed((th: Theme) =>
   StyleSheet.create({
     fill: { flex: 1, backgroundColor: th.bg },
     grow: { flex: 1 },
-    head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingTop: 8, paddingBottom: 8 },
-    backBtn: { width: 48, height: 48, justifyContent: 'center', alignItems: 'center' },
-    backIcon: { color: th.text, fontSize: 30, marginTop: -4 },
-    title: { color: th.text, fontSize: 20, fontWeight: '700' },
-    crumb: { color: th.text2, fontSize: 13 },
-    loading: { marginTop: 40 },
-    note: { color: th.text2, fontSize: 15, textAlign: 'center', padding: 32 },
-    row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, minHeight: 64 },
-    name: { color: th.text, fontSize: 16 },
-    meta: { color: th.text2, fontSize: 13, marginTop: 2 },
-    chev: { color: th.text2, fontSize: 22 },
-    dl: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-    dlIcon: { color: th.accent, fontSize: 20 },
-    modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 28 },
-    modal: { backgroundColor: th.card, borderRadius: 24, padding: 22, gap: 10 },
-    input: { color: th.text, fontSize: 16, borderBottomWidth: 2, borderBottomColor: th.accent, paddingVertical: 8 },
-    modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 },
-    modalBtn: { minHeight: 44, paddingHorizontal: 14, justifyContent: 'center' },
+    head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, minHeight: 60 },
+    backBtn: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center' },
+    title: { color: th.text, fontSize: 18, lineHeight: 24, fontWeight: '700' },
+    crumb: { color: th.text3, fontSize: 12, lineHeight: 16 },
+    loading: { marginTop: 48 },
+    note: { color: th.text2, fontSize: 14, lineHeight: 20, textAlign: 'center', padding: 40 },
+    row: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingLeft: 16, paddingRight: 8, minHeight: 64 },
+    name: { color: th.text, fontSize: 16, lineHeight: 22 },
+    meta: { color: th.text3, fontSize: 13, lineHeight: 18 },
+    dl: { width: 48, height: 48, justifyContent: 'center', alignItems: 'center' },
+    modalBg: { flex: 1, backgroundColor: 'rgba(10,10,9,0.42)', justifyContent: 'center', padding: 24 },
+    modal: { backgroundColor: th.surface, borderRadius: 16, paddingHorizontal: 24, paddingTop: 22, paddingBottom: 12, gap: 10 },
+    input: { color: th.text, fontSize: 16, borderBottomWidth: 1.5, borderBottomColor: th.accent, paddingVertical: 8 },
+    modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 4, marginTop: 6 },
+    modalBtn: { minHeight: 48, paddingHorizontal: 14, justifyContent: 'center' },
     modalBtnText: { color: th.accent, fontSize: 15 },
     strong: { fontWeight: '700' },
   }),

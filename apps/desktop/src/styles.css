@@ -1,29 +1,33 @@
 /* Standardschrift Inconsolata (SIL Open Font License, siehe assets/fonts/Inconsolata-OFL.txt) */
 @font-face { font-family: "Inconsolata"; src: url("./assets/fonts/Inconsolata-Regular.ttf") format("truetype"); font-weight: 400; font-display: block; }
 @font-face { font-family: "Inconsolata"; src: url("./assets/fonts/Inconsolata-Bold.ttf") format("truetype"); font-weight: 600 700; font-display: block; }
-/* Snap – Fluent-Designsprache: Mica-Hintergrund, Acryl-Flächen, abgerundete Ecken.
-   Hell/Dunkel folgt dem System. */
+/* Snap – ruhige Werkzeug-Optik (docs/DESIGN.md): Papier-Hintergrund, eine Akzentfarbe „Tinte“,
+   flache Flächen ohne Glas und Verläufe. Hell/Dunkel folgt dem System. */
 
 :root {
   --font: "Inconsolata", ui-monospace, monospace;
-  --accent: #3b6fe0;
-  --accent-soft: rgba(59, 111, 224, 0.14);
-  --accent-strong: rgba(59, 111, 224, 0.26);
-  --text: #1b1b1f;
-  --text-2: #5d5f66;
-  --text-3: #8a8c93;
-  --mica-1: #dfe6f5;
-  --mica-2: #ead9f2;
-  --mica-3: #d5ece6;
-  --layer: rgba(255, 255, 255, 0.55);
-  --layer-strong: rgba(255, 255, 255, 0.8);
-  --card: rgba(252, 252, 254, 0.78);
-  --layer-hover: rgba(0, 0, 0, 0.045);
-  --layer-press: rgba(0, 0, 0, 0.07);
-  --stroke: rgba(0, 0, 0, 0.075);
-  --stroke-strong: rgba(0, 0, 0, 0.13);
-  --shadow: 0 8px 28px rgba(20, 24, 40, 0.16), 0 1px 3px rgba(20, 24, 40, 0.08);
-  --danger: #c4314b;
+  --accent: #1f6b5c;
+  --accent-soft: rgba(31, 107, 92, 0.11);
+  --accent-strong: rgba(31, 107, 92, 0.2);
+  --on-accent: #ffffff;
+  --text: #1a1a18;
+  --text-2: #66655f;
+  --text-3: #9c9a92;
+  /* Hintergrund (Seitenleiste, Fensterrahmen) und Flächen */
+  --mica-1: #f4f2ed;
+  --layer: rgba(26, 26, 24, 0.045);
+  --layer-strong: #ffffff;
+  --layer-solid: #ffffff;
+  --card: #ffffff;
+  --field: #eae7e0;
+  --layer-hover: rgba(26, 26, 24, 0.05);
+  --layer-press: rgba(26, 26, 24, 0.08);
+  --stroke: rgba(26, 26, 24, 0.09);
+  --stroke-strong: rgba(26, 26, 24, 0.16);
+  --shadow: 0 10px 30px rgba(26, 26, 24, 0.12), 0 1px 3px rgba(26, 26, 24, 0.08);
+  --danger: #b3261e;
+  --folder: #e2b04a;
+  --folder-tab: #c99634;
   --radius: 8px;
   --radius-l: 12px;
   color-scheme: light;
@@ -31,24 +35,27 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: #7aa2ff;
-    --accent-soft: rgba(122, 162, 255, 0.16);
-    --accent-strong: rgba(122, 162, 255, 0.3);
-    --text: #f1f1f4;
-    --text-2: #b4b6be;
-    --text-3: #868891;
-    --mica-1: #1b2131;
-    --mica-2: #2a1f33;
-    --mica-3: #172a29;
-    --layer: rgba(44, 46, 54, 0.5);
-    --layer-strong: rgba(48, 50, 58, 0.86);
-    --card: rgba(36, 38, 46, 0.72);
-    --layer-hover: rgba(255, 255, 255, 0.06);
-    --layer-press: rgba(255, 255, 255, 0.09);
-    --stroke: rgba(255, 255, 255, 0.07);
-    --stroke-strong: rgba(255, 255, 255, 0.13);
-    --shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
-    --danger: #ff6b81;
+    --accent: #72c7b2;
+    --accent-soft: rgba(114, 199, 178, 0.14);
+    --accent-strong: rgba(114, 199, 178, 0.26);
+    --on-accent: #0b1f1a;
+    --text: #edebe6;
+    --text-2: #a3a19a;
+    --text-3: #6f6d67;
+    --mica-1: #121211;
+    --layer: rgba(237, 235, 230, 0.05);
+    --layer-strong: #1c1c1a;
+    --layer-solid: #1c1c1a;
+    --card: #1c1c1a;
+    --field: #272725;
+    --layer-hover: rgba(237, 235, 230, 0.06);
+    --layer-press: rgba(237, 235, 230, 0.1);
+    --stroke: rgba(237, 235, 230, 0.08);
+    --stroke-strong: rgba(237, 235, 230, 0.15);
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
+    --danger: #f2b8b5;
+    --folder: #c99a3c;
+    --folder-tab: #a57e2e;
     color-scheme: dark;
   }
 }
@@ -60,20 +67,14 @@ html, body, #root {
   height: 100%;
   overflow: hidden;
   font-family: var(--font);
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
 
-/* Mica: weicher, farbiger Hintergrund, auf dem die Acryl-Flächen liegen. */
-body {
-  background:
-    radial-gradient(900px 620px at 0% 0%, var(--mica-2), transparent 65%),
-    radial-gradient(800px 600px at 100% 10%, var(--mica-3), transparent 60%),
-    radial-gradient(1100px 800px at 40% 110%, var(--mica-2), transparent 65%),
-    var(--mica-1);
-}
+/* Ruhiger, flacher Hintergrund (kein Verlauf). */
+body { background: var(--mica-1); }
 
 button { font: inherit; color: inherit; }
 input { font: inherit; color: inherit; }
@@ -105,7 +106,6 @@ input { font: inherit; color: inherit; }
 .tab.active {
   background: var(--card);
   color: var(--text);
-  backdrop-filter: blur(30px) saturate(1.4);
   box-shadow: inset 0 1px 0 var(--stroke-strong);
 }
 .tab .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
@@ -130,7 +130,7 @@ input { font: inherit; color: inherit; }
   padding: 8px 6px;
   overflow-y: auto;
 }
-.sidebar h4 { margin: 14px 10px 4px; font-size: 11.5px; font-weight: 600; color: var(--text-3); letter-spacing: 0.02em; }
+.sidebar h4 { margin: 18px 12px 6px; font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.1em; text-transform: uppercase; }
 .navitem {
   position: relative;
   display: flex; align-items: center; gap: 10px;
@@ -139,7 +139,7 @@ input { font: inherit; color: inherit; }
   text-align: left; cursor: default;
 }
 .navitem:hover { background: var(--layer); }
-.navitem.active { background: var(--layer-strong); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+.navitem.active { background: var(--accent-soft); color: var(--text); font-weight: 700; }
 .navitem.active::before {
   content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 3px; background: var(--accent);
 }
@@ -149,7 +149,6 @@ input { font: inherit; color: inherit; }
 .main {
   flex: 1; display: flex; flex-direction: column; min-width: 0;
   background: var(--card);
-  backdrop-filter: blur(40px) saturate(1.5);
   border-top-left-radius: var(--radius-l);
   border: 1px solid var(--stroke);
   border-right: none; border-bottom: none;
@@ -209,7 +208,7 @@ input { font: inherit; color: inherit; }
 .details th {
   position: sticky; top: 0; z-index: 1;
   text-align: left; font-weight: 400; color: var(--text-2); font-size: 12.5px;
-  height: 32px; padding: 0 10px; background: var(--layer-strong); backdrop-filter: blur(20px);
+  height: 32px; padding: 0 10px; background: var(--layer-strong);
   border-bottom: 1px solid var(--stroke); cursor: default;
 }
 .details th:hover { background: var(--layer-hover); }
@@ -257,7 +256,7 @@ input { font: inherit; color: inherit; }
 
 .menu {
   position: fixed; z-index: 50; min-width: 220px; padding: 4px;
-  border-radius: var(--radius); background: var(--layer-strong); backdrop-filter: blur(40px) saturate(1.6);
+  border-radius: var(--radius); background: var(--layer-strong);
   border: 1px solid var(--stroke-strong); box-shadow: var(--shadow);
   animation: pop 0.12s ease-out;
 }
@@ -274,15 +273,14 @@ input { font: inherit; color: inherit; }
 
 .toast {
   position: fixed; right: 18px; bottom: 40px; z-index: 60; max-width: 420px;
-  padding: 12px 16px; border-radius: var(--radius); background: var(--layer-strong);
-  backdrop-filter: blur(40px); border: 1px solid var(--stroke-strong); box-shadow: var(--shadow);
+  padding: 12px 16px; border-radius: var(--radius); background: var(--layer-strong); border: 1px solid var(--stroke-strong); box-shadow: var(--shadow);
   animation: pop 0.15s ease-out; user-select: text;
 }
 .toast.err { border-left: 3px solid var(--danger); }
 
 .overlay {
   position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
-  background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.55);
 }
 .overlay img, .overlay video { max-width: 92vw; max-height: 88vh; border-radius: 8px; box-shadow: var(--shadow); }
 .overlay .cap { position: fixed; bottom: 16px; left: 0; right: 0; text-align: center; color: #eee; font-size: 13px; }
@@ -290,7 +288,7 @@ input { font: inherit; color: inherit; }
 .center { height: 100%; display: grid; place-items: center; }
 .card {
   width: 420px; padding: 28px; border-radius: var(--radius-l); text-align: center;
-  background: var(--layer-strong); backdrop-filter: blur(40px); border: 1px solid var(--stroke); box-shadow: var(--shadow);
+  background: var(--layer-strong); border: 1px solid var(--stroke); box-shadow: var(--shadow);
 }
 .card h2 { margin: 12px 0 6px; font-weight: 600; font-size: 18px; }
 .card p { color: var(--text-2); line-height: 1.5; }
@@ -299,7 +297,7 @@ input { font: inherit; color: inherit; }
   background: var(--layer-strong); cursor: default;
 }
 .btn:hover { background: var(--layer-hover); }
-.btn.primary { background: var(--accent); color: white; border-color: transparent; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
 .btn.primary:hover { filter: brightness(1.08); }
 
 /* ------------------------------------------------------------- Fotos */
@@ -326,14 +324,14 @@ input { font: inherit; color: inherit; }
 .sidebar { display: flex; flex-direction: column; }
 .sidespacer { flex: 1; min-height: 12px; }
 .page { flex: 1; overflow: auto; padding: 22px 28px 28px; user-select: text; }
-.page h1 { margin: 0 0 16px; font-size: 24px; font-weight: 600; }
+.page h1 { margin: 0 0 18px; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
 .panel {
   background: var(--layer-strong); border: 1px solid var(--stroke); border-radius: var(--radius-l);
   padding: 16px 18px; margin-bottom: 14px;
 }
 .panel.inner { background: var(--layer); margin: 10px 0; display: flex; flex-direction: column; gap: 10px; }
 .panel.warn { border-left: 3px solid #e0a020; }
-.panel h2 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.panel h2 { margin: 0 0 12px; font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.1em; text-transform: uppercase; }
 .line { display: flex; align-items: center; gap: 10px; }
 .line.form { margin-top: 10px; }
 .grow { flex: 1; min-width: 0; }

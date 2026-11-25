@@ -11,11 +11,12 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS } from 'react-native-reanimated';
 import ContextMenu, { type MenuAction } from './ContextMenu';
 import * as core from './core';
-import { humanSize, joinPath, parentOf, request, shortDate, type DirEntry } from './core';
+import { humanSize, joinPath, parentOf, relativeDate, request, type DirEntry } from './core';
 import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { isMedia, isVideo, Thumb } from './thumbs';
-import { BottomSheet, Glyph, Tap, themed, type SheetAction } from './ui';
+import { BottomSheet, Glyph, SectionLabel, Tap, themed, type SheetAction } from './ui';
+import { Icon } from './Icon';
 import Editor from './Editor';
 import RemoteBrowser, { type RemoteDevice } from './RemoteBrowser';
 import PdfViewer from './PdfViewer';
@@ -539,69 +540,65 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const landingBody = !onLanding ? null : (
       <Animated.View entering={m(dir === 'back' ? pageIn('back') : fadeIn)} style={s.fill}>
         <ScrollView contentContainerStyle={s.landing} keyboardShouldPersistTaps="handled">
-          <Text style={s.section}>{t('Speicher')}</Text>
-          <Tap theme={theme} onPress={() => go(root, 'forward')} style={s.card} label={t('Interner Speicher')}>
-            <View style={s.cardRow}>
-              <View style={[s.driveIcon, { backgroundColor: theme.accentSoft }]}>
-                <View style={[s.driveBar, { backgroundColor: theme.accent }]} />
-              </View>
-              <View style={s.grow}>
-                <Text style={s.cardTitle}>{t('Interner Speicher')}</Text>
-                {storage && (
-                  <Text style={s.meta}>
-                    {t('{used} von {total} belegt', { used: humanSize(used, locale()), total: humanSize(storage.total, locale()) })}
-                  </Text>
-                )}
-                {storage && (
-                  <View style={[s.usage, { backgroundColor: theme.accentSoft }]}>
-                    <Animated.View
-                      entering={m(fadeIn)}
-                      style={[s.usageFill, { backgroundColor: theme.accent, width: `${Math.min(100, (used / storage.total) * 100)}%` }]}
-                    />
-                  </View>
-                )}
-              </View>
-              <Text style={s.chev}>›</Text>
-            </View>
-          </Tap>
-          {remote.map((d) => {
-            const used = d.storage ? d.storage.total - d.storage.free : 0;
-            return (
-              <Tap key={d.node_id} theme={theme} onPress={() => setRemoteDev(d)} style={[s.card, s.deviceCard, !d.online && s.dim]} label={d.name}>
-                <View style={s.cardRow}>
-                  <View style={[s.driveIcon, s.deviceIcon, { backgroundColor: theme.accentSoft }]}>
-                    <Text style={[s.deviceGlyph, { color: theme.accent }]}>⌁</Text>
-                  </View>
-                  <View style={s.grow}>
-                    <View style={s.nameRow}>
-                      <Text style={s.cardTitle} numberOfLines={1}>{d.name}</Text>
-                      <View style={[s.onlineDot, { backgroundColor: d.online ? '#2fae63' : theme.stroke }]} />
-                    </View>
-                    <Text style={s.meta}>
-                      {d.storage
-                        ? t('{used} von {total} belegt', { used: humanSize(used, locale()), total: humanSize(d.storage.total, locale()) })
-                        : d.online ? t('Verbunden') : t('Nicht verbunden')}
-                    </Text>
-                    {d.storage && (
-                      <View style={[s.usage, { backgroundColor: theme.accentSoft }]}>
-                        <View style={[s.usageFill, { backgroundColor: theme.accent, width: `${Math.min(100, (used / d.storage.total) * 100)}%` }]} />
-                      </View>
-                    )}
-                  </View>
-                  <Text style={s.chev}>›</Text>
+          <SectionLabel theme={theme} style={s.section}>{t('Speicher')}</SectionLabel>
+          <View style={s.group}>
+            <Tap theme={theme} onPress={() => go(root, 'forward')} style={s.placeRow} label={t('Interner Speicher')}>
+              <Icon name="phone" size={24} color={theme.accent as string} />
+              <View style={s.placeText}>
+                <View style={s.placeTop}>
+                  <Text style={s.cardTitle} numberOfLines={1}>{t('Interner Speicher')}</Text>
+                  {storage && <Text style={s.placeNum}>{t('{free} frei', { free: humanSize(storage.free, locale()) })}</Text>}
                 </View>
-              </Tap>
-            );
-          })}
-          {folders.length > 0 && <Text style={s.section}>{t('Standardordner')}</Text>}
+                {storage && (
+                  <View style={s.usage}>
+                    <View style={[s.usageFill, { width: `${Math.min(100, (used / storage.total) * 100)}%` }]} />
+                  </View>
+                )}
+                {storage && (
+                  <Text style={s.meta}>{t('{used} von {total} belegt', { used: humanSize(used, locale()), total: humanSize(storage.total, locale()) })}</Text>
+                )}
+              </View>
+            </Tap>
+            {remote.map((d) => {
+              const dUsed = d.storage ? d.storage.total - d.storage.free : 0;
+              return (
+                <View key={d.node_id}>
+                  <View style={s.groupLine} />
+                  <Tap theme={theme} onPress={() => setRemoteDev(d)} style={s.placeRow} label={d.name}>
+                    <Icon name={/tablet/i.test(d.name) ? 'tablet' : /handy|phone|pixel/i.test(d.name) ? 'phone' : 'laptop'} size={24} color={(d.online ? theme.accent : theme.text3) as string} />
+                    <View style={s.placeText}>
+                      <View style={s.placeTop}>
+                        <Text style={[s.cardTitle, !d.online && s.offline]} numberOfLines={1}>{d.name}</Text>
+                        {d.online && d.storage ? <Text style={s.placeNum}>{t('{free} frei', { free: humanSize(d.storage.free, locale()) })}</Text> : null}
+                      </View>
+                      {d.online && d.storage ? (
+                        <>
+                          <View style={s.usage}>
+                            <View style={[s.usageFill, { width: `${Math.min(100, (dUsed / d.storage.total) * 100)}%` }]} />
+                          </View>
+                          <Text style={s.meta}>{t('{used} von {total} belegt', { used: humanSize(dUsed, locale()), total: humanSize(d.storage.total, locale()) })}</Text>
+                        </>
+                      ) : (
+                        <View style={s.status}>
+                          <View style={[s.onlineDot, { backgroundColor: (d.online ? theme.ok : theme.text3) as string }]} />
+                          <Text style={s.meta}>{d.online ? t('Verbunden') : t('Nicht verbunden')}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </Tap>
+                </View>
+              );
+            })}
+          </View>
+          {folders.length > 0 && <SectionLabel theme={theme} style={s.section}>{t('Standardordner')}</SectionLabel>}
           <View style={s.folderGrid}>
             {folders.map(([d, label]) => (
-              <Animated.View key={d} style={s.folderCell}>
+              <View key={d} style={s.folderCell}>
                 <Tap theme={theme} onPress={() => go(joinPath(root, d), 'forward')} style={s.folderTile} label={t(label)}>
                   <Glyph name={d} dir theme={theme} size={44} />
                   <Text style={s.folderLabel} numberOfLines={1}>{t(label)}</Text>
                 </Tap>
-              </Animated.View>
+              </View>
             ))}
           </View>
         </ScrollView>
@@ -615,37 +612,38 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const menuActions: MenuAction[] = [
     // Je nach Dateiformat
     ...(single && single.kind === 'File' ? formatActions(single) : []),
-    { label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
-    { label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
-    { label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
-    { label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
-    { label: t('In den Papierkorb'), separate: true, onPress: trash },
-    { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
+    { icon: 'share', label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
+    { icon: 'copy', label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
+    { icon: 'move', label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
+    { icon: 'rename', label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
+    { icon: 'trash', label: t('In den Papierkorb'), separate: true, onPress: trash },
+    { icon: 'close', label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
   /** Aktionen, die nur für bestimmte Formate passen (Menü am Finger, eine Datei). */
   function formatActions(e: Item): MenuAction[] {
     const done = () => setSel(new Set());
     if (ARCHIVE.test(e.name)) {
-      return [{ label: t('Entpacken'), onPress: () => extractAll([e.path]) }];
+      return [{ icon: 'extract', label: t('Entpacken'), onPress: () => extractAll([e.path]) }];
     }
     if (/\.(jpe?g|png|webp|heic|heif|bmp)$/i.test(e.name)) {
       return [
-        { label: t('Bearbeiten'), onPress: () => { done(); setEditing({ path: e.path, name: e.name }); } },
-        { label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } },
+        { icon: 'edit', label: t('Bearbeiten'), onPress: () => { done(); setEditing({ path: e.path, name: e.name }); } },
+        { icon: 'print', label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } },
       ];
     }
     if (isVideo(e.name)) {
-      return [{ label: t('Bearbeiten'), onPress: () => { done(); setEditing({ path: e.path, name: e.name }); } }];
+      return [{ icon: 'edit', label: t('Bearbeiten'), onPress: () => { done(); setEditing({ path: e.path, name: e.name }); } }];
     }
     if (/\.pdf$/i.test(e.name)) {
       return [
-        { label: t('Signieren'), onPress: () => { done(); setPdf({ path: e.path, name: e.name, mode: 'sign' }); } },
-        { label: t('Markieren'), onPress: () => { done(); setPdf({ path: e.path, name: e.name, mode: 'mark' }); } },
-        { label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } },
+        { icon: 'sign', label: t('Signieren'), onPress: () => { done(); setPdf({ path: e.path, name: e.name, mode: 'sign' }); } },
+        { icon: 'highlight', label: t('Markieren'), onPress: () => { done(); setPdf({ path: e.path, name: e.name, mode: 'mark' }); } },
+        { icon: 'print', label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } },
       ];
     }
     if (/\.snapid$/i.test(e.name)) {
       return [{
+        icon: 'key',
         label: t('Als digitale ID importieren'),
         onPress: () => {
           done();
@@ -656,10 +654,11 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       }];
     }
     if (/\.pdf$/i.test(e.name) || /\.gif$/i.test(e.name)) {
-      return [{ label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
+      return [{ icon: 'print', label: t('Drucken'), onPress: () => { done(); core.printFile(e.path).catch(fail); } }];
     }
     if (/\.(ttf|otf)$/i.test(e.name)) {
       return [{
+        icon: 'font',
         label: t('Als Schriftart verwenden'),
         onPress: () => {
           done();
@@ -674,7 +673,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       }];
     }
     if (/\.(docx?|odt|rtf|xlsx?|ods|pptx?|odp)$/i.test(e.name)) {
-      return [{ label: t('Mit Office-App öffnen'), onPress: () => { done(); core.openFile(e.path).catch(fail); } }];
+      return [{ icon: 'open', label: t('Mit Office-App öffnen'), onPress: () => { done(); core.openFile(e.path).catch(fail); } }];
     }
     return [];
   }
@@ -684,11 +683,11 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     setSel(new Set());
   };
   const barActions = [
-    { icon: '⇪', label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
-    { icon: '⧉', label: t('Kopieren'), onPress: () => toClip('copy') },
-    { icon: '➜', label: t('Verschieben'), onPress: () => toClip('move') },
-    { icon: '🗑', label: t('Papierkorb'), danger: true, onPress: trash },
-    { icon: '⋯', label: t('Mehr'), onPress: () => setSheet('selection') },
+    { icon: 'share' as const, label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
+    { icon: 'copy' as const, label: t('Kopieren'), onPress: () => toClip('copy') },
+    { icon: 'move' as const, label: t('Verschieben'), onPress: () => toClip('move') },
+    { icon: 'trash' as const, label: t('Papierkorb'), danger: true, onPress: trash },
+    { icon: 'more' as const, label: t('Mehr'), onPress: () => setSheet('selection') },
   ];
   const selectionActions: SheetAction[] = [
     ...(zips.length ? [{ label: zips.length === 1 ? t('Entpacken') : t('{n} Archive entpacken', { n: zips.length }), onPress: () => extractAll(zips) }] : []),
@@ -709,7 +708,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     <View style={s.actionBar} accessibilityRole="toolbar">
       {barActions.map((a) => (
         <Tap key={a.label} theme={theme} onPress={a.onPress} disabled={a.disabled} style={[s.actionBtn, a.disabled && s.dim]} label={a.label}>
-          <Text style={[s.actionIcon, a.danger && { color: theme.danger }]}>{a.icon}</Text>
+          <Icon name={a.icon} size={22} color={(a.danger ? theme.danger : theme.text) as string} strokeWidth={a.icon === 'more' ? 2.4 : 1.6} />
           <Text style={[s.actionText, a.danger && { color: theme.danger }]} numberOfLines={1}>{a.label}</Text>
         </Tap>
       ))}
@@ -739,7 +738,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       {sel.size > 0 ? (
         <Animated.View entering={m(fadeIn)} style={s.header}>
           <Tap theme={theme} onPress={() => { setSel(new Set()); setMenu(null); }} style={s.iconBtn} label={t('Auswahl aufheben')}>
-            <Text style={s.iconText}>✕</Text>
+            <Icon name="close" color={theme.text as string} />
           </Tap>
           <Text style={s.headerTitle}>{t('{n} ausgewählt', { n: sel.size })}</Text>
           <Tap theme={theme} onPress={() => setSel(new Set(shown.map((e) => e.path)))} style={s.textBtn}>
@@ -749,7 +748,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
             <View style={s.iconBtn} />
           ) : (
             <Tap theme={theme} onPress={() => setMenu({ x: W - 24, y: 96 })} style={s.iconBtn} label={t('Aktionen')}>
-              <Text style={s.iconText}>⋯</Text>
+              <Icon name="more" color={theme.text as string} strokeWidth={2.4} />
             </Tap>
           )}
         </Animated.View>
@@ -759,7 +758,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
           <View style={s.searchRow}>
             {hits ? (
               <Tap theme={theme} onPress={() => setQuery('')} style={s.iconBtn} label={t('Zurück')}>
-                <Text style={s.iconText}>‹</Text>
+                <Icon name="back" color={theme.text as string} />
               </Tap>
             ) : null}
             <View style={s.grow}>
@@ -770,14 +769,17 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       ) : (
         <View style={s.header}>
           <Tap theme={theme} onPress={() => go(parentOf(path!, root) ?? null, 'back')} style={s.iconBtn} label={t('Zurück')}>
-            <Text style={s.iconText}>‹</Text>
+            <Icon name="back" color={theme.text as string} />
           </Tap>
-          <Text style={s.headerTitle} numberOfLines={1}>{title}</Text>
+          <View style={s.headerTitles}>
+            <Text style={[s.headerTitle, s.noFlex]} numberOfLines={1}>{title}</Text>
+            {path !== root && <Text style={s.crumb} numberOfLines={1} ellipsizeMode="head">{crumbOf(path!, root, t('Interner Speicher'))}</Text>}
+          </View>
           <Tap theme={theme} onPress={() => setView(view === 'list' ? 'grid' : 'list')} style={s.iconBtn} label={view === 'list' ? t('Als Raster anzeigen') : t('Als Liste anzeigen')}>
-            <Text style={s.iconSmall}>{view === 'list' ? '▦' : '☰'}</Text>
+            <Icon name={view === 'list' ? 'grid' : 'list'} size={22} color={theme.text2 as string} />
           </Tap>
           <Tap theme={theme} onPress={() => setSheet('more')} style={s.iconBtn} label={t('Mehr')}>
-            <Text style={s.iconText}>⋯</Text>
+            <Icon name="more" color={theme.text as string} strokeWidth={2.4} />
           </Tap>
         </View>
       )}
@@ -813,11 +815,11 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
             keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
               hits && searching ? undefined : <Animated.View entering={m(fadeIn)} style={s.empty}>
-                <View style={[s.emptyIcon, { backgroundColor: theme.accentSoft }]}>
-                  <Text style={[s.emptyPlus, { color: theme.accent }]}>{hits ? '∅' : '+'}</Text>
+                <View style={s.emptyIcon}>
+                  <Icon name={error ? 'warning' : hits ? 'search' : 'folder'} size={28} color={theme.text3 as string} />
                 </View>
                 <Text style={s.emptyTitle}>{error ? t('Ordner nicht lesbar') : hits ? t('Keine Treffer') : t('Dieser Ordner ist leer')}</Text>
-                <Text style={s.meta}>{error ?? (hits ? '' : t('Mit „+“ legst du hier einen Ordner oder eine Datei an.'))}</Text>
+                <Text style={[s.meta, s.center]}>{error ?? (hits ? t('Anders schreiben oder weniger Buchstaben versuchen.') : t('Mit „+“ legst du hier einen Ordner oder eine Datei an.'))}</Text>
               </Animated.View>
             }
             renderItem={renderItem}
@@ -829,7 +831,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       {/* Unten: Aktionsleiste (ab zwei Dateien), „Hier einfügen“ oder „+“ */}
       {onLanding || showBar || clip ? null : !hits && sel.size === 0 ? (        <Animated.View entering={m(popIn)} exiting={m(popOut)} style={s.fabBox}>
           <Pressable style={s.fab} onPress={() => setSheet('create')} android_ripple={{ color: 'rgba(255,255,255,0.3)' }} accessibilityLabel={t('Neu')}>
-            <Text style={s.fabText}>+</Text>
+            <Icon name="plus" size={26} color={theme.onAccent as string} strokeWidth={2} />
           </Pressable>
         </Animated.View>
       ) : null}
@@ -854,8 +856,8 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         theme={theme}
         onClose={() => setSheet(null)}
         actions={[
-          { label: t('Neuer Ordner'), onPress: () => setNaming({ mode: 'folder', value: t('Neuer Ordner') }) },
-          { label: t('Neue Textdatei'), onPress: () => setNaming({ mode: 'file', value: `${t('Neue Textdatei')}.txt` }) },
+          { icon: 'folder', label: t('Neuer Ordner'), onPress: () => setNaming({ mode: 'folder', value: t('Neuer Ordner') }) },
+          { icon: 'document', label: t('Neue Textdatei'), onPress: () => setNaming({ mode: 'file', value: `${t('Neue Textdatei')}.txt` }) },
         ]}
       />
       <BottomSheet visible={sheet === 'more'} theme={theme} onClose={() => setSheet(null)} actions={moreActions} />
@@ -958,11 +960,24 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   );
 }
 
+/** Übergeordneter Ordner eines Pfads (für Suchtreffer). */
+function parentPath(p: string): string {
+  const i = p.lastIndexOf('/');
+  return i > 0 ? p.slice(0, i).replace(/^\/storage\/emulated\/0/, '~') : p;
+}
+
+/** Brotkrumen unter dem Titel: „Interner Speicher › DCIM“ (ohne den aktuellen Ordner). */
+function crumbOf(path: string, root: string, rootName: string): string {
+  const rel = path.startsWith(root) ? path.slice(root.length) : path;
+  const parts = rel.split('/').filter(Boolean).slice(0, -1);
+  return [rootName, ...parts].join(' › ');
+}
+
 function SearchField({ theme, value, onChange, autoFocus }: { theme: Theme; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
   const s = styles(theme);
   return (
     <View style={s.search}>
-      <Text style={s.searchIcon}>⌕</Text>
+      <Icon name="search" size={20} color={theme.text2 as string} />
       <TextInput
         value={value}
         onChangeText={onChange}
@@ -976,7 +991,7 @@ function SearchField({ theme, value, onChange, autoFocus }: { theme: Theme; valu
       />
       {value.length > 0 && (
         <Pressable onPress={() => onChange('')} style={s.clear} accessibilityLabel={t('Suche leeren')}>
-          <Text style={s.searchIcon}>✕</Text>
+          <Icon name="close" size={18} color={theme.text2 as string} />
         </Pressable>
       )}
     </View>
@@ -1009,7 +1024,7 @@ const FileRow = memo(function FileRow({ e, on, grid, tile, tileH, theme, inSearc
             {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
             {on && (
               <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
-                <Text style={{ color: theme.onAccent }}>✓</Text>
+                <Icon name="check" size={16} color={theme.onAccent as string} strokeWidth={2.4} />
               </Animated.View>
             )}
           </View>
@@ -1026,18 +1041,24 @@ const FileRow = memo(function FileRow({ e, on, grid, tile, tileH, theme, inSearc
         {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
         {on && (
           <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.check, { backgroundColor: theme.accent }]}>
-            <Text style={{ color: theme.onAccent }}>✓</Text>
+            <Icon name="check" size={20} color={theme.onAccent as string} strokeWidth={2.4} />
           </Animated.View>
         )}
       </View>
       <View style={s.rowText}>
-        <Text style={[s.name, e.hidden && s.dim]} numberOfLines={1}>{e.name}</Text>
-        <Text style={s.meta} numberOfLines={1}>
-          {e.fuzzy ? `${t('ähnlich')} · ` : ''}
-          {inSearch ? e.path : `${e.kind === 'Dir' ? t('Ordner') : humanSize(e.size, loc)} • ${shortDate(e.mtime, loc)}`}
-        </Text>
+        <View style={s.rowMain}>
+          <Text style={[s.name, e.hidden && s.dim]} numberOfLines={1}>{e.name}</Text>
+          <Text style={s.meta} numberOfLines={1} ellipsizeMode={inSearch ? 'head' : 'tail'}>
+            {e.fuzzy ? `${t('ähnlich')} · ` : ''}
+            {inSearch ? parentPath(e.path) : relativeDate(e.mtime, loc, t('gestern'))}
+          </Text>
+        </View>
+        {e.kind === 'Dir' ? (
+          !selecting && <Icon name="chevron" size={20} color={theme.text3 as string} />
+        ) : (
+          <Text style={s.size}>{humanSize(e.size, loc)}</Text>
+        )}
       </View>
-      {e.kind === 'Dir' && !selecting && <Text style={s.chev}>›</Text>}
     </Tap>
   );
 });
@@ -1055,94 +1076,84 @@ const styles = themed((th: Theme) =>
   StyleSheet.create({
     fill: { flex: 1 },
     grow: { flex: 1 },
+    center: { textAlign: 'center' },
     landing: { paddingHorizontal: 16, paddingBottom: 40 },
-    bigTitle: { color: th.text, fontSize: 30, fontWeight: '700', marginTop: 4, marginBottom: 14 },
-    search: {
-      flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingLeft: 14, borderRadius: 16,
-      backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke,
-    },
-    searchIcon: { color: th.text2, fontSize: 18, marginRight: 8 },
+    bigTitle: { color: th.text, fontSize: 26, lineHeight: 32, fontWeight: '700', marginTop: 12, marginBottom: 16 },
+    search: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingLeft: 16, gap: 12, borderRadius: 24, backgroundColor: th.surface2 },
     searchInput: { flex: 1, color: th.text, fontSize: 16, paddingVertical: 10 },
     clear: { width: 48, height: 48, justifyContent: 'center', alignItems: 'center' },
-    searchTop: { paddingHorizontal: 16, paddingTop: 4 },
-    searchTopActive: { paddingRight: 12, paddingVertical: 4 },
+    searchTop: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 4 },
+    searchTopActive: { paddingRight: 16, paddingVertical: 4 },
     searchRow: { flexDirection: 'row', alignItems: 'center' },
-    section: { color: th.text2, fontSize: 13, fontWeight: '700', marginTop: 24, marginBottom: 8, marginLeft: 4, letterSpacing: 0.3 },
-    card: { borderRadius: 18, backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke, overflow: 'hidden' },
-    cardRow: { flexDirection: 'row', alignItems: 'center', padding: 16 },
-    cardTitle: { color: th.text, fontSize: 16, fontWeight: '600' },
-    driveIcon: { width: 44, height: 44, borderRadius: 12, justifyContent: 'flex-end', padding: 8, marginRight: 14 },
-    driveBar: { height: 6, borderRadius: 3 },
-    usage: { height: 6, borderRadius: 3, marginTop: 8, overflow: 'hidden' },
-    usageFill: { height: 6, borderRadius: 3 },
-    deviceCard: { marginTop: 10 },
-    deviceIcon: { justifyContent: 'center', alignItems: 'center', padding: 0 },
-    deviceGlyph: { fontSize: 20 },
-    nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    onlineDot: { width: 8, height: 8, borderRadius: 4 },
-    folderGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-    folderCell: { width: '31%' },
-    folderTile: {
-      alignItems: 'center', paddingVertical: 14, borderRadius: 16, overflow: 'hidden',
-      backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke,
-    },
-    folderLabel: { color: th.text, fontSize: 13, marginTop: 6 },
-    header: { flexDirection: 'row', alignItems: 'center', height: 56, paddingHorizontal: 4 },
-    headerTitle: { flex: 1, color: th.text, fontSize: 18, fontWeight: '600', textAlign: 'center' },
+    section: { marginTop: 28, marginBottom: 10, marginLeft: 4 },
+    group: { borderRadius: 12, backgroundColor: th.surface, overflow: 'hidden' },
+    groupLine: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 56 },
+    placeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, paddingHorizontal: 16, paddingVertical: 14 },
+    placeText: { flex: 1 },
+    placeTop: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+    placeNum: { color: th.text2, fontSize: 13 },
+    cardTitle: { flex: 1, color: th.text, fontSize: 16, lineHeight: 22, fontWeight: '600' },
+    offline: { color: th.text2, fontWeight: '400' },
+    usage: { height: 4, borderRadius: 2, marginTop: 8, marginBottom: 6, overflow: 'hidden', backgroundColor: th.surface2 },
+    usageFill: { height: 4, borderRadius: 2, backgroundColor: th.accent },
+    status: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+    onlineDot: { width: 7, height: 7, borderRadius: 4 },
+    folderGrid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -4 },
+    folderCell: { width: '33.33%', padding: 4 },
+    folderTile: { alignItems: 'center', paddingTop: 12, paddingBottom: 10, borderRadius: 12, overflow: 'hidden' },
+    folderLabel: { color: th.text, fontSize: 13, lineHeight: 18, marginTop: 6 },
+    header: { flexDirection: 'row', alignItems: 'center', minHeight: 60, paddingHorizontal: 4 },
+    headerTitles: { flex: 1, marginLeft: 4 },
+    noFlex: { flex: 0 },
+    headerTitle: { flex: 1, color: th.text, fontSize: 18, lineHeight: 24, fontWeight: '700' },
+    crumb: { color: th.text3, fontSize: 12, lineHeight: 16 },
     iconBtn: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-    iconText: { color: th.text, fontSize: 26, lineHeight: 30 },
-    iconSmall: { color: th.text, fontSize: 18 },
     textBtn: { minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 12 },
-    link: { color: th.accent, fontSize: 16, fontWeight: '600' },
+    link: { color: th.accent, fontSize: 15, fontWeight: '700' },
     list: { paddingBottom: 120 },
-    row: { flexDirection: 'row', alignItems: 'center', height: ROW, paddingHorizontal: 16 },
+    row: { flexDirection: 'row', alignItems: 'center', height: ROW, paddingLeft: 16 },
     rowOn: { backgroundColor: th.accentSoft },
     rowText: {
-      flex: 1, marginLeft: 14, alignSelf: 'stretch', justifyContent: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: th.stroke,
+      flex: 1, flexDirection: 'row', alignItems: 'center', marginLeft: 16, paddingRight: 16, alignSelf: 'stretch', gap: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: th.line,
     },
+    rowMain: { flex: 1 },
     iconBox: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-    thumbImg: { width: 40, height: 40, borderRadius: 8 },
+    thumbImg: { width: 40, height: 40, borderRadius: 6 },
     check: { position: 'absolute', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-    name: { color: th.text, fontSize: 16 },
-    meta: { color: th.text2, fontSize: 13, marginTop: 2 },
-    chev: { color: th.text2, fontSize: 22, marginLeft: 8 },
+    name: { color: th.text, fontSize: 16, lineHeight: 22 },
+    meta: { color: th.text2, fontSize: 13, lineHeight: 18 },
+    size: { color: th.text3, fontSize: 13, minWidth: 56, textAlign: 'right' },
     dim: { opacity: 0.45 },
-    gridList: { padding: 16, paddingBottom: 120 },
+    gridList: { padding: 12, paddingBottom: 120 },
     gridRow: { gap: 8, marginBottom: 8 },
-    tile: { flex: 1, alignItems: 'center', padding: 6, borderRadius: 14, overflow: 'hidden' },
+    tile: { flex: 1, alignItems: 'center', padding: 6, borderRadius: 12, overflow: 'hidden' },
     tileOn: { backgroundColor: th.accentSoft },
-    tileThumb: { justifyContent: 'center', alignItems: 'center', borderRadius: 10, overflow: 'hidden' },
-    fillImg: { width: '100%', height: '100%' },
-    tileCheck: { position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
-    tileName: { color: th.text, fontSize: 12, textAlign: 'center', marginTop: 4 },
-    empty: { alignItems: 'center', marginTop: 80, paddingHorizontal: 32 },
-    emptyIcon: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
-    emptyPlus: { fontSize: 30 },
-    emptyTitle: { color: th.text, fontSize: 18, fontWeight: '700', marginBottom: 6, textAlign: 'center' },
+    tileThumb: { justifyContent: 'center', alignItems: 'center', borderRadius: 8, overflow: 'hidden', backgroundColor: th.surface },
+    fillImg: { position: 'absolute', width: '100%', height: '100%' },
+    tileCheck: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+    tileName: { color: th.text, fontSize: 12, lineHeight: 16, textAlign: 'center', marginTop: 6 },
+    empty: { alignItems: 'center', marginTop: 96, paddingHorizontal: 40 },
+    emptyIcon: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 16, backgroundColor: th.surface2 },
+    emptyTitle: { color: th.text, fontSize: 17, lineHeight: 24, fontWeight: '700', marginBottom: 6, textAlign: 'center' },
     bar: { flex: 1, flexDirection: 'row', alignItems: 'center' },
     barBtn: { flex: 1, minHeight: 56, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
-    barText: { color: th.text, fontSize: 13, fontWeight: '600' },
-    clipText: { flex: 1.6, color: th.text2, fontSize: 13, paddingLeft: 16 },
-    actionBar: { flex: 1, flexDirection: 'row', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 6 },
-    actionBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 14, overflow: 'hidden' },
-    actionIcon: { color: th.text, fontSize: 19, lineHeight: 24 },
-    actionText: { color: th.text, fontSize: 12, marginTop: 2 },
+    barText: { color: th.text, fontSize: 14, fontWeight: '600' },
+    clipText: { flex: 1.6, color: th.text2, fontSize: 13, lineHeight: 18, paddingLeft: 16 },
+    actionBar: { flex: 1, flexDirection: 'row', paddingHorizontal: 4, paddingVertical: 6 },
+    actionBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 4, borderRadius: 12, overflow: 'hidden' },
+    actionText: { color: th.text, fontSize: 12, lineHeight: 16 },
     busy: {
-      position: 'absolute', left: 16, right: 16, bottom: 16, minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 14,
-      paddingHorizontal: 18, borderRadius: 16, backgroundColor: th.dark ? '#2b2d36' : '#ffffff', elevation: 10,
+      position: 'absolute', left: 12, right: 12, bottom: 12, minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 14,
+      paddingHorizontal: 16, borderRadius: 10, backgroundColor: th.dark ? '#EDEBE6' : '#2A2A27', elevation: 6,
     },
-    busyText: { flex: 1, color: th.text, fontSize: 15 },
+    busyText: { flex: 1, color: th.dark ? '#1A1A18' : '#F4F2ED', fontSize: 14, lineHeight: 20 },
     pwHint: { marginBottom: 8 },
-    fabBox: { position: 'absolute', right: 20, bottom: 20 },
-    fab: {
-      width: 60, height: 60, borderRadius: 20, overflow: 'hidden',
-      backgroundColor: th.accent, justifyContent: 'center', alignItems: 'center', elevation: 6,
-    },
-    fabText: { color: th.onAccent, fontSize: 30, lineHeight: 34 },
-    modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 28 },
-    modal: { backgroundColor: th.dark ? '#2a2c34' : '#ffffff', borderRadius: 24, padding: 22 },
-    modalTitle: { color: th.text, fontSize: 18, fontWeight: '600', marginBottom: 12 },
+    fabBox: { position: 'absolute', right: 16, bottom: 16 },
+    fab: { width: 56, height: 56, borderRadius: 16, overflow: 'hidden', backgroundColor: th.accent, justifyContent: 'center', alignItems: 'center', elevation: 3 },
+    modalBg: { flex: 1, backgroundColor: 'rgba(10,10,9,0.42)', justifyContent: 'center', padding: 24 },
+    modal: { backgroundColor: th.surface, borderRadius: 16, paddingHorizontal: 24, paddingTop: 22, paddingBottom: 12 },
+    modalTitle: { color: th.text, fontSize: 18, lineHeight: 24, fontWeight: '700', marginBottom: 12 },
     input: { color: th.text, fontSize: 16, borderBottomWidth: 2, borderBottomColor: th.accent, paddingVertical: 8 },
-    modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 },
+    modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 4, marginTop: 16 },
   }));

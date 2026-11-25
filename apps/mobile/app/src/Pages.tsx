@@ -6,7 +6,8 @@ import * as core from './core';
 import { humanSize, request, shortDate } from './core';
 import { LANGUAGES, lang, locale, setLanguage, t } from './i18n';
 import type { Theme } from './theme';
-import { themed } from './ui';
+import { Glyph, SectionLabel, themed } from './ui';
+import { Icon, type IconName } from './Icon';
 
 export interface Device {
   node_id: string;
@@ -71,41 +72,70 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
       { text: t('Entkoppeln'), style: 'destructive', onPress: () => request({ PairRemove: { device: d.node_id } }).then(load).catch((e) => notify(e.message)) },
     ]);
 
+  const kind = (n: string): IconName => (/tablet/i.test(n) ? 'tablet' : /handy|phone|pixel/i.test(n) ? 'phone' : 'laptop');
   return (
     <ScrollView contentContainerStyle={s.page}>
-      <Text style={[s.h2, s.first]}>{t('Gekoppelte Geräte')}</Text>
-      {devices.length === 0 && <Text style={s.muted}>{t('Noch keine Geräte gekoppelt.')}</Text>}
-      {devices.map((d) => (
-        <Pressable key={d.node_id} style={s.card} onLongPress={() => unpair(d)}>
-          <View style={[s.dot, online.has(d.node_id) && s.dotOn]} />
-          <View style={s.grow}>
-            <Text style={s.strong}>{d.name}</Text>
-            <Text style={s.muted}>
-              {online.has(d.node_id) ? t('Verbunden') : t('Nicht verbunden')} · {t('gekoppelt am {date}', { date: shortDate(d.paired_at, locale()) })}
-              {d.storage ? ` · ${t('{free} von {total} frei', { free: humanSize(d.storage.free, locale()), total: humanSize(d.storage.total, locale()) })}` : ''}
-            </Text>
-          </View>
-          <Pressable onPress={() => unpair(d)} style={s.btnSmall} accessibilityLabel={t('Entkoppeln')}>
-            <Text style={s.link}>{t('Entkoppeln')}</Text>
-          </Pressable>
-        </Pressable>
-      ))}
-      <Text style={s.h2}>{t('Neues Gerät koppeln')}</Text>
-      <View style={s.card}>
-        <View style={s.grow}>
-          <Text style={s.muted}>{t('Auf diesem Gerät einen Code erzeugen und am neuen Gerät eingeben.')}</Text>
-          {invite ? <Text selectable style={s.code}>{invite}</Text> : (
-            <Pressable onPress={startInvite} style={s.btn}><Text style={s.btnText}>{t('Code erzeugen')}</Text></Pressable>
+      <SectionLabel theme={theme} style={s.label}>{t('Gekoppelte Geräte')}</SectionLabel>
+      {devices.length === 0 ? (
+        <View style={[s.group, s.emptyGroup]}>
+          <Icon name="devices" size={28} color={theme.text3 as string} />
+          <Text style={[s.muted, s.centerText]}>{t('Noch keine Geräte gekoppelt.')}</Text>
+        </View>
+      ) : (
+        <View style={s.group}>
+          {devices.map((d, i) => {
+            const on = online.has(d.node_id);
+            return (
+              <View key={d.node_id}>
+                {i > 0 && <View style={s.sep} />}
+                <Pressable style={s.row} onLongPress={() => unpair(d)} android_ripple={{ color: theme.accentSoft as string }}>
+                  <Icon name={kind(d.name)} size={24} color={(on ? theme.accent : theme.text3) as string} />
+                  <View style={s.grow}>
+                    <Text style={s.strong}>{d.name}</Text>
+                    <Text style={s.muted} numberOfLines={2}>
+                      {on ? t('Verbunden') : t('Nicht verbunden')}
+                      {d.storage ? ` · ${t('{free} frei', { free: humanSize(d.storage.free, locale()) })}` : ''}
+                      {` · ${t('seit {date}', { date: shortDate(d.paired_at, locale()) })}`}
+                    </Text>
+                  </View>
+                  <Pressable onPress={() => unpair(d)} style={s.iconBtn} accessibilityLabel={t('Entkoppeln')} android_ripple={{ color: theme.accentSoft as string, borderless: true }}>
+                    <Icon name="more" size={22} color={theme.text2 as string} strokeWidth={2.4} />
+                  </Pressable>
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      <SectionLabel theme={theme} style={s.label}>{t('Neues Gerät koppeln')}</SectionLabel>
+      <View style={s.group}>
+        <View style={s.block}>
+          <Text style={s.strong}>{t('Dieses Gerät lädt ein')}</Text>
+          <Text style={s.muted}>{t('Code erzeugen und am neuen Gerät eingeben.')}</Text>
+          {invite ? (
+            <>
+              <Text selectable style={s.code}>{invite}</Text>
+              <Text style={s.hint}>{t('Warte auf das andere Gerät …')}</Text>
+            </>
+          ) : (
+            <Pressable onPress={startInvite} style={s.btnTonal} accessibilityRole="button">
+              <Text style={s.btnTonalText}>{t('Code erzeugen')}</Text>
+            </Pressable>
           )}
         </View>
-      </View>
-      <View style={s.card}>
-        <View style={s.grow}>
-          <Text style={s.muted}>{t('Oder den Code eines anderen Geräts hier eingeben.')}</Text>
-          <TextInput value={code} onChangeText={setCode} placeholder={t('Einladungscode')} placeholderTextColor={theme.text2 as string} autoCapitalize="none" autoCorrect={false} style={s.input} />
-          <Pressable onPress={join} disabled={!code.trim()} style={[s.btn, !code.trim() && s.dim]}><Text style={s.btnText}>{t('Koppeln')}</Text></Pressable>
+        <View style={s.sepFull} />
+        <View style={s.block}>
+          <Text style={s.strong}>{t('Code von einem anderen Gerät')}</Text>
+          <View style={s.joinRow}>
+            <TextInput value={code} onChangeText={setCode} placeholder={t('Einladungscode')} placeholderTextColor={theme.text3 as string} autoCapitalize="none" autoCorrect={false} style={s.input} />
+            <Pressable onPress={join} disabled={!code.trim()} style={[s.btn, !code.trim() && s.dim]} accessibilityRole="button">
+              <Text style={s.btnText}>{t('Koppeln')}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
+      <Text style={s.foot}>{t('Gekoppelte Geräte sehen nur, was du freigibst. Rechte vergibst du am Computer pro Ordner.')}</Text>
     </ScrollView>
   );
 }
@@ -122,25 +152,38 @@ export function TrashPage({ theme, notify }: { theme: Theme; notify: (t: string)
   }, [loadTrash]);
   return (
     <ScrollView contentContainerStyle={s.page}>
-      <View style={s.card}>
-        <View style={s.grow}>
-          {trash === null ? (
-            <Pressable onPress={loadTrash} style={s.btn}><Text style={s.btnText}>{t('Papierkorb')}</Text></Pressable>
-          ) : trash.length === 0 ? (
-            <Text style={s.muted}>{t('Der Papierkorb ist leer')}</Text>
-          ) : (
-            trash.map((e) => (
-              <View key={e.id} style={s.line}>
-                <Text style={[s.grow, s.text]} numberOfLines={1}>{e.name}</Text>
-                <Pressable style={s.btnSmall} onPress={() => request({ TrashRestore: { id: e.id, keep_both: true } }).then(loadTrash).catch((err) => notify(err.message))}>
-                  <Text style={s.link}>{t('Wiederherstellen')}</Text>
+      {trash === null ? null : trash.length === 0 ? (
+        <View style={s.emptyPage}>
+          <View style={s.emptyIcon}>
+            <Icon name="trash" size={28} color={theme.text3 as string} />
+          </View>
+          <Text style={s.emptyTitle}>{t('Der Papierkorb ist leer')}</Text>
+          <Text style={[s.muted, s.centerText]}>{t('Gelöschte Dateien landen hier und lassen sich wiederherstellen.')}</Text>
+        </View>
+      ) : (
+        <View style={[s.group, s.firstGroup]}>
+          {trash.map((e, i) => (
+            <View key={e.id}>
+              {i > 0 && <View style={s.sepFile} />}
+              <View style={s.row}>
+                <Glyph name={e.name} dir={false} theme={theme} size={36} />
+                <View style={s.grow}>
+                  <Text style={s.text} numberOfLines={1}>{e.name}</Text>
+                  <Text style={s.muted} numberOfLines={1} ellipsizeMode="head">{e.original_path.replace(/\/[^/]*$/, '').replace(/^\/storage\/emulated\/0/, '~')}</Text>
+                </View>
+                <Pressable
+                  style={s.iconBtn}
+                  accessibilityLabel={t('Wiederherstellen')}
+                  android_ripple={{ color: theme.accentSoft as string, borderless: true }}
+                  onPress={() => request({ TrashRestore: { id: e.id, keep_both: true } }).then(loadTrash).catch((err) => notify(err.message))}
+                >
+                  <Icon name="restore" size={22} color={theme.accent as string} />
                 </Pressable>
               </View>
-            ))
-          )}
+            </View>
+          ))}
         </View>
-      </View>
-
+      )}
     </ScrollView>
   );
 }
@@ -155,52 +198,64 @@ export function General({ theme, notify, material, setMaterial, materialAvailabl
   const s = styles(theme);
   return (
     <ScrollView contentContainerStyle={s.page}>
-      <View style={s.card}>
-        <View style={s.grow}>
-          <Text style={s.strong}>{t('Sprache')}</Text>
-          <View style={s.chips}>
-            {Object.entries(LANGUAGES).map(([code, l]) => (
-              <Pressable key={code} onPress={() => { setLanguage(code); notify(t('Gespeichert.')); }} style={[s.chip, lang() === code && s.chipOn]}>
-                <Text style={[s.text, lang() === code && { color: theme.onAccent }]}>{l.name}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-      </View>
-      <View style={s.card}>
-        <View style={s.grow}>
-          <Text style={s.strong}>Material You</Text>
-          <Text style={s.muted}>{materialAvailable ? t('Farben aus dem Hintergrundbild verwenden') : t('Ab Android 12 verfügbar')}</Text>
-        </View>
-        <Switch value={material} disabled={!materialAvailable} onValueChange={setMaterial} />
-      </View>
-      <View style={s.card}>
-        <View style={s.grow}>
-          <Text style={s.strong}>{t('Schriftart')}</Text>
-          <Text style={s.muted}>{fontName ?? t('Inconsolata (Standard)')}</Text>
-          <View style={s.chips}>
-            <Pressable
-              style={s.chip}
-              accessibilityRole="button"
-              onPress={() =>
-                core
-                  .pickFont()
-                  .then((name) => {
-                    if (name) {
-                      onFont?.(name);
-                      notify(t('Schriftart „{name}“ wird verwendet.', { name }));
-                    }
-                  })
-                  .catch((e) => notify(e.message))
-              }
-            >
-              <Text style={s.text}>{t('TTF-Datei wählen …')}</Text>
+      <SectionLabel theme={theme} style={s.label}>{t('Sprache')}</SectionLabel>
+      <View style={s.segment} accessibilityRole="radiogroup">
+        {Object.entries(LANGUAGES).map(([code, l]) => {
+          const on = lang() === code;
+          return (
+            <Pressable key={code} onPress={() => { setLanguage(code); notify(t('Gespeichert.')); }} style={[s.segItem, on && s.segOn]} accessibilityRole="radio" accessibilityState={{ selected: on }}>
+              <Text style={[s.text, on && s.segTextOn]}>{l.name}</Text>
             </Pressable>
-            {fontName && (
-              <Pressable style={s.chip} accessibilityRole="button" onPress={() => core.resetFont().then(() => onFont?.(null)).catch((e) => notify(e.message))}>
-                <Text style={s.text}>{t('Zurück zu Inconsolata')}</Text>
+          );
+        })}
+      </View>
+
+      <SectionLabel theme={theme} style={s.label}>{t('Erscheinung')}</SectionLabel>
+      <View style={s.group}>
+        <View style={s.row}>
+          <Icon name="palette" size={22} color={theme.text2 as string} />
+          <View style={s.grow}>
+            <Text style={s.text}>Material You</Text>
+            <Text style={s.muted}>{materialAvailable ? t('Farben aus dem Hintergrundbild verwenden') : t('Ab Android 12 verfügbar')}</Text>
+          </View>
+          <Switch
+            value={material}
+            disabled={!materialAvailable}
+            onValueChange={setMaterial}
+            trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+            thumbColor={theme.surface as string}
+          />
+        </View>
+        <View style={s.sep} />
+        <View style={s.row}>
+          <Icon name="font" size={22} color={theme.text2 as string} />
+          <View style={s.grow}>
+            <Text style={s.text}>{t('Schriftart')}</Text>
+            <Text style={s.muted}>{fontName ?? t('Inconsolata (Standard)')}</Text>
+            <View style={s.chips}>
+              <Pressable
+                style={s.btnTonal}
+                accessibilityRole="button"
+                onPress={() =>
+                  core
+                    .pickFont()
+                    .then((name) => {
+                      if (name) {
+                        onFont?.(name);
+                        notify(t('Schriftart „{name}“ wird verwendet.', { name }));
+                      }
+                    })
+                    .catch((e) => notify(e.message))
+                }
+              >
+                <Text style={s.btnTonalText}>{t('TTF-Datei wählen …')}</Text>
               </Pressable>
-            )}
+              {fontName && (
+                <Pressable style={s.btnText2} accessibilityRole="button" onPress={() => core.resetFont().then(() => onFont?.(null)).catch((e) => notify(e.message))}>
+                  <Text style={s.link}>{t('Zurück zu Inconsolata')}</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         </View>
       </View>
@@ -210,28 +265,40 @@ export function General({ theme, notify, material, setMaterial, materialAvailabl
 
 const styles = themed((th: Theme) =>
   StyleSheet.create({
-    page: { padding: 16, paddingBottom: 40 },
-    first: { marginTop: 0 },
-    h2: { color: th.text, fontSize: 18, fontWeight: '600', marginTop: 12, marginBottom: 8 },
-    card: {
-      flexDirection: 'row', alignItems: 'center', padding: 16, marginBottom: 10, borderRadius: 18,
-      backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke,
-    },
+    page: { paddingHorizontal: 16, paddingBottom: 40 },
+    label: { marginTop: 20, marginBottom: 10, marginLeft: 4 },
+    group: { borderRadius: 12, backgroundColor: th.surface, overflow: 'hidden' },
+    firstGroup: { marginTop: 8 },
+    emptyGroup: { alignItems: 'center', gap: 10, paddingVertical: 28, paddingHorizontal: 24 },
+    row: { flexDirection: 'row', alignItems: 'center', gap: 18, minHeight: 64, paddingLeft: 16, paddingRight: 8, paddingVertical: 10 },
+    block: { padding: 16, gap: 2 },
+    sep: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 58 },
+    sepFile: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 70 },
+    sepFull: { height: StyleSheet.hairlineWidth, backgroundColor: th.line },
     grow: { flex: 1 },
-    line: { flexDirection: 'row', alignItems: 'center', minHeight: 48 },
-    text: { color: th.text, fontSize: 15 },
-    strong: { color: th.text, fontSize: 16, fontWeight: '600' },
-    muted: { color: th.text2, fontSize: 14, marginTop: 2, lineHeight: 20 },
-    link: { color: th.accent, fontSize: 15, fontWeight: '600' },
-    dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: th.text2, marginRight: 14 },
-    dotOn: { backgroundColor: '#2fa36b' },
-    btn: { alignSelf: 'flex-start', minHeight: 48, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 14, backgroundColor: th.accent, marginTop: 12 },
-    btnText: { color: th.onAccent, fontSize: 15, fontWeight: '600' },
-    btnSmall: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 10 },
-    dim: { opacity: 0.45 },
-    code: { color: th.text, fontFamily: 'monospace', fontSize: 15, marginTop: 12, padding: 12, borderRadius: 10, backgroundColor: th.accentSoft },
-    input: { color: th.text, fontSize: 16, borderBottomWidth: 2, borderBottomColor: th.accent, paddingVertical: 8, marginTop: 8 },
-    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-    chip: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 22, backgroundColor: th.accentSoft },
-    chipOn: { backgroundColor: th.accent },
+    text: { color: th.text, fontSize: 16, lineHeight: 22 },
+    strong: { color: th.text, fontSize: 16, lineHeight: 22, fontWeight: '600' },
+    muted: { color: th.text2, fontSize: 13, lineHeight: 18 },
+    hint: { color: th.text3, fontSize: 13, lineHeight: 18, marginTop: 6 },
+    foot: { color: th.text3, fontSize: 13, lineHeight: 18, marginTop: 12, marginHorizontal: 4 },
+    centerText: { textAlign: 'center' },
+    link: { color: th.accent, fontSize: 15, fontWeight: '700' },
+    iconBtn: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center' },
+    btn: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 22, backgroundColor: th.accent },
+    btnText: { color: th.onAccent, fontSize: 15, fontWeight: '700' },
+    btnTonal: { alignSelf: 'flex-start', minHeight: 40, justifyContent: 'center', paddingHorizontal: 18, borderRadius: 20, backgroundColor: th.accentSoft, marginTop: 12 },
+    btnTonalText: { color: th.accent, fontSize: 15, fontWeight: '700' },
+    btnText2: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 12, marginTop: 12 },
+    dim: { opacity: 0.4 },
+    code: { color: th.text, fontSize: 24, lineHeight: 32, letterSpacing: 3, fontWeight: '700', marginTop: 14 },
+    joinRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 },
+    input: { flex: 1, color: th.text, fontSize: 16, borderBottomWidth: 1.5, borderBottomColor: th.accent, paddingVertical: 8 },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 },
+    segment: { flexDirection: 'row', padding: 4, borderRadius: 24, backgroundColor: th.surface2 },
+    segItem: { flex: 1, minHeight: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+    segOn: { backgroundColor: th.surface, elevation: 1 },
+    segTextOn: { fontWeight: '700' },
+    emptyPage: { alignItems: 'center', paddingTop: 96, paddingHorizontal: 40, gap: 6 },
+    emptyIcon: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 10, backgroundColor: th.surface2 },
+    emptyTitle: { color: th.text, fontSize: 17, lineHeight: 24, fontWeight: '700' },
   }));

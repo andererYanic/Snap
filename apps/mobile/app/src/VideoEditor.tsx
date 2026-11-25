@@ -11,6 +11,7 @@ import { request, type VideoInfo, type VideoParams } from './core';
 import { t } from './i18n';
 import { fadeIn, m, popIn } from './motion';
 import { Text } from './text';
+import { Icon } from './Icon';
 
 const FRAMES = 8;
 const MIN_MS = 500; // kürzester Ausschnitt
@@ -188,7 +189,7 @@ export default function VideoEditor({ path, name, onClose, notify }: {
         <StatusBar barStyle="light-content" />
         <View style={styles.top}>
           <Pressable onPress={() => onClose(false)} style={styles.btn} accessibilityLabel={t('Abbrechen')}>
-            <Text style={styles.btnText}>✕</Text>
+            <Icon name="close" color="#fff" />
           </Pressable>
           <Text style={styles.title} numberOfLines={1}>{name}</Text>
           <Pressable onPress={() => setSaving('ask')} disabled={!changed || saving === 'busy'} style={[styles.btn, !changed && styles.dim]} accessibilityLabel={t('Speichern')}>
@@ -212,7 +213,7 @@ export default function VideoEditor({ path, name, onClose, notify }: {
               />
               {paused && (
                 <View style={styles.play} pointerEvents="none">
-                  <Text style={styles.playIcon}>▶</Text>
+                  <Icon name="play" size={26} color="#fff" fill="#fff" strokeWidth={1.2} />
                 </View>
               )}
             </Pressable>
@@ -250,7 +251,8 @@ export default function VideoEditor({ path, name, onClose, notify }: {
           </View>
           <View style={styles.chips}>
             <Pressable onPress={() => setP((v) => ({ ...v, rot: (v.rot + 270) % 360 }))} style={styles.chip} accessibilityLabel={t('Drehen')}>
-              <Text style={styles.chipText}>⟲ {t('Drehen')}</Text>
+              <Icon name="rotate" size={18} color="#EDEBE6" />
+                <Text style={styles.chipText}>{t('Drehen')}</Text>
             </Pressable>
             <Pressable
               onPress={() => setP((v) => ({ ...v, mute: !v.mute }))}
@@ -259,7 +261,8 @@ export default function VideoEditor({ path, name, onClose, notify }: {
               accessibilityRole="switch"
               accessibilityState={{ checked: p.mute, disabled: !info?.audio }}
             >
-              <Text style={[styles.chipText, p.mute && styles.chipTextOn]}>{p.mute ? `🔇 ${t('Ton aus')}` : `🔊 ${t('Ton an')}`}</Text>
+              <Icon name={p.mute ? 'soundOff' : 'soundOn'} size={18} color={p.mute ? '#121211' : '#EDEBE6'} />
+              <Text style={[styles.chipText, p.mute && styles.chipTextOn]}>{p.mute ? t('Ton aus') : t('Ton an')}</Text>
             </Pressable>
           </View>
         </View>
@@ -275,7 +278,7 @@ export default function VideoEditor({ path, name, onClose, notify }: {
                     {progress >= 0 ? ` ${progress} %` : ''}
                   </Text>
                   <View style={styles.progress}>
-                    {progress >= 0 ? <View style={[styles.progressFill, { width: `${progress}%` }]} /> : <ActivityIndicator color="#9fbcff" />}
+                    {progress >= 0 ? <View style={[styles.progressFill, { width: `${progress}%` }]} /> : <ActivityIndicator color="#72C7B2" />}
                   </View>
                   <Pressable onPress={cancel} style={styles.cancel} accessibilityRole="button">
                     <Text style={styles.save}>{t('Abbrechen')}</Text>
@@ -305,12 +308,12 @@ export default function VideoEditor({ path, name, onClose, notify }: {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0e0f12' },
+  root: { flex: 1, backgroundColor: '#121211' },
   top: { flexDirection: 'row', alignItems: 'center', paddingTop: 36, paddingHorizontal: 4, paddingBottom: 4 },
   btn: { minWidth: 48, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10 },
   btnText: { color: '#fff', fontSize: 22 },
-  title: { flex: 1, color: '#f1f1f4', fontSize: 16, fontWeight: '600', textAlign: 'center' },
-  save: { color: '#9fbcff', fontSize: 16, fontWeight: '700' },
+  title: { flex: 1, color: '#EDEBE6', fontSize: 16, fontWeight: '600', textAlign: 'center' },
+  save: { color: '#72C7B2', fontSize: 16, fontWeight: '700' },
   dim: { opacity: 0.4 },
   stage: { flex: 1, margin: 16, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   play: { position: 'absolute', width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
@@ -318,28 +321,28 @@ const styles = StyleSheet.create({
   error: { color: '#eee', textAlign: 'center', padding: 24 },
   errorLine: { color: '#ffb4a8', textAlign: 'center', paddingHorizontal: 24, paddingBottom: 8 },
   tools: { paddingHorizontal: 12 + HANDLE, paddingBottom: 18 },
-  range: { color: '#b4b6be', fontSize: 13, textAlign: 'center', marginBottom: 8 },
+  range: { color: '#A3A19A', fontSize: 13, textAlign: 'center', marginBottom: 8 },
   timeline: { height: 56, justifyContent: 'center' },
   strip: { flexDirection: 'row', height: 48, borderRadius: 8, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.08)' },
   frame: { flex: 1, height: 48, backgroundColor: 'rgba(255,255,255,0.05)' },
   shade: { position: 'absolute', top: 4, height: 48, backgroundColor: 'rgba(0,0,0,0.65)' },
-  window: { position: 'absolute', top: 2, height: 52, borderTopWidth: 2, borderBottomWidth: 2, borderColor: '#f1f1f4' },
-  cursor: { position: 'absolute', top: 0, width: 2, height: 56, backgroundColor: '#9fbcff' },
-  handle: { position: 'absolute', top: 2, width: HANDLE, height: 52, backgroundColor: '#f1f1f4', borderRadius: 6, justifyContent: 'center', alignItems: 'center' },
-  grip: { width: 3, height: 18, borderRadius: 2, backgroundColor: '#0e0f12' },
+  window: { position: 'absolute', top: 2, height: 52, borderTopWidth: 2, borderBottomWidth: 2, borderColor: '#EDEBE6' },
+  cursor: { position: 'absolute', top: 0, width: 2, height: 56, backgroundColor: '#72C7B2' },
+  handle: { position: 'absolute', top: 2, width: HANDLE, height: 52, backgroundColor: '#EDEBE6', borderRadius: 6, justifyContent: 'center', alignItems: 'center' },
+  grip: { width: 3, height: 18, borderRadius: 2, backgroundColor: '#121211' },
   chips: { flexDirection: 'row', gap: 8, justifyContent: 'center', paddingTop: 14 },
-  chip: { minHeight: 40, paddingHorizontal: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center' },
-  chipOn: { backgroundColor: '#f1f1f4' },
-  chipText: { color: '#f1f1f4', fontSize: 14 },
-  chipTextOn: { color: '#0e0f12', fontWeight: '700' },
+  chip: { minHeight: 40, paddingHorizontal: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chipOn: { backgroundColor: '#EDEBE6' },
+  chipText: { color: '#EDEBE6', fontSize: 14 },
+  chipTextOn: { color: '#121211', fontWeight: '700' },
   scrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#24262e', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingVertical: 14, paddingBottom: 28 },
-  sheetTitle: { color: '#b4b6be', fontSize: 13, paddingHorizontal: 20, paddingBottom: 6 },
+  sheet: { backgroundColor: '#1F1F1D', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingVertical: 14, paddingBottom: 28 },
+  sheetTitle: { color: '#A3A19A', fontSize: 13, paddingHorizontal: 20, paddingBottom: 6 },
   sheetRow: { paddingHorizontal: 20, paddingVertical: 12, minHeight: 56 },
-  sheetText: { color: '#f1f1f4', fontSize: 16 },
-  sheetHint: { color: '#8a8f9c', fontSize: 13, marginTop: 2 },
+  sheetText: { color: '#EDEBE6', fontSize: 16 },
+  sheetHint: { color: '#8C8A83', fontSize: 13, marginTop: 2 },
   busy: { padding: 20, gap: 14 },
   progress: { height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden', justifyContent: 'center' },
-  progressFill: { height: 6, backgroundColor: '#9fbcff' },
+  progressFill: { height: 6, backgroundColor: '#72C7B2' },
   cancel: { alignSelf: 'flex-end', minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 },
 });
