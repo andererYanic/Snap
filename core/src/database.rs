@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard};
 const SCHEMA_VERSION: i64 = 11;
 
 pub fn now_unix() -> i64 {
-    chrono::Utc::now().timestamp()
+    jiff::Timestamp::now().as_second()
 }
 
 /// Eine freigegebene Datei im lokalen Katalog.

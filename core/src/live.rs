@@ -158,7 +158,7 @@ impl LiveManager {
                 return Ok(()); // zu häufig: still verwerfen
             }
         }
-        let s = crate::database::DeviceStorage { total, free, updated_at: chrono::Utc::now().timestamp() };
+        let s = crate::database::DeviceStorage { total, free, updated_at: jiff::Timestamp::now().as_second() };
         map.insert(peer.to_string(), (s, Instant::now()));
         Ok(())
     }

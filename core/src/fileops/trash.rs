@@ -236,7 +236,7 @@ impl Trash {
             None => path,
         };
         use std::os::unix::ffi::OsStrExt;
-        let date = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S");
+        let date = jiff::ZonedDateTime::now().strftime("%Y-%m-%dT%H:%M:%S");
         let content =
             format!("[Trash Info]\nPath={}\nDeletionDate={date}\n", percent_encode(stored.as_os_str().as_bytes()));
         for n in 1..10_000u32 {

@@ -143,7 +143,7 @@ async fn links_are_end_to_end_encrypted_and_revocable() {
     assert!(!String::from_utf8_lossy(policy).contains("Urlaub"));
     let pol: serde_json::Value = serde_json::from_slice(policy).unwrap();
     assert_eq!(pol["password"], true);
-    let days = (pol["expires"].as_i64().unwrap() - chrono::Utc::now().timestamp() + 60) / 86_400;
+    let days = (pol["expires"].as_i64().unwrap() - jiff::Timestamp::now().as_second() + 60) / 86_400;
     assert_eq!(days, 7, "Standard 7 Tage");
     // Mit Schlüssel aus dem Link + Passwort entschlüsselbar – ohne Passwort nicht
     let raw: [u8; 32] = data_encoding::BASE64URL_NOPAD.decode(secret.as_bytes()).unwrap().try_into().unwrap();
