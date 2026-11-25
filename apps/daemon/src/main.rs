@@ -911,7 +911,10 @@ async fn watch(socket: &Path) -> Result<ExitCode> {
         tokio::select! {
             frame = read_frame::<_, Response>(&mut stream) => match frame {
                 Ok(Response::Event(e)) => println!("{} {}", jiff::ZonedDateTime::now().strftime("%H:%M:%S"), describe_event(&e)),
-                Ok(other) => { print_response(other); }
+                // Einzelne Antworten im Ereignisstrom ändern den Rückgabewert nicht.
+                Ok(other) => {
+                    let _ = print_response(other);
+                }
                 Err(_) => {
                     eprintln!("Verbindung zum Daemon beendet.");
                     return Ok(ExitCode::FAILURE);
