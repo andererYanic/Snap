@@ -910,7 +910,7 @@ async fn watch(socket: &Path) -> Result<ExitCode> {
     loop {
         tokio::select! {
             frame = read_frame::<_, Response>(&mut stream) => match frame {
-                Ok(Response::Event(e)) => println!("{} {}", chrono::Local::now().format("%H:%M:%S"), describe_event(&e)),
+                Ok(Response::Event(e)) => println!("{} {}", jiff::ZonedDateTime::now().strftime("%H:%M:%S"), describe_event(&e)),
                 Ok(other) => { print_response(other); }
                 Err(_) => {
                     eprintln!("Verbindung zum Daemon beendet.");
@@ -1324,8 +1324,8 @@ fn print_response(res: Response) -> ExitCode {
             }
             let mut day = String::new();
             for it in &page.items {
-                let t = chrono::DateTime::from_timestamp(it.taken, 0).unwrap_or_default();
-                let d = t.format("%d.%m.%Y").to_string();
+                let t = jiff::Timestamp::from_second(it.taken).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+                let d = t.strftime("%d.%m.%Y").to_string();
                 if d != day {
                     println!("\n📅 {d}");
                     day = d;
@@ -1336,7 +1336,7 @@ fn print_response(res: Response) -> ExitCode {
                 };
                 println!(
                     "  {} {}{}  {}{}{}",
-                    t.format("%H:%M"),
+                    t.strftime("%H:%M"),
                     if it.video { "🎬" } else { "🖼" },
                     if it.exif { "" } else { " (Dateizeit)" },
                     it.path,
@@ -1509,7 +1509,7 @@ fn print_catalog(
     peers: &[PeerInfo],
     syncing: bool,
 ) {
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     println!("📁 Dieses Gerät");
     if local.is_empty() {
         println!("   (noch nichts freigegeben – space-daemon publish <datei>)");
@@ -1589,7 +1589,7 @@ fn print_devices(devices: &[DeviceInfo]) {
         println!("Noch keine Geräte gekoppelt. Neues Gerät koppeln: space-daemon pair invite");
         return;
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     println!("{:<20} {:<12} {:<18} LETZTER ABGLEICH", "NAME", "NODE-ID", "GEKOPPELT");
     for d in devices {
         let sync = d.last_sync_at.map(|t| format!("vor {}", human_duration(now - t))).unwrap_or_else(|| "nie".into());
@@ -1617,7 +1617,7 @@ fn print_jobs(jobs: &[PendingJob]) {
         println!("✅ Warteschlange ist leer.");
         return;
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     for j in jobs {
         let state = match j.state {
             JobState::Failed => "❌ fehlgeschlagen".to_string(),
@@ -1641,7 +1641,7 @@ fn print_peers(peers: &[PeerInfo]) {
         println!("Noch keine Peers bekannt. (Ein Peer wird beim ersten Download-Versuch erfasst.)");
         return;
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     println!("{:<12} {:<10} {:<22} NÄCHSTER VERSUCH", "PEER", "STATUS", "ZULETZT ERREICHT");
     for p in peers {
         let status = if p.status == "online" { "🟢 online" } else { "🔴 offline" };
@@ -1725,8 +1725,9 @@ fn short(s: &str, n: usize) -> &str {
 }
 
 fn fmt_time(ts: i64) -> String {
-    use chrono::{Local, TimeZone};
-    Local.timestamp_opt(ts, 0).single().map(|t| t.format("%d.%m.%Y %H:%M").to_string()).unwrap_or_else(|| "?".into())
+    jiff::Timestamp::from_second(ts)
+        .map(|t| t.to_zoned_datetime(jiff::tz::TimeZone::system()).strftime("%d.%m.%Y %H:%M").to_string())
+        .unwrap_or_else(|_| "?".into())
 }
 
 fn kind_icon(kind: NodeKind) -> &'static str {

@@ -346,15 +346,8 @@ pub fn select_keep(snapshots: &[SnapshotInfo], r: Retention) -> HashSet<String> 
         }
     }
     type BucketKey = fn(i64) -> i64;
-    let buckets: [(usize, BucketKey); 3] = [
-        (r.hourly, |t| t.div_euclid(3600)),
-        (r.daily, |t| t.div_euclid(86_400)),
-        (r.monthly, |t| {
-            use chrono::Datelike;
-            let d = chrono::DateTime::from_timestamp(t, 0).unwrap_or_default();
-            i64::from(d.year()) * 12 + i64::from(d.month0())
-        }),
-    ];
+    let buckets: [(usize, BucketKey); 3] =
+        [(r.hourly, |t| t.div_euclid(3600)), (r.daily, |t| t.div_euclid(86_400)), (r.monthly, crate::photos::month_of)];
     for (limit, key) in buckets {
         let mut seen = HashSet::new();
         for s in &by_time {

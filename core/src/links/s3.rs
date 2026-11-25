@@ -155,7 +155,7 @@ impl S3Client {
             None => url.host_str().unwrap_or_default().to_string(),
         };
         let uri = format!("/{}/{}", self.cfg.bucket, encode_key(key));
-        let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let amz_date = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
         // Inhalt nicht hashen (große, gestreamte Dateien); TLS schützt den Inhalt unterwegs.
         let payload = "UNSIGNED-PAYLOAD";
         let headers = [("host", host.as_str()), ("x-amz-content-sha256", payload), ("x-amz-date", amz_date.as_str())];

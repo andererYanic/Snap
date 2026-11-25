@@ -97,26 +97,28 @@ pub struct MonthCount {
 /// EXIF-Datum (`YYYY-MM-DD hh:mm:ss` oder `YYYY:MM:DD hh:mm:ss`) → Sekunden. Nur 1900–2199.
 pub fn parse_taken(s: &str) -> Option<i64> {
     let s = s.trim();
-    let dt = ["%Y-%m-%d %H:%M:%S", "%Y:%m:%d %H:%M:%S"]
-        .iter()
-        .find_map(|f| chrono::NaiveDateTime::parse_from_str(s, f).ok())?;
-    use chrono::Datelike;
-    (1900..2200).contains(&dt.year()).then(|| dt.and_utc().timestamp())
+    let dt =
+        ["%Y-%m-%d %H:%M:%S", "%Y:%m:%d %H:%M:%S"].iter().find_map(|f| jiff::civil::DateTime::strptime(f, s).ok())?;
+    if !(1900..2200).contains(&dt.year()) {
+        return None;
+    }
+    Some(dt.to_zoned_datetime(jiff::tz::TimeZone::UTC).ok()?.timestamp().as_second())
 }
 
 /// Unix-Zeit → lokale Uhrzeit ohne Zeitzone (für die mtime als Ersatz).
 fn local_naive(unix: i64) -> i64 {
-    use chrono::TimeZone;
-    match chrono::Local.timestamp_opt(unix, 0) {
-        chrono::LocalResult::Single(d) | chrono::LocalResult::Ambiguous(d, _) => d.naive_local().and_utc().timestamp(),
-        chrono::LocalResult::None => unix,
+    match jiff::Timestamp::from_second(unix) {
+        Ok(ts) => unix + i64::from(jiff::tz::TimeZone::system().to_offset(ts).seconds()),
+        Err(_) => unix,
     }
 }
 
-fn month_of(taken: i64) -> i64 {
-    use chrono::Datelike;
-    let d = chrono::DateTime::from_timestamp(taken, 0).unwrap_or_default();
-    i64::from(d.year()) * 12 + i64::from(d.month0())
+/// Unix-Zeit → fortlaufender Monat (`Jahr * 12 + Monat - 1`, UTC); außerhalb des Bereichs 1970-01.
+pub(crate) fn month_of(taken: i64) -> i64 {
+    let d = jiff::Timestamp::from_second(taken)
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+        .to_zoned_datetime(jiff::tz::TimeZone::UTC);
+    i64::from(d.year()) * 12 + i64::from(d.month()) - 1
 }
 
 /// Cursor `<taken>.<node_id>` (beides Ganzzahlen).
