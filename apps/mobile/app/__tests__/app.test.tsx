@@ -580,7 +580,7 @@ test('Unten Dateien/Fotos/Einstellungen; Geräte in den Einstellungen; Startseit
     await act(async () => { byLabel(r, 'Geräte').props.onPress(); });
     await flush();
     expect(allText(r)).toContain('Gekoppelte Geräte');
-    expect(allText(r)).toContain('von 477 GB frei');
+    expect(allText(r)).toContain('186 GB frei');
     // Erneutes Antippen des Tabs: zurück zur Liste
     await act(async () => { r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function')[2].props.onPress(); });
     await flush();
@@ -681,7 +681,7 @@ test('Videobearbeitung: Zeitangaben, Einpassen, Ton aus, Drehen, Speichern', asy
     await flush();
     expect(allText(r)).toContain('0:00 – 0:20');
     expect(byLabel(r, 'Speichern').props.disabled).toBe(true);
-    await act(async () => { pressable(r, '🔊 Ton an').props.onPress(); });
+    await act(async () => { pressable(r, 'Ton an').props.onPress(); });
     await act(async () => { byLabel(r, 'Drehen').props.onPress(); });
     expect(byLabel(r, 'Speichern').props.disabled).toBe(false);
     await act(async () => { byLabel(r, 'Speichern').props.onPress(); });

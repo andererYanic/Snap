@@ -48,27 +48,29 @@ export const Icon: Record<string, (p: P) => JSX.Element> = {
 export function FileGlyph({ name, dir, size = 20 }: { name: string; dir: boolean; size?: number }) {
   if (dir) {
     return (
-      <svg width={size} height={size} viewBox="0 0 20 20">
-        <path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h4l1.6 1.6H16.5A1.5 1.5 0 0 1 18 7.1V15a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 2 15V5.5Z" fill="#e8b33c" />
-        <path d="M2 8a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 18 8v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 2 15V8Z" fill="#f7c948" />
+      <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M2 5.6A1.6 1.6 0 0 1 3.6 4h4.2l1.6 1.6h7A1.6 1.6 0 0 1 18 7.2V8H2z" fill="var(--folder-tab)" />
+        <rect x="2" y="7" width="16" height="9.5" rx="1.6" fill="var(--folder)" />
       </svg>
     );
   }
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toLowerCase() : "";
   const color =
-    /^(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|svg|avif|raw|dng|cr[23]|nef|arw)$/.test(ext) ? "#3fa66b" :
-    /^(mp4|mkv|mov|webm|avi|m4v|3gp)$/.test(ext) ? "#c9483c" :
-    /^(mp3|flac|m4a|ogg|opus|wav|aac)$/.test(ext) ? "#9a55d6" :
-    /^(pdf)$/.test(ext) ? "#d64545" :
-    /^(docx?|odt|rtf|txt|md)$/.test(ext) ? "#3b72d9" :
-    /^(xlsx?|ods|csv)$/.test(ext) ? "#2e8b57" :
-    /^(zip|tar|gz|tgz|7z|rar|xz|zst|bz2|iso)$/.test(ext) ? "#a07a3c" :
-    "#8a8f9c";
+    /^(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|svg|avif|raw|dng|cr[23]|nef|arw)$/.test(ext) ? "#3f8f6a" :
+    /^(mp4|mkv|mov|webm|avi|m4v|3gp)$/.test(ext) ? "#b4533f" :
+    /^(mp3|flac|m4a|ogg|opus|wav|aac)$/.test(ext) ? "#8458b8" :
+    /^(pdf)$/.test(ext) ? "#c0392b" :
+    /^(docx?|odt|rtf)$/.test(ext) ? "#2f62b5" :
+    /^(txt|md|log|json|xml)$/.test(ext) ? "#8a8880" :
+    /^(xlsx?|ods|csv)$/.test(ext) ? "#2e7d4f" :
+    /^(pptx?|odp)$/.test(ext) ? "#c2662d" :
+    /^(zip|tar|gz|tgz|7z|rar|xz|zst|bz2|iso)$/.test(ext) ? "#8c6d3a" :
+    "#8a8880";
   return (
-    <svg width={size} height={size} viewBox="0 0 20 20">
-      <path d="M5 2h6.5L16 6.5V17a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z" fill="#fff" stroke="#c9ccd4" />
-      <path d="M11.5 2v3.5a1 1 0 0 0 1 1H16" fill="none" stroke="#c9ccd4" />
-      <rect x="5.5" y="11.5" width="9" height="4.5" rx="1" fill={color} />
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M5.2 2.5h6.3l4 4V17a.8.8 0 0 1-.8.8H5.2a.8.8 0 0 1-.8-.8V3.3a.8.8 0 0 1 .8-.8Z" fill="var(--layer-solid)" stroke="var(--stroke-strong)" strokeWidth="1.1" />
+      <path d="M11.5 2.5v3.2a.8.8 0 0 0 .8.8h3.2" fill="none" stroke="var(--stroke-strong)" strokeWidth="1.1" />
+      <rect x="6.5" y="13.2" width="6" height="1.6" rx=".8" fill={color} />
     </svg>
   );
 }

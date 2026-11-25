@@ -44,5 +44,6 @@ jest.mock('react-native-svg', () => {
   const { View } = require('react-native');
   const Svg = (p) => React.createElement(View, p);
   const Path = (p) => React.createElement(View, { testID: 'svg-path', d: p.d, stroke: p.stroke });
-  return { __esModule: true, default: Svg, Svg, Path };
+  const Shape = () => React.createElement(View, null);
+  return { __esModule: true, default: Svg, Svg, Path, Rect: Shape, Circle: Shape, Line: Shape, G: Svg };
 });

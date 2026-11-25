@@ -1,8 +1,9 @@
 # Android-App: Gestaltung und Bedienung
 
 Entscheidung vom 2026-11-07: **Snap-Optik mit Android-Bedienung**, also dieselbe Designsprache wie
-die Desktop-App (weicher Farbverlauf, durchscheinende Karten, eigene Symbole, hell/dunkel nach
-System). **Material You** (Farben aus dem Hintergrundbild, Android 12+) lässt sich in den
+die Desktop-App (eigene Symbole, hell/dunkel nach System). Seit 2026-11-25 gilt die ruhigere
+Gestaltung aus [`DESIGN.md`](DESIGN.md): Papierton statt Farbverlauf, deckende Flächen, ein
+Linien-Symbolsatz, Tintenpetrol als einzige Akzentfarbe. **Material You** (Farben aus dem Hintergrundbild, Android 12+) lässt sich in den
 Einstellungen einschalten.
 
 ## Grundsätze (aus UX-Forschung und Plattform-Richtlinien)

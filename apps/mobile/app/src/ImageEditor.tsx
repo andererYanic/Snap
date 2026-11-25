@@ -11,6 +11,7 @@ import { request, type EditParams } from './core';
 import { t } from './i18n';
 import { fadeIn, m, popIn } from './motion';
 import { Text } from './text';
+import { Icon } from './Icon';
 
 type Rect = { x: number; y: number; w: number; h: number };
 const FULL: Rect = { x: 0, y: 0, w: 1, h: 1 };
@@ -224,7 +225,7 @@ export default function ImageEditor({ path, name, onClose, notify }: {
         <StatusBar barStyle="light-content" />
         <View style={styles.top}>
           <Pressable onPress={() => onClose(false)} style={styles.btn} accessibilityLabel={t('Abbrechen')}>
-            <Text style={styles.btnText}>✕</Text>
+            <Icon name="close" color="#fff" />
           </Pressable>
           <Text style={styles.title} numberOfLines={1}>{name}</Text>
           <Pressable onPress={() => setSaving('ask')} disabled={!changed || saving === 'busy'} style={[styles.btn, !changed && styles.dim]} accessibilityLabel={t('Speichern')}>
@@ -280,7 +281,8 @@ export default function ImageEditor({ path, name, onClose, notify }: {
                 </Pressable>
               ))}
               <Pressable onPress={rotate} style={styles.chip} accessibilityLabel={t('Drehen')}>
-                <Text style={styles.chipText}>⟲ {t('Drehen')}</Text>
+                <Icon name="rotate" size={18} color="#EDEBE6" />
+                <Text style={styles.chipText}>{t('Drehen')}</Text>
               </Pressable>
             </ScrollView>
           )}
@@ -303,9 +305,9 @@ export default function ImageEditor({ path, name, onClose, notify }: {
             </ScrollView>
           )}
           <View style={styles.tabs}>
-            {([['crop', '⬚', t('Zuschneiden')], ['adjust', '☼', t('Anpassen')], ['filter', '◑', t('Filter')]] as const).map(([k, i, l]) => (
+            {([['crop', 'crop', t('Zuschneiden')], ['adjust', 'adjust', t('Anpassen')], ['filter', 'filter', t('Filter')]] as const).map(([k, i, l]) => (
               <Pressable key={k} onPress={() => setTab(k)} style={styles.tab} accessibilityRole="tab" accessibilityState={{ selected: tab === k }}>
-                <Text style={[styles.tabIcon, tab === k && styles.tabOn]}>{i}</Text>
+                <Icon name={i} size={22} color={tab === k ? '#72C7B2' : '#A3A19A'} />
                 <Text style={[styles.tabText, tab === k && styles.tabOn]}>{l}</Text>
               </Pressable>
             ))}
@@ -318,7 +320,7 @@ export default function ImageEditor({ path, name, onClose, notify }: {
             <Animated.View entering={m(popIn)} style={styles.sheet}>
               {saving === 'busy' ? (
                 <View style={styles.busy}>
-                  <ActivityIndicator color="#9fbcff" />
+                  <ActivityIndicator color="#72C7B2" />
                   <Text style={styles.sheetText}>{t('Wird gespeichert …')}</Text>
                 </View>
               ) : (
@@ -343,12 +345,12 @@ export default function ImageEditor({ path, name, onClose, notify }: {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0e0f12' },
+  root: { flex: 1, backgroundColor: '#121211' },
   top: { flexDirection: 'row', alignItems: 'center', paddingTop: 36, paddingHorizontal: 4, paddingBottom: 4 },
   btn: { minWidth: 48, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10 },
   btnText: { color: '#fff', fontSize: 22 },
-  title: { flex: 1, color: '#f1f1f4', fontSize: 16, fontWeight: '600', textAlign: 'center' },
-  save: { color: '#9fbcff', fontSize: 16, fontWeight: '700' },
+  title: { flex: 1, color: '#EDEBE6', fontSize: 16, fontWeight: '600', textAlign: 'center' },
+  save: { color: '#72C7B2', fontSize: 16, fontWeight: '700' },
   dim: { opacity: 0.4 },
   stage: { flex: 1, margin: 16, justifyContent: 'center', alignItems: 'center' },
   error: { color: '#eee', textAlign: 'center', padding: 24 },
@@ -365,32 +367,32 @@ const styles = StyleSheet.create({
   cornerRight: { right: 13, borderRightWidth: 4 },
   tools: { paddingHorizontal: 12, paddingBottom: 14 },
   chips: { gap: 8, paddingVertical: 8, paddingHorizontal: 4 },
-  chip: { minHeight: 40, paddingHorizontal: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center' },
-  chipOn: { backgroundColor: '#f1f1f4' },
-  chipText: { color: '#f1f1f4', fontSize: 14 },
-  chipTextOn: { color: '#0e0f12', fontWeight: '700' },
+  chip: { minHeight: 40, paddingHorizontal: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chipOn: { backgroundColor: '#EDEBE6' },
+  chipText: { color: '#EDEBE6', fontSize: 14 },
+  chipTextOn: { color: '#121211', fontWeight: '700' },
   slider: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 44 },
-  sliderLabel: { width: 92, color: '#f1f1f4', fontSize: 14 },
+  sliderLabel: { width: 92, color: '#EDEBE6', fontSize: 14 },
   track: { flex: 1, height: 44, justifyContent: 'center' },
   rail: { height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' },
-  fill: { position: 'absolute', height: 3, borderRadius: 2, backgroundColor: '#9fbcff' },
+  fill: { position: 'absolute', height: 3, borderRadius: 2, backgroundColor: '#72C7B2' },
   thumb: { position: 'absolute', width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
   sliderValue: { width: 40, alignItems: 'flex-end' },
-  sliderValueText: { color: '#b4b6be', fontSize: 13 },
+  sliderValueText: { color: '#A3A19A', fontSize: 13 },
   filter: { alignItems: 'center', gap: 6, padding: 6, borderRadius: 14 },
   filterOn: { backgroundColor: 'rgba(255,255,255,0.15)' },
   filterImg: { width: 64, height: 64, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)' },
-  filterText: { color: '#f1f1f4', fontSize: 12 },
+  filterText: { color: '#EDEBE6', fontSize: 12 },
   tabs: { flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.12)', paddingTop: 6, marginTop: 6 },
   tab: { flex: 1, minHeight: 50, alignItems: 'center', justifyContent: 'center', gap: 2 },
-  tabIcon: { color: '#b4b6be', fontSize: 18 },
-  tabText: { color: '#b4b6be', fontSize: 13 },
-  tabOn: { color: '#9fbcff', fontWeight: '700' },
+  tabIcon: { color: '#A3A19A', fontSize: 18 },
+  tabText: { color: '#A3A19A', fontSize: 13 },
+  tabOn: { color: '#72C7B2', fontWeight: '700' },
   scrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#24262e', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingVertical: 14, paddingBottom: 28 },
-  sheetTitle: { color: '#b4b6be', fontSize: 13, paddingHorizontal: 20, paddingBottom: 6 },
+  sheet: { backgroundColor: '#1F1F1D', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingVertical: 14, paddingBottom: 28 },
+  sheetTitle: { color: '#A3A19A', fontSize: 13, paddingHorizontal: 20, paddingBottom: 6 },
   sheetRow: { paddingHorizontal: 20, paddingVertical: 12, minHeight: 56 },
-  sheetText: { color: '#f1f1f4', fontSize: 16 },
-  sheetHint: { color: '#8a8f9c', fontSize: 13, marginTop: 2 },
+  sheetText: { color: '#EDEBE6', fontSize: 16 },
+  sheetHint: { color: '#8C8A83', fontSize: 13, marginTop: 2 },
   busy: { flexDirection: 'row', gap: 14, alignItems: 'center', padding: 20 },
 });

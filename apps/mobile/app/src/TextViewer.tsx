@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, View } from 'react-native';
 import { Text } from './text';
 import * as core from './core';
+import { Icon } from './Icon';
 import { t } from './i18n';
 import { fromDocx, parseMarkdown, type Block, type Inline } from './markdown';
 import type { Theme } from './theme';
@@ -90,7 +91,13 @@ function BlockView({ b, s, theme }: { b: Block; s: ReturnType<typeof styles>; th
         <View style={s.list}>
           {b.items.map((it, k) => (
             <View key={k} style={s.li}>
-              <Text style={[s.text, s.bullet]}>{it.checked !== undefined ? (it.checked ? '☑' : '☐') : b.ordered ? `${k + 1}.` : '•'}</Text>
+              {it.checked !== undefined ? (
+                <View style={[s.box, it.checked && s.boxOn]}>
+                  {it.checked && <Icon name="check" size={14} color={theme.onAccent as string} strokeWidth={2.6} />}
+                </View>
+              ) : (
+                <Text style={[s.text, s.bullet]}>{b.ordered ? `${k + 1}.` : '•'}</Text>
+              )}
               <Text style={[s.text, s.liText]}><Spans inline={it.inline} s={s} theme={theme} /></Text>
             </View>
           ))}
@@ -143,7 +150,7 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
         <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
         <View style={s.top}>
           <Pressable onPress={onClose} style={s.btn} accessibilityLabel={t('Schließen')}>
-            <Text style={s.btnText}>✕</Text>
+            <Icon name="back" color={theme.text as string} />
           </Pressable>
           <Text style={s.title} numberOfLines={1}>{name}</Text>
           {isDocx && <Text style={s.badge}>{t('Leseansicht')}</Text>}
@@ -153,7 +160,7 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
             </Pressable>
           )}
           <Pressable onPress={() => core.openFile(path).catch(() => {})} style={s.btn} accessibilityLabel={t('Öffnen mit …')}>
-            <Text style={s.btnText}>⋯</Text>
+            <Icon name="more" color={theme.text as string} strokeWidth={2.4} />
           </Pressable>
         </View>
         {doc === null ? (
@@ -192,18 +199,18 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
 
 const styles = themed((th: Theme) =>
   StyleSheet.create({
-    root: { flex: 1, backgroundColor: th.dark ? '#17181d' : '#fbfbfd' },
+    root: { flex: 1, backgroundColor: th.surface },
     fill: { flex: 1 },
     top: {
-      flexDirection: 'row', alignItems: 'center', paddingTop: 36, paddingHorizontal: 4, paddingBottom: 4,
-      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: th.stroke,
+      flexDirection: 'row', alignItems: 'center', paddingTop: 36, paddingHorizontal: 4, paddingBottom: 4, minHeight: 92,
+      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: th.line,
     },
-    btn: { minWidth: 48, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 },
+    btn: { minWidth: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 },
     btnText: { color: th.text, fontSize: 22 },
-    small: { color: th.accent, fontSize: 15, fontWeight: '600' },
-    title: { flex: 1, color: th.text, fontSize: 16, fontWeight: '600', marginHorizontal: 4 },
-    body: { padding: 18, paddingBottom: 60 },
-    text: { color: th.text, fontSize: 16, lineHeight: 24 },
+    small: { color: th.accent, fontSize: 14, fontWeight: '700' },
+    title: { flex: 1, color: th.text, fontSize: 17, lineHeight: 24, fontWeight: '700', marginHorizontal: 4 },
+    body: { paddingHorizontal: 22, paddingTop: 20, paddingBottom: 64 },
+    text: { color: th.text, fontSize: 16, lineHeight: 26 },
     mono: { fontFamily: 'monospace', fontSize: 14, lineHeight: 20 },
     para: { marginBottom: 12 },
     h1: { fontSize: 26, lineHeight: 32, fontWeight: '700', marginTop: 8, marginBottom: 12 },
@@ -211,15 +218,17 @@ const styles = themed((th: Theme) =>
     h3: { fontSize: 18, lineHeight: 25, fontWeight: '700', marginTop: 6, marginBottom: 8 },
     bold: { fontWeight: '700' },
     italic: { fontStyle: 'italic' },
-    code: { fontFamily: 'monospace', backgroundColor: th.accentSoft },
-    codeBox: { backgroundColor: th.dark ? '#22242b' : '#f0f1f5', borderRadius: 10, padding: 12, marginBottom: 12 },
-    codeText: { fontFamily: 'monospace', fontSize: 14, lineHeight: 20 },
+    code: { backgroundColor: th.surface2 },
+    codeBox: { backgroundColor: th.surface2, borderRadius: 8, padding: 12, marginBottom: 14 },
+    codeText: { fontSize: 14, lineHeight: 20 },
     quote: { borderLeftWidth: 3, paddingLeft: 12, marginBottom: 12 },
     quoteText: { color: th.text2, fontStyle: 'italic' },
     rule: { height: StyleSheet.hairlineWidth * 2, marginVertical: 14 },
     list: { marginBottom: 12 },
     li: { flexDirection: 'row', marginBottom: 4 },
-    bullet: { width: 26, color: th.text2 },
+    bullet: { width: 24, color: th.text3 },
+    box: { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: th.text3, marginTop: 4, marginRight: 8, justifyContent: 'center', alignItems: 'center' },
+    boxOn: { backgroundColor: th.accent, borderColor: th.accent },
     liText: { flex: 1 },
     note: { color: th.text2, fontSize: 13, marginTop: 16, textAlign: 'center' },
     error: { padding: 24, textAlign: 'center', color: th.text2 },
@@ -227,6 +236,6 @@ const styles = themed((th: Theme) =>
     table: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 6, overflow: 'hidden' },
     tr: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth },
     td: { minWidth: 90, maxWidth: 260, padding: 8, fontSize: 14, lineHeight: 20, borderRightWidth: StyleSheet.hairlineWidth },
-    badge: { color: th.text2, fontSize: 12, marginRight: 4 },
-    officeBtn: { alignSelf: 'center', marginTop: 20, minHeight: 48, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 14, backgroundColor: th.accentSoft },
+    badge: { color: th.text3, fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', marginRight: 6 },
+    officeBtn: { alignSelf: 'center', marginTop: 20, minHeight: 44, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 22, backgroundColor: th.accentSoft },
   }));

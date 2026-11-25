@@ -110,7 +110,6 @@ export default function App() {
     <SafeAreaProvider>
         <View style={s.bg}>
           {bar}
-          <View style={s.tint} />
           <SafeAreaView style={s.center}>
             <View style={s.card}>
               <Text style={s.title}>Snap</Text>
@@ -158,7 +157,6 @@ export default function App() {
       <FontContext.Provider value={fontFamily}>
       <View style={s.bg}>
         {bar}
-        <View style={s.tint} />
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab === 'photos' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
@@ -208,31 +206,29 @@ export default function App() {
 const styles = themed((th: Theme) =>
   StyleSheet.create({
     bg: { flex: 1, backgroundColor: th.bg },
-    // Weicher Farbverlauf der Snap-Optik (zweite Farbe als Schleier oben)
-    tint: { position: 'absolute', top: 0, left: 0, right: 0, height: '55%', backgroundColor: th.bgTint, opacity: 0.6, borderBottomLeftRadius: 400, borderBottomRightRadius: 200 },
     fill: { flex: 1 },
     center: { flex: 1, justifyContent: 'center', padding: 24 },
-    card: { padding: 24, borderRadius: 24, backgroundColor: th.card, borderWidth: StyleSheet.hairlineWidth, borderColor: th.stroke },
-    title: { color: th.text, fontSize: 28, fontWeight: '700', marginBottom: 12 },
+    card: { paddingVertical: 28, paddingHorizontal: 24, borderRadius: 16, backgroundColor: th.surface },
+    title: { color: th.text, fontSize: 26, lineHeight: 32, fontWeight: '700', marginBottom: 12 },
     muted: { color: th.text2, fontSize: 15, lineHeight: 22 },
     error: { color: th.danger, fontSize: 15 },
-    report: { maxHeight: 260, marginTop: 12, padding: 10, borderRadius: 10, backgroundColor: th.accentSoft },
-    reportText: { color: th.text, fontSize: 12, fontFamily: 'monospace' },
-    btn: { minHeight: 52, justifyContent: 'center', alignItems: 'center', borderRadius: 16, backgroundColor: th.accent, marginTop: 20 },
+    report: { maxHeight: 260, marginTop: 12, padding: 12, borderRadius: 8, backgroundColor: th.surface2 },
+    reportText: { color: th.text, fontSize: 12 },
+    btn: { minHeight: 48, justifyContent: 'center', alignItems: 'center', borderRadius: 24, backgroundColor: th.accent, marginTop: 24, paddingHorizontal: 24 },
     btnText: { color: th.onAccent, fontSize: 16, fontWeight: '600' },
-    header: { color: th.text, fontSize: 26, fontWeight: '700', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
-    nav: { flexDirection: 'row', backgroundColor: th.card, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.stroke },
-    slot: { flex: 1, flexDirection: 'row', minHeight: 64 },
-    navItem: { flex: 1, alignItems: 'center', paddingTop: 10, paddingBottom: 8, minHeight: 64 },
-    navPill: { width: 60, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+    header: { color: th.text, fontSize: 26, lineHeight: 32, fontWeight: '700', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+    nav: { flexDirection: 'row', backgroundColor: th.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line },
+    slot: { flex: 1, flexDirection: 'row', minHeight: 68 },
+    navItem: { flex: 1, alignItems: 'center', paddingTop: 10, paddingBottom: 10, minHeight: 68 },
+    navPill: { width: 56, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
     navPillOn: { backgroundColor: th.accentSoft },
-    navLabel: { color: th.text2, fontSize: 12, marginTop: 4 },
-    navLabelOn: { color: th.text, fontWeight: '600' },
+    navLabel: { color: th.text2, fontSize: 12, lineHeight: 16, marginTop: 4 },
+    navLabelOn: { color: th.text, fontWeight: '700' },
     toast: {
-      position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', minHeight: 52,
-      paddingLeft: 16, borderRadius: 14, backgroundColor: th.dark ? '#e8e8ee' : '#2b2d35', elevation: 8,
+      position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', minHeight: 48,
+      paddingLeft: 16, borderRadius: 10, backgroundColor: th.dark ? '#EDEBE6' : '#2A2A27', elevation: 6,
     },
-    toastText: { flex: 1, color: th.dark ? '#1b1b1f' : '#f1f1f4', fontSize: 14 },
+    toastText: { flex: 1, color: th.dark ? '#1A1A18' : '#F4F2ED', fontSize: 14, lineHeight: 20, paddingVertical: 12 },
     toastBtn: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 16 },
-    link: { color: th.dark ? '#3b6fe0' : '#9db8ff', fontSize: 15, fontWeight: '700' },
+    link: { color: th.dark ? '#1F6B5C' : '#8FD8C5', fontSize: 15, fontWeight: '700' },
   }));

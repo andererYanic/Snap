@@ -631,3 +631,15 @@ Messung (`perf.rs::pdf_mark_sign_verify`, Release, PDF mit 200 Seiten, 0,8 MB):
   blockiert nicht. Argon2 ist absichtlich teuer (Schutz des Schlüssels gegen Raten).
 - Live-Zeichnen: ein SVG-Pfad je Strich, Punkte ausgedünnt (Mindestabstand 0,2 % der Fläche);
   Prüfen beim Öffnen läuft parallel zum Laden der Seiten.
+
+## Review 33 – Gestaltung: SVG-Symbole in Listen (2026-11-25)
+
+- Neu je Listenzeile: ein Ordner- bzw. Dateisymbol (`FolderShape`/`Glyph`) und bei Ordnern ein
+  Chevron, beide als `react-native-svg` mit einem bis zwei Pfaden. Die Komponenten sind mit
+  `memo` umhüllt; Zeilen haben feste Höhe (64 dp, `getItemLayout`), Neuzeichnen beim Scrollen
+  entfällt.
+- Entfernt: Farbverlaufs-Ebene hinter allen Seiten und die halbtransparenten Karten – weniger
+  Überzeichnung (Overdraw) je Bild.
+- Prüfung mit `apps/mobile/app/e2e/perf.sh` (400 Dateien, Wischen, Ziehen-Auswählen, `gfxinfo`)
+  auf dem Gerät steht aus; der Kern ist unverändert (keine neuen Abfragen, kein Einfluss auf die
+  16-ms-Grenze der Kernaufrufe).

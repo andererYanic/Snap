@@ -22,6 +22,7 @@ const ease = (v: number) => {
   return withTiming(v, { duration: 220, easing: EASE_OUT });
 };
 import { m } from './motion';
+import { Icon } from './Icon';
 
 export interface MediaItem {
   path: string;
@@ -98,7 +99,7 @@ export default function Viewer({ items, start, onClose, onEdit }: {
         {chrome && item && (
           <Animated.View entering={m(FadeIn.duration(150))} exiting={m(FadeOut.duration(150))} style={styles.top}>
             <Pressable onPress={onClose} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Schließen')}>
-              <Text style={styles.btnText}>✕</Text>
+              <Icon name="back" color="#fff" />
             </Pressable>
             <View style={styles.titleBox}>
               <Text style={styles.title} numberOfLines={1}>{item.name}</Text>
@@ -106,16 +107,16 @@ export default function Viewer({ items, start, onClose, onEdit }: {
             </View>
             {onEdit && !item.uri && (
               <Pressable onPress={() => onEdit(item)} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Bearbeiten')}>
-                <Text style={styles.btnSmall}>{t('Bearbeiten')}</Text>
+                <Icon name="edit" size={22} color="#fff" />
               </Pressable>
             )}
             {!item.uri && (
               <Pressable onPress={() => core.shareFiles([item.path]).catch(() => {})} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Teilen')}>
-                <Text style={styles.btnSmall}>{t('Teilen')}</Text>
+                <Icon name="share" size={22} color="#fff" />
               </Pressable>
             )}
             <Pressable onPress={() => core.openFile(item.path).catch(() => {})} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Öffnen mit …')}>
-              <Text style={styles.btnSmall}>⋯</Text>
+              <Icon name="more" size={22} color="#fff" strokeWidth={2.4} />
             </Pressable>
           </Animated.View>
         )}

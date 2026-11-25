@@ -8,6 +8,7 @@ import { monthYear, request, shortDate, type TimelineItem } from './core';
 import { locale, t } from './i18n';
 import type { Theme } from './theme';
 import { themed } from './ui';
+import { Icon } from './Icon';
 import { loadThumb, Thumb } from './thumbs';
 import Editor from './Editor';
 import Viewer from './Viewer';
@@ -15,7 +16,7 @@ import { m } from './motion';
 
 const COLS = 4;
 
-type Row = { head: string } | { cells: TimelineItem[]; offset: number };
+type Row = { head: string; count: number } | { cells: TimelineItem[]; offset: number };
 
 export default function Photos({ theme, notify }: { theme: Theme; notify?: (text: string, undo?: () => void) => void }) {
   const [items, setItems] = useState<TimelineItem[]>([]);
@@ -23,7 +24,7 @@ export default function Photos({ theme, notify }: { theme: Theme; notify?: (text
   const [loading, setLoading] = useState(true);
   const [viewer, setViewer] = useState<number | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
-  const size = Math.floor((Dimensions.get('window').width - 24 - (COLS - 1) * 3) / COLS);
+  const size = Math.floor((Dimensions.get('window').width - 4 - (COLS - 1) * 2) / COLS);
   const s = styles(theme);
 
   const more = useCallback(async (cursor: string | null) => {
@@ -50,13 +51,20 @@ export default function Photos({ theme, notify }: { theme: Theme; notify?: (text
           out.push({ cells: cur, offset: start });
         }
         if (m !== month) {
-          out.push({ head: m });
+          out.push({ head: m, count: 0 });
           month = m;
         }
         cur = [];
         start = i;
       }
       cur.push(it);
+      for (let j = out.length - 1; j >= 0; j--) {
+        const r = out[j];
+        if ('head' in r) {
+          r.count++;
+          break;
+        }
+      }
     });
     if (cur.length) {
       out.push({ cells: cur, offset: start });
@@ -76,21 +84,36 @@ export default function Photos({ theme, notify }: { theme: Theme; notify?: (text
         onEndReachedThreshold={2}
         windowSize={9}
         initialNumToRender={12}
-        ListEmptyComponent={loading ? undefined : <Text style={s.empty}>{t('Noch keine Fotos')}</Text>}
+        ListEmptyComponent={loading ? undefined : (
+          <View style={s.emptyBox}>
+            <View style={s.emptyIcon}>
+              <Icon name="photos" size={28} color={theme.text3 as string} />
+            </View>
+            <Text style={s.emptyTitle}>{t('Noch keine Fotos')}</Text>
+            <Text style={s.empty}>{t('Fotos und Videos aus Kamera und Bilderordnern erscheinen hier nach Aufnahmedatum.')}</Text>
+          </View>
+        )}
         renderItem={({ item: r }) =>
           'head' in r ? (
-            <Animated.View entering={m(FadeIn.duration(200))}><Text style={s.head}>{r.head}</Text></Animated.View>
+            <Animated.View entering={m(FadeIn.duration(200))} style={s.headRow}>
+              <Text style={s.head}>{r.head}</Text>
+              <Text style={s.count}>{r.count}</Text>
+            </Animated.View>
           ) : (
             <View style={s.row}>
               {r.cells.map((it, k) => (
                 <Pressable
                   key={it.path}
                   onPress={() => setViewer(r.offset + k)}
-                  style={({ pressed }) => [s.cell, { width: size, height: size, transform: [{ scale: pressed ? 0.96 : 1 }] }]}
+                  style={({ pressed }) => [s.cell, { width: size, height: size, opacity: pressed ? 0.8 : 1 }]}
                   accessibilityLabel={shortDate(it.taken, locale(), true)}
                 >
                   <Thumb path={it.path} edge={256} style={s.img} />
-                  {it.video && <Text style={s.badge}>▶</Text>}
+                  {it.video && (
+                    <View style={s.badge}>
+                      <Icon name="play" size={12} color="#fff" fill="#fff" strokeWidth={1.2} />
+                    </View>
+                  )}
                 </Pressable>
               ))}
             </View>
@@ -125,11 +148,16 @@ export default function Photos({ theme, notify }: { theme: Theme; notify?: (text
 const styles = themed((th: Theme) =>
   StyleSheet.create({
     fill: { flex: 1 },
-    list: { padding: 12, paddingBottom: 40 },
-    empty: { color: th.text2, textAlign: 'center', marginTop: 60, fontSize: 15 },
-    head: { color: th.text, fontSize: 17, fontWeight: '600', marginTop: 14, marginBottom: 8 },
-    row: { flexDirection: 'row', gap: 3, marginBottom: 3 },
-    cell: { borderRadius: 6, overflow: 'hidden', backgroundColor: th.accentSoft },
+    list: { paddingHorizontal: 2, paddingBottom: 40 },
+    emptyBox: { alignItems: 'center', paddingTop: 96, paddingHorizontal: 40, gap: 6 },
+    emptyIcon: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 10, backgroundColor: th.surface2 },
+    emptyTitle: { color: th.text, fontSize: 17, lineHeight: 24, fontWeight: '700' },
+    empty: { color: th.text2, textAlign: 'center', fontSize: 13, lineHeight: 18 },
+    headRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 20, paddingBottom: 10 },
+    head: { color: th.text, fontSize: 16, lineHeight: 22, fontWeight: '700' },
+    count: { color: th.text3, fontSize: 13 },
+    row: { flexDirection: 'row', gap: 2, marginBottom: 2 },
+    cell: { overflow: 'hidden', backgroundColor: th.surface2 },
     img: { width: '100%', height: '100%' },
-    badge: { position: 'absolute', right: 6, bottom: 4, color: '#fff', fontSize: 14, textShadowColor: '#000', textShadowRadius: 4 },
+    badge: { position: 'absolute', right: 6, bottom: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' },
   }));

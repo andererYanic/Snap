@@ -5,6 +5,7 @@ import { BackHandler, Dimensions, Pressable, StyleSheet, View } from 'react-nati
 import { Text } from './text';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import type { Theme } from './theme';
+import { Icon, type IconName } from './Icon';
 import { m, popIn, popOut } from './motion';
 
 export interface MenuAction {
@@ -14,10 +15,11 @@ export interface MenuAction {
   disabled?: boolean;
   /** Trennlinie davor */
   separate?: boolean;
+  icon?: IconName;
 }
 
-const WIDTH = 236;
-const ROW = 50;
+const WIDTH = 248;
+const ROW = 48;
 
 export default function ContextMenu({ x, y, actions, onClose, theme, passThrough = false }: {
   x: number; y: number; actions: MenuAction[]; onClose: () => void; theme: Theme;
@@ -51,13 +53,13 @@ export default function ContextMenu({ x, y, actions, onClose, theme, passThrough
         exiting={m(popOut)}
         style={[
           styles.menu,
-          { left, top, width: WIDTH, backgroundColor: theme.dark ? '#2b2d36' : '#ffffff', borderColor: theme.stroke },
+          { left, top, width: WIDTH, backgroundColor: theme.surface, borderColor: theme.line },
           { transformOrigin: below ? 'top left' : 'bottom left' } as any,
         ]}
       >
         {actions.map((a) => (
           <View key={a.label}>
-            {a.separate && <View style={[styles.sep, { backgroundColor: theme.stroke }]} />}
+            {a.separate && <View style={[styles.sep, { backgroundColor: theme.line }]} />}
             <Pressable
               disabled={a.disabled}
               onPress={() => {
@@ -68,6 +70,7 @@ export default function ContextMenu({ x, y, actions, onClose, theme, passThrough
               style={[styles.row, a.disabled && styles.dim]}
               accessibilityRole="menuitem"
             >
+              {a.icon ? <Icon name={a.icon} size={20} color={(a.danger ? theme.danger : theme.text2) as string} /> : null}
               <Text style={[styles.text, { color: a.danger ? theme.danger : theme.text }]}>{a.label}</Text>
             </Pressable>
           </View>
@@ -78,13 +81,13 @@ export default function ContextMenu({ x, y, actions, onClose, theme, passThrough
 }
 
 const styles = StyleSheet.create({
-  scrim: { backgroundColor: 'rgba(0,0,0,0.18)' },
+  scrim: { backgroundColor: 'rgba(10,10,9,0.14)' },
   menu: {
-    position: 'absolute', borderRadius: 16, paddingVertical: 6, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden',
-    elevation: 12, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 18, shadowOffset: { width: 0, height: 8 },
+    position: 'absolute', borderRadius: 12, paddingVertical: 6, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden',
+    elevation: 8, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
   },
-  row: { height: ROW, justifyContent: 'center', paddingHorizontal: 18 },
-  text: { fontSize: 16 },
-  sep: { height: StyleSheet.hairlineWidth, marginVertical: 4 },
+  row: { height: ROW, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16 },
+  text: { fontSize: 15 },
+  sep: { height: StyleSheet.hairlineWidth, marginVertical: 6 },
   dim: { opacity: 0.4 },
 });
