@@ -28,6 +28,8 @@ interface Props {
   theme: Theme;
   root: string;
   notify: (text: string, undo?: () => void) => void;
+  /** Snap Drop: Dateien an Geräte in der Nähe senden. */
+  onDrop?: (paths: string[]) => void;
   selectionChanged: (active: boolean) => void;
   /**
    * Platz der unteren Leiste (feste Höhe): Files stellt dort die Aktionsleiste bzw. „Hier
@@ -56,7 +58,7 @@ const FOLDERS: [string, string][] = [
   ['Movies', 'Videos'],
 ];
 
-export default function Files({ theme, root, notify, selectionChanged, bottomSlot, onFont, home = 0 }: Props) {
+export default function Files({ theme, root, notify, selectionChanged, bottomSlot, onFont, onDrop, home = 0 }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [items, setItems] = useState<Item[]>([]);
@@ -613,6 +615,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     // Je nach Dateiformat
     ...(single && single.kind === 'File' ? formatActions(single) : []),
     { icon: 'share', label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
+    ...(onDrop ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }] : []),
     { icon: 'copy', label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { icon: 'move', label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { icon: 'rename', label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
@@ -690,6 +693,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     { icon: 'more' as const, label: t('Mehr'), onPress: () => setSheet('selection') },
   ];
   const selectionActions: SheetAction[] = [
+    ...(onDrop && !selected.some((e) => e.kind === 'Dir')
+      ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }]
+      : []),
     ...(zips.length ? [{ label: zips.length === 1 ? t('Entpacken') : t('{n} Archive entpacken', { n: zips.length }), onPress: () => extractAll(zips) }] : []),
     { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
     { label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },

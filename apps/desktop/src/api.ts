@@ -273,3 +273,30 @@ export async function applyFont(): Promise<void> {
   }
   root.style.removeProperty("--font");
 }
+
+// ---------------------------------------------------------------- Snap Drop
+
+export type DropMode = "off" | "contacts" | "everyone";
+export interface DropStatus { mode: DropMode; until: number | null; name: string; fingerprint: string; dir: string; code: string | null }
+export interface NearbyPeer { id: string; name: string | null; kind: "phone" | "tablet" | "laptop" | "desktop" | null; contact: string | null; via: string; offline: boolean }
+export interface IncomingOffer { id: number; name: string; contact: string | null; code: string; files: { name: string; size: number; mime: string }[]; total: number; preview: boolean; expires_at: number }
+export interface DropContact { key: string; name: string; fingerprint: string; added_at: number; last_seen: number }
+export interface DropBlocked { key: string; name: string; blocked_at: number }
+export interface DropSent { id: number; ok: boolean; error: string | null; code: string | null }
+
+export const drop = {
+  status: () => invoke<DropStatus>("drop_status"),
+  setVisibility: (mode: DropMode) => invoke<DropStatus>("drop_set_visibility", { mode }),
+  browse: (on: boolean) => invoke<{ peers: NearbyPeer[] }>("drop_browse", { on }),
+  nearby: () => invoke<{ peers: NearbyPeer[] }>("drop_nearby").then((r) => r.peers),
+  addCode: (code: string) => invoke<NearbyPeer>("drop_add_code", { code }),
+  send: (peer: string, paths: string[]) => invoke<DropSent>("drop_send", { peer, paths }),
+  offers: () => invoke<{ offers: IncomingOffer[] }>("drop_offers").then((r) => r.offers),
+  respond: (id: number, accept: boolean, block = false) => invoke<unknown>("drop_respond", { id, accept, block }),
+  preview: (id: number) => invoke<{ png: string | null }>("drop_preview", { id }).then((r) => r.png),
+  contacts: () => invoke<{ contacts: DropContact[] }>("drop_contacts").then((r) => r.contacts),
+  saveContact: (id: number) => invoke<DropContact>("drop_save_contact", { id }),
+  removeContact: (key: string) => invoke<unknown>("drop_remove_contact", { key }),
+  blocked: () => invoke<{ blocked: DropBlocked[] }>("drop_blocked").then((r) => r.blocked),
+  unblock: (key: string) => invoke<unknown>("drop_unblock", { key }),
+};

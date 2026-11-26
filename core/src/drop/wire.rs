@@ -322,6 +322,8 @@ pub struct ConnectInfo {
     /// Über Relais erreichbar (QR-Code über das Internet).
     pub relay: bool,
     pub addrs: Vec<SocketAddr>,
+    /// Anzeigename – nur im Modus „Alle“ (für Geräte, die nur über Bluetooth erreichbar sind).
+    pub name: Option<String>,
 }
 
 impl ConnectInfo {
@@ -346,6 +348,7 @@ impl ConnectInfo {
             }
             b.extend_from_slice(&a.port().to_be_bytes());
         }
+        put_str(&mut b, self.name.as_deref().map_or("", |n| truncate_utf8(n, MAX_DISPLAY_NAME)));
         b
     }
 
@@ -386,7 +389,14 @@ impl ConnectInfo {
             }
             addrs.push(SocketAddr::new(ip, port));
         }
-        Ok(Self { endpoint, token, can_join_hotspot: flags & 1 != 0, relay: flags & 2 != 0, addrs })
+        let raw = r.str(MAX_DISPLAY_NAME)?;
+        // Nur kanonische Namen (sonst wäre die Kodierung nicht eindeutig).
+        let name = match raw {
+            "" => None,
+            n if display_name(n) == n => Some(n.to_string()),
+            _ => api_bail!(InvalidInput, "Verbindungsdaten enthalten einen ungültigen Namen"),
+        };
+        Ok(Self { endpoint, token, can_join_hotspot: flags & 1 != 0, relay: flags & 2 != 0, addrs, name })
     }
 
     /// Als Text für QR-Codes und zum Abtippen.
@@ -552,6 +562,7 @@ mod tests {
             can_join_hotspot: true,
             relay: false,
             addrs: vec!["192.168.1.20:4433".parse().unwrap(), "[fe80::1]:9".parse().unwrap()],
+            name: Some("Annas Telefon".into()),
         }
     }
 
@@ -568,6 +579,13 @@ mod tests {
         }
         let mut b = i.encode();
         b[1] = 0xff;
+        assert!(ConnectInfo::decode(&b).is_err());
+        let ohne = ConnectInfo { name: None, ..i.clone() };
+        assert_eq!(ConnectInfo::decode(&ohne.encode()).unwrap(), ohne);
+        // Nicht kanonischer Name (Steuerzeichen) wird abgewiesen.
+        let mut b = ohne.encode();
+        b.pop();
+        b.extend_from_slice(&[2, b'a', b'\n']);
         assert!(ConnectInfo::decode(&b).is_err());
     }
 

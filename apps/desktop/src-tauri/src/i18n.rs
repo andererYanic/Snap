@@ -66,7 +66,11 @@ mod tests {
                     let mut chars = rest.chars();
                     while let Some(c) = chars.next() {
                         match c {
-                            '\\' => out.push(chars.next().unwrap_or_default()),
+                            '\\' => out.push(match chars.next() {
+                                Some('n') => '\n',
+                                Some('t') => '\t',
+                                c => c.unwrap_or_default(),
+                            }),
                             '"' => break,
                             c => out.push(c),
                         }
@@ -104,7 +108,11 @@ mod tests {
                 let mut chars = rest.chars();
                 while let Some(c) = chars.next() {
                     match c {
-                        '\\' => out.push(chars.next().unwrap_or_default()),
+                        '\\' => out.push(match chars.next() {
+                            Some('n') => '\n',
+                            Some('t') => '\t',
+                            c => c.unwrap_or_default(),
+                        }),
                         '\'' => break,
                         c => out.push(c),
                     }

@@ -6,7 +6,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
 
 class SnapPackage : ReactPackage {
-  override fun createNativeModules(ctx: ReactApplicationContext): List<NativeModule> = listOf(SnapCoreModule(ctx))
+  override fun createNativeModules(ctx: ReactApplicationContext): List<NativeModule> = listOf(SnapCoreModule(ctx), SnapDropModule(ctx))
 
   override fun createViewManagers(ctx: ReactApplicationContext): List<ViewManager<*, *>> = emptyList()
 }

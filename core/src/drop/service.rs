@@ -118,6 +118,10 @@ pub struct NearbyPeer {
     pub contact: Option<String>,
     /// `lan`, `bluetooth` oder `code`.
     pub via: String,
+    /// Nur über Bluetooth gefunden und per Netz nicht erreichbar: Senden über den Offline-Weg
+    /// (Hotspot). Name stammt dann aus Bluetooth und ist unbestätigt.
+    #[serde(default)]
+    pub offline: bool,
 }
 
 /// Eingehendes Angebot für die Oberfläche.
@@ -197,6 +201,9 @@ impl Target {
 struct NearbyEntry {
     target: Target,
     via: &'static str,
+    /// Name aus Bluetooth (unbestätigt), falls das Gerät per Netz nicht erreichbar ist.
+    ble_name: Option<String>,
+    offline: bool,
     seen: Instant,
     card: Option<(String, DeviceKind, Option<String>)>,
     hidden: bool,
@@ -437,12 +444,28 @@ impl DropService {
             let guard = self.session.lock().await;
             wait_for_addrs(&guard.as_ref()?.endpoint).await
         };
+        let everyone = self.mode() == Mode::Everyone;
         let mut lock = self.session_info.lock().unwrap_or_else(|e| e.into_inner());
         let info = lock.as_mut()?;
         if !addrs.is_empty() {
             info.addrs = addrs;
         }
-        Some(info.clone())
+        let mut out = info.clone();
+        out.name = everyone.then(|| super::wire::display_name(&self.opts.name));
+        Some(out)
+    }
+
+    /// Startet die Sitzung neu (neuer Endpunkt, neue Adressen) – z. B. nach dem Beitritt zu einem
+    /// Hotspot, damit neue Sockets das neue Netz nutzen. Die Vorab-Annahme bleibt erhalten.
+    pub async fn refresh_session(&self) -> Result<Option<ConnectInfo>> {
+        if self.mode() == Mode::Off {
+            return Ok(None);
+        }
+        if let Some(old) = self.session.lock().await.take() {
+            let _ = old.router.shutdown().await;
+        }
+        self.ensure_session().await?;
+        Ok(self.connect_info().await)
     }
 
     fn endpoint_builder(&self) -> Result<iroh::endpoint::Builder> {
@@ -493,6 +516,7 @@ impl DropService {
             can_join_hotspot: self.opts.can_join_hotspot,
             relay: self.opts.use_relay,
             addrs,
+            name: None,
         };
         *self.session_info.lock().unwrap_or_else(|e| e.into_inner()) = Some(info);
         *guard = Some(Session { endpoint, router, token, _advert: advert, started: Instant::now() });
@@ -940,6 +964,7 @@ impl DropService {
             can_join_hotspot: false,
             relay: false,
             addrs: wait_for_addrs(&ep).await,
+            name: None,
         };
         let req = super::wire::HotspotRequest {
             name: super::wire::display_name(&self.opts.name),
@@ -1171,6 +1196,27 @@ impl DropService {
 
     /// Verbindungsdaten von außen (Bluetooth-GATT oder QR-Code) übernehmen.
     pub fn add_peer(&self, info: &ConnectInfo, via: &'static str) {
+        if let Some(name) = &info.name {
+            let mut n = self.nearby.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(e) = n.get_mut(&info.endpoint) {
+                e.ble_name = Some(name.clone());
+            } else if n.len() < MAX_NEARBY {
+                n.insert(
+                    info.endpoint,
+                    NearbyEntry {
+                        target: Target { endpoint: info.endpoint, addrs: info.addrs.clone() },
+                        via,
+                        ble_name: Some(name.clone()),
+                        offline: false,
+                        seen: Instant::now(),
+                        card: None,
+                        hidden: false,
+                        probed: None,
+                        probing: false,
+                    },
+                );
+            }
+        }
         self.add_nearby(Target { endpoint: info.endpoint, addrs: info.addrs.clone() }, via);
     }
 
@@ -1188,6 +1234,8 @@ impl DropService {
             let e = n.entry(key).or_insert(NearbyEntry {
                 target: target.clone(),
                 via,
+                ble_name: None,
+                offline: false,
                 seen: Instant::now(),
                 card: None,
                 hidden: false,
@@ -1215,6 +1263,7 @@ impl DropService {
             match card {
                 Ok(c) => {
                     if let Some(e) = n.get_mut(&key) {
+                        e.offline = false;
                         e.probing = false;
                         e.probed = Some(Instant::now());
                         e.hidden = c.is_none();
@@ -1222,7 +1271,17 @@ impl DropService {
                     }
                 }
                 Err(_) => {
-                    n.remove(&key);
+                    // Über Bluetooth gefundene Geräte bleiben als „offline erreichbar“ stehen.
+                    match n.get_mut(&key) {
+                        Some(e) if e.ble_name.is_some() => {
+                            e.probing = false;
+                            e.probed = Some(Instant::now());
+                            e.offline = true;
+                        }
+                        _ => {
+                            n.remove(&key);
+                        }
+                    }
                 }
             }
             drop(n);
@@ -1237,6 +1296,16 @@ impl DropService {
             .iter()
             .filter(|(_, e)| !e.hidden && e.seen.elapsed() < NEARBY_TTL)
             .filter_map(|(k, e)| {
+                if e.offline {
+                    return Some(NearbyPeer {
+                        id: hex(k.as_bytes()),
+                        name: e.ble_name.clone(),
+                        kind: None,
+                        contact: None,
+                        via: e.via.into(),
+                        offline: true,
+                    });
+                }
                 let (name, kind, contact) = e.card.clone()?;
                 Some(NearbyPeer {
                     id: hex(k.as_bytes()),
@@ -1244,6 +1313,7 @@ impl DropService {
                     kind: Some(kind),
                     contact,
                     via: e.via.into(),
+                    offline: false,
                 })
             })
             .collect();
@@ -1264,6 +1334,8 @@ impl DropService {
             NearbyEntry {
                 target,
                 via: "code",
+                ble_name: None,
+                offline: false,
                 seen: Instant::now(),
                 card,
                 hidden: false,
@@ -1277,6 +1349,7 @@ impl DropService {
             kind: Some(kind),
             contact,
             via: "code".into(),
+            offline: false,
         })
     }
 }

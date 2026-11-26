@@ -8,6 +8,7 @@ import {
 import type { Clipboard, Tab, Toast } from "./App";
 import { FileGlyph, Icon } from "./icons";
 import { LinkDialog } from "./Tools";
+import { DropSendDialog } from "./Drop";
 
 interface Item {
   path: string;
@@ -57,6 +58,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
   const [preview, setPreview] = useState<{ item: Item; video?: string } | null>(null);
   const [dropOver, setDropOver] = useState(false);
   const [linking, setLinking] = useState<string | null>(null);
+  const [dropping, setDropping] = useState<string[] | null>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -505,6 +507,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
               <button onClick={() => setClip({ mode: "copy", paths: selected.map((i) => i.path) })}><Icon.copy /> {t("Kopieren")} <span className="key">{t("Strg+C")}</span></button>
               <button disabled={selected.length !== 1} onClick={() => setRenaming(menu.on!.path)}><Icon.rename /> {t("Umbenennen")} <span className="key">F2</span></button>
               <hr />
+              {!selected.some((i) => i.dir) && <button onClick={() => setDropping(selected.map((i) => i.path))}><Icon.nearby /> {t("In der Nähe senden …")}</button>}
               {!menu.on.dir && selected.length === 1 && <button onClick={() => setLinking(menu.on!.path)}><Icon.link /> {t("Link erstellen …")}</button>}
               {menu.on.dir && selected.length === 1 && <button onClick={() => openTab("storage", menu.on!.path)}><Icon.chart /> {t("Speicher analysieren")}</button>}
               <hr />
@@ -530,6 +533,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
       )}
 
       {linking && createPortal(<LinkDialog path={linking} notify={notify} onClose={() => setLinking(null)} />, document.body)}
+      {dropping && createPortal(<DropSendDialog paths={dropping} notify={notify} onClose={() => setDropping(null)} />, document.body)}
 
       {preview && createPortal(
         <div className="overlay" onClick={() => setPreview(null)} onKeyDown={(e) => e.key === "Escape" && setPreview(null)} tabIndex={-1} ref={(el) => el?.focus()}>

@@ -939,3 +939,100 @@ test('Gesten-Callbacks rufen nur Worklets oder runOnJS auf (Absturz „Remote Fu
     expect({ f, worklet: !!m }).toEqual({ f, worklet: true });
   }
 });
+
+test('Snap Drop: Sichtbarkeit, Angebot mit Prüfcode annehmen, Kontakt speichern, aus dem Dateimenü senden', async () => {
+  const { DeviceEventEmitter } = require('react-native');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let mode = 'off';
+  const peer = { id: 'ab'.repeat(32), name: 'Ben', kind: 'laptop', contact: null, via: 'lan', offline: false };
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    const status = () => ({ DropStatus: { mode, until: mode === 'everyone' ? Math.floor(Date.now() / 1000) + 600 : null, name: 'Mein Telefon', fingerprint: 'a1b2 c3d4 e5f6', dir: '/storage/emulated/0/Download/Snap Drop', code: mode === 'off' ? null : 'snapdrop1-abc' } });
+    if (req === 'DropStatus') return JSON.stringify(status());
+    if (req.DropSetVisibility) {
+      calls.push(req);
+      mode = req.DropSetVisibility.mode;
+      return JSON.stringify(status());
+    }
+    if (req === 'DropContacts') return JSON.stringify({ DropContacts: { contacts: [] } });
+    if (req === 'DropBlocked') return JSON.stringify({ DropBlocked: { blocked: [] } });
+    if (req === 'DropConnectInfo') return JSON.stringify({ DropConnectInfo: { info: null } });
+    if (req === 'DropOffers') {
+      return JSON.stringify({ DropOffers: { offers: [{ id: 7, name: 'Anna', contact: null, code: '123 456', files: [{ name: 'urlaub.jpg', size: 2e6, mime: 'image/jpeg' }, { name: 'notiz.txt', size: 10, mime: 'text/plain' }], total: 2000010, preview: false, expires_at: 0 }] } });
+    }
+    if (req.DropRespond || req.DropSaveContact || req.DropSend) {
+      calls.push(req);
+      if (req.DropSaveContact) return JSON.stringify({ DropContact: { key: 'k', name: 'Anna', fingerprint: 'f', added_at: 0, last_seen: 0 } });
+      if (req.DropSend) return JSON.stringify({ DropSent: { id: 9, ok: true, error: null, code: '654 321' } });
+      return JSON.stringify({ Success: { message: 'ok' } });
+    }
+    if (req === 'DropNearby' || req.DropBrowse) return JSON.stringify({ DropNearby: { peers: [peer] } });
+    return origRequest(json);
+  });
+  const emit = (ev: object) => act(async () => { DeviceEventEmitter.emit('snap-event', JSON.stringify(ev)); });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    const tabs = () => r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function');
+
+    // Einstellungen › Snap Drop: unsichtbar, dann „Alle“ für 10 Minuten
+    await act(async () => { tabs()[2].props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Unsichtbar · Senden an Geräte in der Nähe');
+    await act(async () => { byLabel(r, 'Snap Drop').props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Niemand sieht dieses Gerät');
+    await act(async () => { pressable(r, 'Alle').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ DropSetVisibility: { mode: 'everyone' } });
+    expect(allText(r)).toContain('noch 10 Min.');
+    expect(allText(r)).toContain('Code teilen');
+
+    // Eingehendes Angebot: Name, „Unbekannt“, Prüfcode, Dateien; Annehmen
+    await emit({ type: 'DropOffer', id: 7, name: 'Anna', contact: null, code: '123 456', files: 2, total: 2000010, kinds: ['image', 'text'], preview: false });
+    await flush();
+    const offer = allText(r);
+    expect(offer).toContain('Anna');
+    expect(offer).toContain('Unbekannt');
+    expect(offer).toContain('123 456');
+    expect(offer).toContain('urlaub.jpg');
+    expect(offer).toContain('Ablehnen und blockieren');
+    await act(async () => { pressable(r, 'Annehmen').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ DropRespond: { id: 7, accept: true, block: false } });
+    expect(allText(r)).not.toContain('Ablehnen und blockieren');
+
+    // Fertig: Hinweis mit „Als Kontakt speichern“
+    await emit({ type: 'DropFinished', id: 7, incoming: true, ok: true, peer: 'Anna', files: ['/a', '/b'], error: null, can_save_contact: true });
+    await flush();
+    expect(allText(r)).toContain('2 Dateien von Anna gespeichert.');
+    await act(async () => { pressable(r, 'Als Kontakt speichern').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ DropSaveContact: { id: 7 } });
+
+    // Dateien: Menü am Finger → „In der Nähe senden“ → Ben antippen
+    await act(async () => { tabs()[0].props.onPress(); });
+    await flush();
+    await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+    await flush();
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('files-select'), [
+        { state: State.BEGAN, x: 100, y: 148, absoluteX: 100, absoluteY: 300 },
+        { state: State.ACTIVE, x: 100, y: 148, absoluteX: 100, absoluteY: 300 },
+        { state: State.END, x: 100, y: 148, absoluteX: 100, absoluteY: 300 },
+      ]);
+    });
+    await flush();
+    await act(async () => { pressable(r, 'In der Nähe senden').props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Ben');
+    await act(async () => { byLabel(r, 'An Ben senden').props.onPress(); });
+    await flush();
+    const sent = calls.find((c: any) => c.DropSend) as any;
+    expect(sent.DropSend.peer).toBe(peer.id);
+    expect(sent.DropSend.paths).toEqual(['/storage/emulated/0/liste.txt']);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

@@ -134,6 +134,20 @@ fn main() {
             commands::font_pick,
             commands::font_name,
             commands::font_reset,
+            commands::drop_status,
+            commands::drop_set_visibility,
+            commands::drop_browse,
+            commands::drop_nearby,
+            commands::drop_add_code,
+            commands::drop_send,
+            commands::drop_offers,
+            commands::drop_respond,
+            commands::drop_preview,
+            commands::drop_contacts,
+            commands::drop_save_contact,
+            commands::drop_remove_contact,
+            commands::drop_blocked,
+            commands::drop_unblock,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
