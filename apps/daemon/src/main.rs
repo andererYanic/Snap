@@ -193,6 +193,11 @@ enum Commands {
         #[command(subcommand)]
         action: Option<LinksAction>,
     },
+    /// Snap Drop: Dateien an Personen in der Nähe senden und empfangen
+    Drop {
+        #[command(subcommand)]
+        action: Option<DropAction>,
+    },
     /// Speicheranalyse: was belegt wie viel Platz (indexierte Ordner)
     Usage {
         #[arg(default_value = ".")]
@@ -270,6 +275,48 @@ fn parse_upload_target(t: &str) -> Result<(String, String, String)> {
         anyhow::bail!("Ziel bitte als <gerät>:<Freigabe[/ordner]> angeben");
     }
     Ok((dev.to_string(), share, dir))
+}
+
+#[derive(Subcommand)]
+enum DropAction {
+    /// Stand: Sichtbarkeit, Name, Fingerabdruck (Standard)
+    Status,
+    /// Sichtbarkeit: aus, kontakte oder alle (10 Minuten)
+    Visible { mode: String },
+    /// Geräte in der Nähe suchen (gleiches Netz) und anzeigen
+    Nearby {
+        /// So lange suchen (Sekunden)
+        #[arg(long, default_value_t = 4)]
+        wait: u64,
+    },
+    /// Gerät per Code (snapdrop1-…) hinzufügen
+    Add { code: String },
+    /// Dateien senden: send <gerät-id|code> <datei>…
+    Send {
+        peer: String,
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
+    /// Offene Angebote anzeigen
+    Offers,
+    /// Angebot annehmen
+    Accept { id: u64 },
+    /// Angebot ablehnen (optional Absender sperren)
+    Decline {
+        id: u64,
+        #[arg(long)]
+        block: bool,
+    },
+    /// Gespeicherte Kontakte
+    Contacts,
+    /// Gegenüber eines eben beendeten Tauschs als Kontakt speichern
+    Save { id: u64 },
+    /// Kontakt entfernen (Schlüssel)
+    Forget { key: String },
+    /// Gesperrte Absender
+    Blocked,
+    /// Sperre aufheben (Schlüssel)
+    Unblock { key: String },
 }
 
 #[derive(Subcommand)]
@@ -804,6 +851,40 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                 },
             })
         }
+        Commands::Drop { action: None | Some(DropAction::Status) } => Request::DropStatus,
+        Commands::Drop { action: Some(DropAction::Visible { mode }) } => Request::DropSetVisibility {
+            mode: match mode.to_lowercase().as_str() {
+                "aus" | "off" => space_core::drop::Mode::Off,
+                "kontakte" | "contacts" => space_core::drop::Mode::Contacts,
+                "alle" | "everyone" => space_core::drop::Mode::Everyone,
+                _ => anyhow::bail!("Sichtbarkeit: aus, kontakte oder alle"),
+            },
+        },
+        Commands::Drop { action: Some(DropAction::Nearby { wait }) } => {
+            send_request(&config.socket_path, &Request::DropBrowse { on: true }).await?;
+            tokio::time::sleep(std::time::Duration::from_secs(wait.min(60))).await;
+            let r = send_request(&config.socket_path, &Request::DropNearby).await?;
+            let _ = send_request(&config.socket_path, &Request::DropBrowse { on: false }).await;
+            return Ok(print_response(r));
+        }
+        Commands::Drop { action: Some(DropAction::Add { code }) } => Request::DropAddCode { code },
+        Commands::Drop { action: Some(DropAction::Send { peer, files }) } => {
+            let paths = files.iter().map(|f| absolute(f)).collect::<Result<Vec<_>>>()?;
+            eprintln!("⏳ Warte auf Annahme beim Empfänger …");
+            Request::DropSend { peer, paths }
+        }
+        Commands::Drop { action: Some(DropAction::Offers) } => Request::DropOffers,
+        Commands::Drop { action: Some(DropAction::Accept { id }) } => {
+            Request::DropRespond { id, accept: true, block: false }
+        }
+        Commands::Drop { action: Some(DropAction::Decline { id, block }) } => {
+            Request::DropRespond { id, accept: false, block }
+        }
+        Commands::Drop { action: Some(DropAction::Contacts) } => Request::DropContacts,
+        Commands::Drop { action: Some(DropAction::Save { id }) } => Request::DropSaveContact { id },
+        Commands::Drop { action: Some(DropAction::Forget { key }) } => Request::DropRemoveContact { key },
+        Commands::Drop { action: Some(DropAction::Blocked) } => Request::DropBlocked,
+        Commands::Drop { action: Some(DropAction::Unblock { key }) } => Request::DropUnblock { key },
         Commands::Usage { path, limit } => Request::SpaceUsage { path: absolute(&path)?, limit },
         Commands::Dupes { path, min_mb, limit } => Request::Duplicates {
             path: path.map(|p| absolute(&p)).transpose()?,
@@ -967,6 +1048,23 @@ fn describe_event(e: &Event) -> String {
             format!("🔍 Duplikatsuche: {} von {}", human_size(*done_bytes), human_size(*total_bytes))
         }
         Event::SettingChanged { key, value } => format!("⚙️  Einstellung {key} = {value}"),
+        Event::DropOffer { id, name, contact, code, files, total, .. } => format!(
+            "📥 Drop-Angebot {id} von {} ({files} Dateien, {}), Prüfcode {code} – annehmen mit: space-daemon drop accept {id}",
+            contact.as_deref().map_or_else(|| format!("{name} (unbekannt)"), |c| format!("Kontakt {c}")),
+            human_size(*total)
+        ),
+        Event::DropOfferClosed { id, reason } => format!("📥 Drop-Angebot {id} weggefallen ({reason})"),
+        Event::DropProgress { id, done_bytes, total_bytes, .. } => {
+            format!("📦 Drop {id}: {} von {}", human_size(*done_bytes), human_size(*total_bytes))
+        }
+        Event::DropFinished { id, incoming, ok, peer, files, error, .. } => format!(
+            "{} Drop {id} {} {peer}: {}",
+            if *ok { "✅" } else { "❌" },
+            if *incoming { "von" } else { "an" },
+            error.clone().unwrap_or_else(|| format!("{} Dateien", files.len()))
+        ),
+        Event::DropVisibilityChanged { mode, .. } => format!("📡 Drop-Sichtbarkeit: {mode}"),
+        Event::DropNearbyChanged => "📡 Geräte in der Nähe geändert".into(),
         Event::Lagged { missed } => format!("⚠️  {missed} Ereignisse verpasst"),
     }
 }
@@ -1497,6 +1595,93 @@ fn print_response(res: Response) -> ExitCode {
                 println!("{:>4}  {:>10}  {}  {}", i + 1, size, e.deleted_at.replace('T', " "), e.original_path);
             }
         }
+        Response::DropStatus(st) => {
+            let mode = match st.mode {
+                space_core::drop::Mode::Off => "aus".to_string(),
+                space_core::drop::Mode::Contacts => "nur Kontakte".to_string(),
+                space_core::drop::Mode::Everyone => {
+                    format!("alle bis {}", st.until.map(fmt_time).unwrap_or_default())
+                }
+            };
+            println!("📡 Sichtbar: {mode}");
+            println!("   Name: {}   Fingerabdruck: {}", st.name, st.fingerprint);
+            println!("   Ablage: {}", st.dir);
+            if let Some(code) = st.code {
+                println!("   Code: {code}");
+            }
+        }
+        Response::DropNearby { peers } => {
+            if peers.is_empty() {
+                println!("Niemand in der Nähe sichtbar.");
+            }
+            for p in &peers {
+                println!(
+                    "{}  {}{}  ({})",
+                    p.id,
+                    p.name.as_deref().unwrap_or("?"),
+                    p.contact.as_deref().map(|c| format!(" – Kontakt {c}")).unwrap_or_default(),
+                    p.via
+                );
+            }
+        }
+        Response::DropPeer(p) => println!(
+            "📱 {} {}  →  senden mit: space-daemon drop send {} <datei>…",
+            p.name.as_deref().unwrap_or("?"),
+            p.contact.as_deref().map(|c| format!("(Kontakt {c})")).unwrap_or_default(),
+            p.id
+        ),
+        Response::DropConnectInfo { info } => println!("{}", info.unwrap_or_else(|| "unsichtbar".into())),
+        Response::DropSent(r) => {
+            if r.ok {
+                println!("✅ Gesendet (Prüfcode {}).", r.code.unwrap_or_default());
+                println!("   Als Kontakt speichern: space-daemon drop save {}", r.id);
+            } else {
+                eprintln!("❌ {}", r.error.unwrap_or_default());
+                return ExitCode::FAILURE;
+            }
+        }
+        Response::DropOffers { offers } => {
+            if offers.is_empty() {
+                println!("Keine offenen Angebote.");
+            }
+            for o in &offers {
+                println!(
+                    "📥 {}  von {}  {} Dateien, {}  Prüfcode {}",
+                    o.id,
+                    o.contact.clone().unwrap_or_else(|| format!("{} (unbekannt)", o.name)),
+                    o.files.len(),
+                    human_size(o.total),
+                    o.code
+                );
+                for f in &o.files {
+                    println!("      {}  {}", human_size(f.size), f.name);
+                }
+            }
+        }
+        Response::DropPreview { png } => {
+            println!("{}", if png.is_some() { "Vorschau vorhanden" } else { "Keine Vorschau" })
+        }
+        Response::DropContacts { contacts } => {
+            if contacts.is_empty() {
+                println!("Noch keine Kontakte.");
+            }
+            for c in &contacts {
+                println!("👤 {:<24} {}  zuletzt {}  {}", c.name, c.fingerprint, fmt_time(c.last_seen), c.key);
+            }
+        }
+        Response::DropContact(c) => println!("👤 Kontakt {} gespeichert ({}).", c.name, c.fingerprint),
+        Response::DropBlocked { blocked } => {
+            if blocked.is_empty() {
+                println!("Niemand gesperrt.");
+            }
+            for b in &blocked {
+                println!("🚫 {:<24} seit {}  {}", b.name, fmt_time(b.blocked_at), b.key);
+            }
+        }
+        Response::DropHotspot(h) => {
+            println!("📶 {} möchte {} Dateien ({}) senden", h.name, h.files, human_size(h.total))
+        }
+        Response::DropHotspotRequest { data } => println!("{data}"),
         Response::Error { message, .. } => {
             eprintln!("❌ {message}");
             return ExitCode::FAILURE;

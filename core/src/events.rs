@@ -105,6 +105,52 @@ pub enum Event {
         key: String,
         value: i64,
     },
+    /// Snap Drop: Ein Angebot wartet auf Annehmen oder Ablehnen.
+    DropOffer {
+        id: u64,
+        /// Bereinigter, vom Absender gewählter Name.
+        name: String,
+        /// Name des gespeicherten Kontakts, falls der Absender einer ist (am Schlüssel erkannt).
+        contact: Option<String>,
+        /// Prüfcode, auf beiden Bildschirmen gleich.
+        code: String,
+        files: u32,
+        total: u64,
+        /// Grobe Arten (z. B. `image`, `video`, `pdf`), ohne Doppelungen.
+        kinds: Vec<String>,
+        preview: bool,
+    },
+    /// Ein Angebot ist ohne Antwort weggefallen (`cancelled`, `timeout`).
+    DropOfferClosed {
+        id: u64,
+        reason: String,
+    },
+    /// Fortschritt einer Drop-Übertragung (höchstens 4× pro Sekunde).
+    DropProgress {
+        id: u64,
+        incoming: bool,
+        done_bytes: u64,
+        total_bytes: u64,
+    },
+    /// Drop-Übertragung beendet.
+    DropFinished {
+        id: u64,
+        incoming: bool,
+        ok: bool,
+        peer: String,
+        /// Gespeicherte Dateien (nur beim Empfang).
+        files: Vec<String>,
+        error: Option<String>,
+        /// Gegenüber kann jetzt als Kontakt gespeichert werden.
+        can_save_contact: bool,
+    },
+    /// Sichtbarkeit für Snap Drop hat sich geändert (`off`, `contacts`, `everyone`).
+    DropVisibilityChanged {
+        mode: String,
+        until: Option<i64>,
+    },
+    /// Die Liste der Geräte in der Nähe hat sich geändert.
+    DropNearbyChanged,
     /// Der Abonnent hat Ereignisse verpasst und sollte seinen Zustand neu laden.
     Lagged {
         missed: u64,

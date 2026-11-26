@@ -414,6 +414,67 @@ pub enum Request {
         password: Option<String>,
     },
     LinkList,
+    /// Snap Drop: Stand (Sichtbarkeit, Name, Fingerabdruck, Code).
+    DropStatus,
+    DropSetVisibility {
+        mode: crate::drop::Mode,
+    },
+    /// Suche nach Geräten in der Nähe (mDNS) starten oder stoppen.
+    DropBrowse {
+        on: bool,
+    },
+    DropNearby,
+    /// Gerät per Code (QR/Abtippen) hinzufügen und abfragen.
+    DropAddCode {
+        code: String,
+    },
+    /// Verbindungsdaten aus Bluetooth (Base64) übernehmen.
+    DropAddPeer {
+        info: String,
+    },
+    /// Eigene Verbindungsdaten für Bluetooth (Base64), solange sichtbar.
+    DropConnectInfo,
+    /// Dateien senden (antwortet nach dem Ende der Übertragung).
+    DropSend {
+        peer: String,
+        paths: Vec<PathBuf>,
+    },
+    DropOffers,
+    DropRespond {
+        id: u64,
+        accept: bool,
+        #[serde(default)]
+        block: bool,
+    },
+    /// Vorschaubild eines Angebots (PNG, Base64).
+    DropPreview {
+        id: u64,
+    },
+    DropContacts,
+    DropSaveContact {
+        id: u64,
+    },
+    DropRemoveContact {
+        key: String,
+    },
+    DropBlocked,
+    DropUnblock {
+        key: String,
+    },
+    /// Offline-Weg: Kurzanfrage (Base64) aus Bluetooth prüfen.
+    DropHotspotParse {
+        data: String,
+    },
+    /// Offline-Weg: Kurzanfrage angenommen.
+    DropHotspotAccept {
+        data: String,
+    },
+    /// Offline-Weg (Sender): Kurzanfrage für einen eben geöffneten Hotspot bauen.
+    DropHotspotRequest {
+        ssid: String,
+        passphrase: String,
+        paths: Vec<PathBuf>,
+    },
     /// Link widerrufen (ID-Präfix); löscht die verschlüsselte Kopie.
     LinkRevoke {
         id: String,
@@ -679,6 +740,34 @@ pub enum Response {
     Timeline(crate::photos::TimelinePage),
     TimelineMonths {
         months: Vec<crate::photos::MonthCount>,
+    },
+    DropStatus(crate::drop::DropStatus),
+    DropNearby {
+        peers: Vec<crate::drop::NearbyPeer>,
+    },
+    DropPeer(crate::drop::NearbyPeer),
+    /// Base64; `None`, solange unsichtbar.
+    DropConnectInfo {
+        info: Option<String>,
+    },
+    DropSent(crate::drop::SendResult),
+    DropOffers {
+        offers: Vec<crate::drop::IncomingOffer>,
+    },
+    DropPreview {
+        png: Option<String>,
+    },
+    DropContacts {
+        contacts: Vec<crate::drop::ContactInfo>,
+    },
+    DropContact(crate::drop::ContactInfo),
+    DropBlocked {
+        blocked: Vec<crate::drop::BlockedSender>,
+    },
+    DropHotspot(crate::drop::HotspotOffer),
+    /// Base64-Kurzanfrage für Bluetooth.
+    DropHotspotRequest {
+        data: String,
     },
     Links {
         items: Vec<crate::links::LinkInfo>,

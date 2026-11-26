@@ -1299,3 +1299,108 @@ fn pdf_mark_sign_verify() {
     report("pdf: Signaturen prüfen", 1, t.elapsed());
     assert!(reps[0].valid && reps[0].covers_document);
 }
+
+/// Snap Drop: Oberflächen-Abfragen, Prüfen großer Angebote, Kontakt-Abgleich mit 512 Kontakten,
+/// Durchsatz über 127.0.0.1 (inkl. BLAKE3 beim Sender und Empfänger).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn drop_transfer() {
+    use space_core::database::DropContactRow;
+    use space_core::drop::identity::DropIdentity;
+    use space_core::drop::wire::{self, DeviceKind, OfferFile};
+    use space_core::drop::{DropOptions, DropService, Mode};
+    use space_core::events::Event;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let mk = |name: &str| {
+        let db = Arc::new(DatabaseManager::open_in_memory().unwrap());
+        let opts = DropOptions {
+            dir: tmp.path().join(name),
+            identity_path: tmp.path().join(format!("{name}.key")),
+            name: name.into(),
+            kind: DeviceKind::Laptop,
+            use_relay: false,
+            relay_urls: vec![],
+            relay_fallback_n0: false,
+            loopback_only: true,
+            mdns: false,
+            reserve_bytes: 0,
+            can_join_hotspot: false,
+        };
+        (DropService::with_identity(opts, db.clone(), DropIdentity::ephemeral()), db)
+    };
+    let (a, _) = mk("a");
+    let (b, bdb) = mk("b");
+
+    // 512 Kontakte beim Empfänger (Höchstzahl): jede Probe gleicht alle ab.
+    for i in 0..512u32 {
+        bdb.upsert_drop_contact(&DropContactRow {
+            key: format!("{i:064x}"),
+            name: format!("Kontakt {i}"),
+            secret: blake3::hash(&i.to_be_bytes()).as_bytes().to_vec(),
+            added_at: 0,
+            last_seen: 0,
+        })
+        .unwrap();
+    }
+    b.set_visibility(Mode::Everyone).await.unwrap();
+
+    let t = Instant::now();
+    for _ in 0..1000 {
+        std::hint::black_box(b.status().unwrap());
+        std::hint::black_box(b.nearby());
+        std::hint::black_box(b.pending_offers());
+    }
+    report("Drop: status + nearby + offers (Oberfläche)", 1000, t.elapsed());
+
+    let files: Vec<OfferFile> = (0..1000)
+        .map(|i| OfferFile {
+            name: format!("../ordner/foto {i}.jpg"),
+            size: 1 << 20,
+            hash: "ab".repeat(32),
+            mime: "image/jpeg".into(),
+        })
+        .collect();
+    let t = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(wire::validate_files(&files).unwrap());
+    }
+    report("Drop: Angebot mit 1000 Dateien prüfen", 100, t.elapsed());
+
+    let code = b.status().unwrap().code.unwrap();
+    let t = Instant::now();
+    let n = 20;
+    for _ in 0..n {
+        a.add_code(&code).await.unwrap();
+    }
+    report("Drop: Probe (Verbindung + Abgleich 512 Kontakte)", n, t.elapsed());
+
+    let size: usize = 256 << 20;
+    let src = tmp.path().join("gross.bin");
+    std::fs::write(&src, vec![7u8; size]).unwrap();
+    let peer = a.add_code(&code).await.unwrap();
+    let mut ev = bdb.events().subscribe();
+    let accept = tokio::spawn({
+        let b = b.clone();
+        async move {
+            loop {
+                if let Some(Event::DropOffer { id, .. }) = ev.next().await {
+                    b.respond(id, true, false).unwrap();
+                    return;
+                }
+            }
+        }
+    });
+    let t = Instant::now();
+    let r = a.send(&peer.id, vec![src]).await.unwrap();
+    let d = t.elapsed();
+    accept.await.unwrap();
+    assert!(r.ok, "{:?}", r.error);
+    println!(
+        "{:<55} {:>8.1} MB/s  ({} MiB in {:.2} s, inkl. Hashen und Annehmen)",
+        "Drop: Übertragung 127.0.0.1",
+        size as f64 / 1e6 / d.as_secs_f64(),
+        size >> 20,
+        d.as_secs_f64()
+    );
+}

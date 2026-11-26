@@ -13,6 +13,8 @@ libfuzzer-sys = "0.4"
 space-core = { path = "../core" }
 iroh-blobs = "0.103"
 serde_json = "1"
+data-encoding = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
 chrono = "0.4"
 tokio = { version = "1", features = ["rt", "io-util"] }
 tempfile = "3"
@@ -131,6 +133,20 @@ bench = false
 [[bin]]
 name = "pdf_signatures"
 path = "fuzz_targets/pdf_signatures.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "drop_offer"
+path = "fuzz_targets/drop_offer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "drop_connect"
+path = "fuzz_targets/drop_connect.rs"
 test = false
 doc = false
 bench = false

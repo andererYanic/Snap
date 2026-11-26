@@ -9,6 +9,7 @@ pub mod config;
 pub mod daemon;
 pub mod database;
 pub mod docx;
+pub mod drop;
 pub mod events;
 pub mod fileops;
 pub mod index;
