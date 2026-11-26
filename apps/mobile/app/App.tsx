@@ -14,6 +14,8 @@ import Photos from './src/Photos';
 import { materialTheme, snapTheme, type Theme } from './src/theme';
 import { NavIcon, themed } from './src/ui';
 import { fadeIn, initMotion, m, toastIn, toastOut } from './src/motion';
+import * as drop from './src/drop';
+import { DropSendSheet, HotspotSheet, OfferSheet } from './src/Drop';
 
 type Tab = 'files' | 'photos' | 'settings';
 
@@ -28,7 +30,11 @@ export default function App() {
   const [material, setMaterialState] = useState(false);
   const [materialAvailable, setMaterialAvailable] = useState(false);
   const [crash, setCrash] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
+  const [toast, setToast] = useState<{ text: string; undo?: () => void; action?: { label: string; run: () => void } } | null>(null);
+  // Snap Drop: Senden (gewählte Dateien), eingehendes Angebot, Kurzanfrage für den Offline-Weg
+  const [dropPaths, setDropPaths] = useState<string[] | null>(null);
+  const [incoming, setIncoming] = useState<drop.IncomingOffer | null>(null);
+  const [hotspot, setHotspot] = useState<{ data: string; offer: drop.HotspotOffer } | null>(null);
   const [, setSelecting] = useState(false);
   // Schrift: Name der eigenen Schrift (null = Inconsolata); Version erzwingt Neuzeichnen
   const [fontName, setFontName] = useState<string | null>(null);
@@ -96,6 +102,87 @@ export default function App() {
     timer.current = setTimeout(() => setToast(null), undo ? 6000 : 3500);
   }, []);
 
+  const notifyAction = useCallback((text: string, label: string, run: () => void) => {
+    setToast({ text, action: { label, run } });
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setToast(null), 8000);
+  }, []);
+
+  // Snap Drop: Ereignisse aus dem Kern und Bluetooth
+  useEffect(() => {
+    if (ready !== 'ok') {
+      return;
+    }
+    drop.listen();
+    drop.onHotspotRequest((data, offer) => setHotspot({ data, offer }));
+    drop.syncRadio().catch(() => {});
+    const saveContact = (id: number) =>
+      drop
+        .saveContact(id)
+        .then((c) => notify(t('{name} ist jetzt ein Kontakt.', { name: c.name })))
+        .catch((e) => notify(String(e?.message ?? e)));
+    const off = core.onEvent((ev) => {
+      if (ev.type === 'DropOffer') {
+        drop
+          .offers()
+          .then((list) => setIncoming((cur) => cur ?? list.find((o) => o.id === ev.id) ?? null))
+          .catch(() => {});
+      } else if (ev.type === 'DropOfferClosed') {
+        setIncoming((cur) => {
+          if (cur?.id === ev.id) {
+            notify(t('Das Angebot wurde zurückgezogen.'));
+            return null;
+          }
+          return cur;
+        });
+      } else if (ev.type === 'DropFinished') {
+        const files: string[] = ev.files ?? [];
+        const count = files.length === 1 ? t('1 Datei') : t('{n} Dateien', { n: files.length });
+        if (ev.incoming) {
+          drop.leaveHotspot();
+          if (!ev.ok) {
+            notify(t('Empfang fehlgeschlagen: {error}', { error: ev.error ?? '' }));
+          } else if (ev.can_save_contact) {
+            notifyAction(t('{files} von {name} gespeichert.', { files: count, name: ev.peer }), t('Als Kontakt speichern'), () => saveContact(ev.id));
+          } else if (files.length === 1) {
+            notifyAction(t('{files} von {name} gespeichert.', { files: count, name: ev.peer }), t('Öffnen'), () => core.openFile(files[0]).catch(() => {}));
+          } else {
+            notify(t('{files} von {name} gespeichert.', { files: count, name: ev.peer }));
+          }
+        } else if (ev.ok) {
+          if (ev.can_save_contact) {
+            notifyAction(t('An {name} gesendet.', { name: ev.peer }), t('Als Kontakt speichern'), () => saveContact(ev.id));
+          } else {
+            notify(t('An {name} gesendet.', { name: ev.peer }));
+          }
+        }
+      } else if (ev.type === 'DropVisibilityChanged') {
+        drop.syncRadio(ev.mode).catch(() => {});
+      }
+    });
+    return () => {
+      off();
+      drop.onHotspotRequest(null);
+    };
+  }, [ready, notify, notifyAction]);
+
+  const answerHotspot = async (accept: boolean) => {
+    const h = hotspot;
+    setHotspot(null);
+    if (!h || !accept) {
+      return;
+    }
+    try {
+      notify(t('Verbinde direkt mit {name} …', { name: h.offer.name }));
+      await drop.acceptHotspot(h.data, h.offer);
+      // Falls der Sender nicht nachkommt: nach 3 Minuten zurück ins normale Netz.
+      setTimeout(() => drop.leaveHotspot(), 180_000);
+    } catch (e: any) {
+      drop.leaveHotspot();
+      notify(String(e?.message ?? e));
+    }
+  };
+
   const setMaterial = (v: boolean) => {
     setMaterialState(v);
     core.setPref('material', v ? '1' : '0');
@@ -160,7 +247,7 @@ export default function App() {
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab === 'photos' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
-            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} onFont={fontChanged} />}
+            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} onFont={fontChanged} onDrop={setDropPaths} />}
             {tab === 'photos' && <Photos theme={theme} notify={notify} />}
             {tab === 'settings' && (
               <Settings theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} fontName={fontName} onFont={fontChanged} home={settingsHome} />
@@ -174,8 +261,16 @@ export default function App() {
                   <Text style={s.link}>{t('Rückgängig')}</Text>
                 </Pressable>
               )}
+              {toast.action && (
+                <Pressable onPress={() => { toast.action?.run(); setToast(null); }} style={s.toastBtn} accessibilityRole="button">
+                  <Text style={s.link}>{toast.action.label}</Text>
+                </Pressable>
+              )}
             </Animated.View>
           )}
+          {dropPaths && <DropSendSheet paths={dropPaths} theme={theme} notify={notify} onClose={() => setDropPaths(null)} />}
+          {incoming && <OfferSheet offer={incoming} theme={theme} onDone={() => setIncoming(null)} />}
+          {hotspot && <HotspotSheet offer={hotspot.offer} theme={theme} onAnswer={answerHotspot} />}
         </SafeAreaView>
         {/* Fester Platz unten: Hauptmenü oder – beim Markieren – die Leiste von „Dateien“.
             Gleiche Höhe in beiden Fällen, damit die Liste darüber nie springt. */}

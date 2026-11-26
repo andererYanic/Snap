@@ -434,6 +434,8 @@ pub enum Request {
     },
     /// Eigene Verbindungsdaten für Bluetooth (Base64), solange sichtbar.
     DropConnectInfo,
+    /// Sitzung neu starten (nach einem Netzwechsel, z. B. Hotspot-Beitritt); neue Verbindungsdaten.
+    DropRefresh,
     /// Dateien senden (antwortet nach dem Ende der Übertragung).
     DropSend {
         peer: String,

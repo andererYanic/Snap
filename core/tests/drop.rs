@@ -483,3 +483,46 @@ async fn offline_kurzanfrage_nimmt_passendes_angebot_an() {
     assert!(b.svc.parse_hotspot(&req[..req.len() - 1]).is_err());
     assert!(b.svc.pre_accept(&[]).is_err());
 }
+
+#[tokio::test]
+async fn bluetooth_daten_offline_geraete_und_neustart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = node(tmp.path(), "Anna");
+    let b = node(tmp.path(), "Ben");
+
+    // Name nur im Modus „Alle“ in den Bluetooth-Verbindungsdaten.
+    assert!(b.svc.connect_info().await.is_none(), "unsichtbar: nichts");
+    b.svc.set_visibility(Mode::Contacts).await.unwrap();
+    assert_eq!(b.svc.connect_info().await.unwrap().name, None);
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let info = b.svc.connect_info().await.unwrap();
+    assert_eq!(info.name.as_deref(), Some("Ben"));
+
+    // Neustart der Sitzung: neue Transport-Kennung.
+    let neu = b.svc.refresh_session().await.unwrap().unwrap();
+    assert_ne!(neu.endpoint, info.endpoint);
+    assert!(a.svc.add_code(&info.to_code()).await.is_err(), "alte Kennung ist weg");
+    assert!(a.svc.add_code(&neu.to_code()).await.is_ok());
+
+    // Über Bluetooth gefunden, per Netz nicht erreichbar → bleibt als „offline“ mit Namen.
+    let fremd = ConnectInfo {
+        endpoint: iroh::SecretKey::generate().public(),
+        token: [1; 8],
+        can_join_hotspot: true,
+        relay: false,
+        addrs: vec!["127.0.0.1:9".parse().unwrap()],
+        name: Some("Offline-Olli".into()),
+    };
+    let mut ev = a.events;
+    a.svc.add_peer(&fremd, "bluetooth");
+    next_event(&mut ev, |e| matches!(e, Event::DropNearbyChanged)).await;
+    let list = a.svc.nearby();
+    let o = list.iter().find(|p| p.offline).expect("offline-Eintrag");
+    assert_eq!(o.name.as_deref(), Some("Offline-Olli"));
+    assert_eq!(o.via, "bluetooth");
+    // Ohne Namen (Kontakte-Modus beim Gegenüber) und unerreichbar → verschwindet.
+    let stumm = ConnectInfo { endpoint: iroh::SecretKey::generate().public(), name: None, ..fremd };
+    a.svc.add_peer(&stumm, "bluetooth");
+    next_event(&mut ev, |e| matches!(e, Event::DropNearbyChanged)).await;
+    assert!(!a.svc.nearby().iter().any(|p| p.id == wire::hex(stumm.endpoint.as_bytes())));
+}

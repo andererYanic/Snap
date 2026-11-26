@@ -172,6 +172,7 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropAddCode { .. }
         | Request::DropAddPeer { .. }
         | Request::DropConnectInfo
+        | Request::DropRefresh
         | Request::DropSend { .. }
         | Request::DropOffers
         | Request::DropRespond { .. }

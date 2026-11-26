@@ -43,6 +43,9 @@ pub(crate) async fn handle(inner: &Arc<DaemonInner>, req: Request) -> Result<Res
         Request::DropConnectInfo => {
             Response::DropConnectInfo { info: d.connect_info().await.map(|i| BASE64.encode(&i.encode())) }
         }
+        Request::DropRefresh => {
+            Response::DropConnectInfo { info: d.refresh_session().await?.map(|i| BASE64.encode(&i.encode())) }
+        }
         Request::DropSend { peer, paths } => Response::DropSent(d.send(&peer, paths).await?),
         Request::DropOffers => Response::DropOffers { offers: d.pending_offers() },
         Request::DropRespond { id, accept, block } => {

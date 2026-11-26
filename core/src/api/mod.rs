@@ -188,6 +188,7 @@ pub(crate) async fn handle_request(
         | Request::DropAddCode { .. }
         | Request::DropAddPeer { .. }
         | Request::DropConnectInfo
+        | Request::DropRefresh
         | Request::DropSend { .. }
         | Request::DropOffers
         | Request::DropRespond { .. }
@@ -334,6 +335,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropAddCode { .. } => "drop.add_code",
         Request::DropAddPeer { .. } => "drop.add_peer",
         Request::DropConnectInfo => "drop.connect_info",
+        Request::DropRefresh => "drop.refresh",
         Request::DropSend { .. } => "drop.send",
         Request::DropOffers => "drop.offers",
         Request::DropRespond { .. } => "drop.respond",

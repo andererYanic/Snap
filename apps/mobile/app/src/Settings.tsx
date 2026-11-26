@@ -5,6 +5,8 @@ import { BackHandler, Pressable, ScrollView, StyleSheet, View } from 'react-nati
 import Animated from 'react-native-reanimated';
 import { request, storageRoot } from './core';
 import { SignIdPage } from './SignId';
+import { DropPage } from './Drop';
+import * as drop from './drop';
 import { t } from './i18n';
 import { m, pageIn } from './motion';
 import { Devices, General, TrashPage, type Device } from './Pages';
@@ -13,7 +15,7 @@ import type { Theme } from './theme';
 import { themed } from './ui';
 import { Icon, type IconName } from './Icon';
 
-type Sub = 'general' | 'devices' | 'sign' | 'trash' | 'about';
+type Sub = 'general' | 'devices' | 'drop' | 'sign' | 'trash' | 'about';
 
 interface Props {
   theme: Theme;
@@ -32,9 +34,11 @@ export default function Settings(p: Props) {
   const [sub, setSub] = useState<Sub | null>(null);
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [devices, setDevices] = useState<Device[] | null>(null);
+  const [dropMode, setDropMode] = useState<drop.Mode | null>(null);
 
   useEffect(() => {
     request<{ devices?: Device[] }>('PairList').then((r) => setDevices(r?.devices ?? [])).catch(() => setDevices([]));
+    drop.status().then((st) => setDropMode(st.mode)).catch(() => {});
   }, [sub]);
   useEffect(() => {
     setDir('back');
@@ -56,7 +60,8 @@ export default function Settings(p: Props) {
     setDir('forward');
     setSub(x);
   };
-  const title = { general: t('Allgemein'), devices: t('Geräte'), sign: t('Digitale ID'), trash: t('Papierkorb'), about: t('Über Snap') };
+  const title = { general: t('Allgemein'), devices: t('Geräte'), drop: t('Snap Drop'), sign: t('Digitale ID'), trash: t('Papierkorb'), about: t('Über Snap') };
+  const dropMeta = dropMode === 'everyone' ? t('Für alle sichtbar') : dropMode === 'contacts' ? t('Für Kontakte sichtbar') : t('Unsichtbar · Senden an Geräte in der Nähe');
   const online = devices?.filter((d) => d.online).length ?? 0;
 
   if (sub) {
@@ -72,6 +77,7 @@ export default function Settings(p: Props) {
           <General theme={p.theme} notify={p.notify} material={p.material} setMaterial={p.setMaterial} materialAvailable={p.materialAvailable} fontName={p.fontName} onFont={p.onFont} />
         )}
         {sub === 'devices' && <Devices theme={p.theme} notify={p.notify} />}
+        {sub === 'drop' && <DropPage theme={p.theme} notify={p.notify} />}
         {sub === 'sign' && <SignIdPage theme={p.theme} notify={p.notify} downloads={async () => `${await storageRoot()}/Download`} />}
         {sub === 'trash' && <TrashPage theme={p.theme} notify={p.notify} />}
         {sub === 'about' && (
@@ -114,6 +120,8 @@ export default function Settings(p: Props) {
             label={t('Geräte')}
             meta={devices === null ? '' : t('{n} gekoppelt · {online} verbunden', { n: devices.length, online })}
           />
+          <View style={s.sep} />
+          <Row k="drop" icon="nearby" label={t('Snap Drop')} meta={dropMeta} />
           <View style={s.sep} />
           <Row k="sign" icon="sign" label={t('Digitale ID')} meta={t('PDFs signieren, Unterschrift')} />
         </View>
