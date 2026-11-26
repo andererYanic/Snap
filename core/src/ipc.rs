@@ -486,6 +486,19 @@ pub enum Request {
     DropUnblock {
         key: String,
     },
+    /// Weck-Schlüssel der Kontakte in eine private Datei (0600) im Datenordner schreiben und bei
+    /// jeder Kontaktänderung aktuell halten (`enable`) bzw. löschen. Nur für das Wecken im
+    /// Hintergrund auf Android – die Schlüssel gehen nie über die API.
+    DropWakeExport {
+        enable: bool,
+    },
+    /// Im Hintergrund kurz empfangsbereit sein (`secs` = 0 beendet das). Ändert die gespeicherte
+    /// Sichtbarkeit nicht. Mit `everyone` wird ein noch laufendes „Alle“-Fenster fortgesetzt.
+    DropBackground {
+        secs: u32,
+        #[serde(default)]
+        everyone: bool,
+    },
     /// Offline-Weg: Kurzanfrage (Base64) aus Bluetooth prüfen.
     DropHotspotParse {
         data: String,
@@ -787,6 +800,7 @@ pub enum Response {
         contacts: Vec<crate::drop::ContactInfo>,
     },
     DropContact(crate::drop::ContactInfo),
+
     DropBlocked {
         blocked: Vec<crate::drop::BlockedSender>,
     },
