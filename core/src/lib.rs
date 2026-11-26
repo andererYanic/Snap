@@ -8,6 +8,7 @@ pub mod backup;
 pub mod config;
 pub mod daemon;
 pub mod database;
+pub mod docs;
 pub mod docx;
 pub mod drop;
 pub mod events;

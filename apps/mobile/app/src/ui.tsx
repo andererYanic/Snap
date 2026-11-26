@@ -20,7 +20,7 @@ const TYPE_COLORS: [RegExp, string, string][] = [
   [/^(pptx?|odp)$/, '#C2662D', 'PPT'],
   [/^(zip|tar|gz|tgz|7z|rar|xz|zst|bz2)$/, '#8C6D3A', 'ZIP'],
   [/^(ttf|otf|woff2?)$/, '#5A5A8C', 'FNT'],
-  [/^apk$/, '#3F8F5F', 'APK'],
+  [/^(apk|apks|xapk|apkm)$/, '#3F8F5F', 'APK'],
 ];
 
 export function typeOf(name: string): [string, string] {

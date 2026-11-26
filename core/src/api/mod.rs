@@ -96,6 +96,8 @@ pub(crate) async fn handle_request(
         }
         Request::Search { query, filter, limit } => explorer::search(inner, query, filter, limit).await,
         Request::ReadDocx { path, image_dir } => read_docx(path, image_dir).await,
+        Request::ReadDocument { path, image_dir } => read_document(path, image_dir).await,
+        Request::ArchiveList { path } => archive_list(path).await,
         Request::SignIdInfo => pdf::id_info(inner),
         Request::SignIdCreate { name, password } => pdf::id_create(inner, name, password).await,
         Request::SignIdExport { dest } => pdf::id_export(inner, &dest),
@@ -290,6 +292,8 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::Search { .. } => "search",
         Request::ListDir { .. } => "listdir",
         Request::ReadDocx { .. } => "docx.read",
+        Request::ReadDocument { .. } => "document.read",
+        Request::ArchiveList { .. } => "archive.list",
         Request::SignIdInfo => "sign.id",
         Request::SignIdCreate { .. } => "sign.id.create",
         Request::SignIdExport { .. } => "sign.id.export",
@@ -372,6 +376,20 @@ fn request_name(req: &Request) -> Option<&'static str> {
 }
 
 /// DOCX-Leseansicht (blockierend lesen, außerhalb der Laufzeit-Threads).
+async fn read_document(path: std::path::PathBuf, image_dir: Option<std::path::PathBuf>) -> anyhow::Result<Response> {
+    let doc = tokio::task::spawn_blocking(move || crate::docs::read_document(&path, image_dir.as_deref()))
+        .await
+        .map_err(|e| anyhow::anyhow!("Lesen abgebrochen: {e}"))??;
+    Ok(Response::Docx(doc))
+}
+
+async fn archive_list(path: std::path::PathBuf) -> anyhow::Result<Response> {
+    let l = tokio::task::spawn_blocking(move || crate::docs::list_archive(&path))
+        .await
+        .map_err(|e| anyhow::anyhow!("Lesen abgebrochen: {e}"))??;
+    Ok(Response::Archive(l))
+}
+
 async fn read_docx(path: std::path::PathBuf, image_dir: Option<std::path::PathBuf>) -> anyhow::Result<Response> {
     let doc = tokio::task::spawn_blocking(move || crate::docx::read_docx(&path, image_dir.as_deref()))
         .await

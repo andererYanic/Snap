@@ -1681,6 +1681,16 @@ fn print_response(res: Response) -> ExitCode {
                 println!("🚫 {:<24} seit {}  {}", b.name, fmt_time(b.blocked_at), b.key);
             }
         }
+        Response::Archive(a) => {
+            for e in &a.entries {
+                println!(
+                    "{:>10}  {}{}",
+                    if e.dir { String::new() } else { human_size(e.size) },
+                    e.name,
+                    if e.dir { "/" } else { "" }
+                );
+            }
+        }
         Response::DropHotspot(h) => {
             println!("📶 {} möchte {} Dateien ({}) senden", h.name, h.files, human_size(h.total))
         }

@@ -50,6 +50,27 @@ export function onShare(cb: () => void) {
   const sub = new NativeEventEmitter(native()).addListener('snap-share', () => cb());
   return () => sub.remove();
 }
+export interface ApkInfo {
+  label: string;
+  package: string;
+  version: string;
+  versionCode: number;
+  installedVersion?: string;
+  installedCode?: number;
+  self: boolean;
+  icon?: string;
+  /** Zahl der APKs bei App-Paketen (.apks, .xapk, .apkm). */
+  splits?: number;
+  /** Paket enthält Zusatzdaten (OBB), die nicht übertragen werden. */
+  obb?: boolean;
+}
+/** App-Infos aus einer APK (ohne Installation). */
+export const apkInfo = (path: string): Promise<ApkInfo | null> => native().apkInfo?.(path) ?? Promise.resolve(null);
+/**
+ * APK an den System-Installer übergeben; `"permission"`, wenn erst die Erlaubnis geöffnet wurde.
+ * App-Pakete laufen über eine Installer-Sitzung und enden mit `"installed"` oder `"aborted"`.
+ */
+export const installApk = (path: string): Promise<'started' | 'permission' | 'installed' | 'aborted'> => native().installApk(path);
 /** Web-Link mit der Standard-App öffnen (nur http/https). */
 export const openLink = (url: string): Promise<void> => native().openLink(url);
 export const openFile = (path: string): Promise<void> => native().openFile(path);

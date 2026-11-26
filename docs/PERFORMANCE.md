@@ -673,3 +673,26 @@ Messung (`perf.rs::drop_transfer`, Release, 127.0.0.1):
 - Textauswahl: höchstens eine Abfrage an Android gleichzeitig, immer mit dem neuesten Fingerpunkt;
   zum Schluss genau eine abschließende Abfrage.
 - Messung auf dem Gerät (Bildrate beim Zoomen großer PDFs, `gfxinfo`) steht aus.
+
+## Review 36 – Formate: Tabellen, Präsentationen, Bücher, Archive, Audio, APKs (2026-11-26)
+
+Messung `core/tests/perf.rs::formats_read`, Release-Build:
+
+| Fall | Zeit je Datei |
+|---|---|
+| XLSX, 5 000 × 12 Zellen (2 MB XML, größte erlaubte Ansicht) | 27,5 ms |
+| EPUB, 300 Kapitel → 12 300 Blöcke | 12,1 ms |
+| ZIP mit 10 000 Einträgen auflisten (Obergrenze) | 8,5 ms |
+
+- Lesen läuft im Kern in `spawn_blocking`; die Oberfläche wartet asynchron mit Ladeanzeige und
+  blockiert nie. Feste Obergrenzen (Zeilen, Spalten, Zellenlänge, Folien, Kapitel, Einträge)
+  begrenzen Zeit und Speicher auch bei feindlichen Dateien.
+- Tabellen zeichnet die App höchstens 400 Zeilen auf einmal (Rest als Hinweis); CSV wird in einem
+  Durchgang ohne reguläre Ausdrücke zerlegt.
+- Archivansicht: Ordnerebenen werden aus der flachen Liste im Speicher abgeleitet (eine Schleife
+  je Ebene, `FlatList` virtualisiert).
+- Audio: ein unsichtbarer Player je sichtbarer Seite; Cover über `MediaMetadataRetriever`
+  (≤ 10 MB, verkleinert dekodiert, im Vorschaubild-Cache).
+- App-Pakete: Split-APKs werden in 256-KiB-Blöcken direkt aus dem ZIP in die Installer-Sitzung
+  kopiert (kein Zwischenentpacken); für die App-Infos wird nur die Haupt-APK kurz in den Cache
+  kopiert und danach gelöscht.

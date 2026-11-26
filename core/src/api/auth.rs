@@ -117,6 +117,8 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::Search { .. }
         | Request::ListDir { .. }
         | Request::ReadDocx { .. }
+        | Request::ReadDocument { .. }
+        | Request::ArchiveList { .. }
         // Signieren und Markieren: Schlüssel und Dateien bleiben auf dem Gerät
         | Request::SignIdInfo
         | Request::SignIdCreate { .. }
