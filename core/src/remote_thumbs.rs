@@ -81,6 +81,12 @@ async fn serve(inner: &Arc<DaemonInner>, peer: &str, req: ThumbRequest) -> Resul
 }
 
 /// Holt ein Vorschaubild von einem gekoppelten Gerät und legt es (neu codiert) im Cache ab.
+/// Ordner der Vorschaubilder eines anderen Geräts.
+pub(crate) fn device_dir(thumb_dir: &std::path::Path, node_id: &str) -> std::path::PathBuf {
+    let id: String = node_id.chars().filter(|c| c.is_ascii_hexdigit()).take(16).collect();
+    thumb_dir.join("remote").join(id)
+}
+
 pub(crate) async fn fetch(
     inner: &Arc<DaemonInner>,
     device: &str,
@@ -116,7 +122,8 @@ pub(crate) async fn fetch(
         h.update(&size.edge().to_le_bytes());
         h.finalize().to_hex().to_string()
     };
-    let target = inner.config.thumb_dir().join(&key[..2]).join(format!("{key}.jpg"));
+    // Je Gerät ein eigener Ordner: Beim Entkoppeln verschwinden alle Vorschaubilder auf einmal.
+    let target = device_dir(&inner.config.thumb_dir(), &dev.node_id).join(&key[..2]).join(format!("{key}.jpg"));
     if let Ok((w, h)) = image::image_dimensions(&target) {
         return Ok(Thumbnail { path: target, width: w, height: h, cached: true });
     }
@@ -195,7 +202,7 @@ impl ProtocolHandler for ThumbProtocol {
         };
         if !inner.db.is_paired(&peer).unwrap_or(false) {
             let _ = inner.db.audit(&peer, "thumb.connect", None, false, Some("nicht gekoppelt"));
-            conn.close(1u32.into(), b"not paired");
+            crate::pairing::reject(&inner.db, &conn);
             return Ok(());
         }
         let result = async {

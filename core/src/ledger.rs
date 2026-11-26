@@ -235,6 +235,9 @@ pub async fn sync_with(ctx: &LedgerCtx, peer: EndpointId, connect_timeout: Durat
         };
 
     let stats = pull_on(ctx, &conn, &peer_str).await.map_err(SyncError::Failed);
+    if stats.is_err() && crate::pairing::handle_close(&ctx.db, &conn) {
+        return Err(SyncError::Failed(anyhow::anyhow!("Die Gegenseite hat die Kopplung aufgehoben")));
+    }
     if stats.is_ok() {
         // Rück-Abgleich der Gegenseite über dieselbe Verbindung bedienen.
         if let Ok(Ok((send, recv))) = tokio::time::timeout(REVERSE_WAIT, conn.accept_bi()).await {
@@ -307,7 +310,7 @@ async fn pull_on(ctx: &LedgerCtx, conn: &Connection, peer: &str) -> Result<PullS
 
     ctx.db.set_last_sync(peer)?;
     if let Some(name) = &stats.device_name {
-        ctx.db.add_device(peer, name)?; // Namen aktualisieren
+        ctx.db.update_device_name(peer, name)?; // nur den Namen – nie neu koppeln
     }
     ctx.peer_reached(peer);
     Ok(stats)
@@ -418,7 +421,7 @@ impl ProtocolHandler for LedgerProtocol {
         );
         if allowed.is_err() {
             tracing::debug!("Ledger-Anfrage ohne Recht catalog.read abgelehnt");
-            conn.close(1u32.into(), b"not paired");
+            crate::pairing::reject(&ctx.db, &conn);
             return Ok(());
         }
         ctx.peer_reached(&peer);

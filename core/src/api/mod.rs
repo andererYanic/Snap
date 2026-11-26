@@ -61,7 +61,7 @@ pub(crate) async fn handle_request(
                 Err(e) => Err(e),
             }
         }
-        Request::PairRemove { device } => pair_remove(inner, &device),
+        Request::PairRemove { device } => pair_remove(inner, &device).await,
         Request::PairList => devices::pair_list(inner),
         Request::PairGrant { device, capability, folder } => devices::pair_grant(inner, &device, &capability, folder),
         Request::PairRevoke { device, capability, folder } => devices::pair_revoke(inner, &device, &capability, folder),

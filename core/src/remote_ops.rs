@@ -737,7 +737,7 @@ impl ProtocolHandler for OpsProtocol {
         // Nicht gekoppelt: trennen, bevor irgendetwas gelesen wird.
         if !inner.db.is_paired(&peer).unwrap_or(false) {
             let _ = inner.db.audit(&peer, "ops.connect", None, false, Some("nicht gekoppelt"));
-            conn.close(1u32.into(), b"not paired");
+            crate::pairing::reject(&inner.db, &conn);
             return Ok(());
         }
         let result = async {

@@ -588,6 +588,15 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     promise.resolve(ctx.cacheDir.absolutePath)
   }
 
+  /** Zwischengespeicherte Dateien anderer Geräte löschen (nach dem Entkoppeln). */
+  @ReactMethod
+  fun clearRemoteCache(promise: Promise) {
+    scope.launch {
+      java.io.File(ctx.cacheDir, "remote").deleteRecursively()
+      promise.resolve(null)
+    }
+  }
+
   /** Drucken über den Druckdialog des Systems (PDF unverändert, Bilder eingepasst). */
   @ReactMethod
   fun printFile(path: String, promise: Promise) {

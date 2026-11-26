@@ -48,6 +48,20 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   je Gerät, Entkoppeln löscht den gemeldeten Wert. Gegenstellen mit Protokoll 1 bleiben verbunden,
   bekommen aber keine Meldung. Angriffstests: fremd, alt, manipuliert (5 Varianten), Flut,
   entzogenes Recht, entkoppelt.
+- **Entkoppeln in beide Richtungen:** Wer entkoppelt, schließt die Verbindung mit dem
+  Anwendungscode 3 („unpaired“). Der Code kommt im verschlüsselten, per TLS als genau dieses Gerät
+  ausgewiesenen QUIC-Kanal an und wirkt **nur auf den Absender selbst** – kein Gerät kann so ein
+  drittes entkoppeln, Wiedereinspielen ist durch QUIC ausgeschlossen. Ist die Gegenseite offline,
+  antwortet das entkoppelnde Gerät 90 Tage lang auf jeden Verbindungsversuch (Live, Ledger,
+  Fernzugriff, Vorschaubilder) mit diesem Code; danach und für nie gekoppelte Geräte nur mit
+  „nicht gekoppelt“ (Code 1), der nichts auslöst – so entkoppelt z. B. eine Neuinstallation nichts,
+  und Fremde erfahren nicht, wen ein Gerät kennt. Beide Seiten löschen Katalog, Rechte, Adressen,
+  wartende Aufträge, Offline-Kopien (nur unveränderte) und Vorschaubilder; die App leert den Cache
+  geöffneter Dateien. Einträge entkoppelter Geräte werden auch über Dritte oder aus einem noch
+  laufenden Abgleich nicht wieder übernommen, und der Namensabgleich koppelt nie neu.
+  Ausdrücklich heruntergeladene Dateien bleiben. Rest: Eine einzelne bereits laufende
+  Blob-Übertragung kann noch zu Ende gehen (neue Anfragen werden sofort abgewiesen).
+  Angriffstests: `core/tests/unpair.rs` (sofort, offline, Neuinstallation, fremder und dritter Absender).
 - **Lokale Suche & Explorer:** Index und Dateisystem-Zugriff sind nur lokal nutzbar (Recht `admin`,
   für Geräte gesperrt). Der Index liegt im privaten Datenordner (0700) und wird nicht repliziert.
   Die Snap-Daten werden weder indexiert noch als Suchort angenommen, auch nicht über Symlinks.

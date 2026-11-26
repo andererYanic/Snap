@@ -46,6 +46,11 @@ pub enum Event {
     DeviceRemoved {
         node_id: String,
     },
+    /// Die Gegenseite hat die Kopplung aufgehoben; hier wurde daraufhin ebenfalls entkoppelt.
+    DeviceUnpairedByPeer {
+        node_id: String,
+        name: String,
+    },
     /// Eine Ordner-Freigabe wurde (neu) gescannt.
     ShareScanned {
         name: String,
@@ -196,6 +201,15 @@ impl Subscription {
             Ok(e) => Some(e),
             Err(broadcast::error::RecvError::Lagged(missed)) => Some(Event::Lagged { missed }),
             Err(broadcast::error::RecvError::Closed) => None,
+        }
+    }
+
+    /// Nächstes bereits vorliegendes Ereignis, ohne zu warten.
+    pub fn try_next(&mut self) -> Option<Event> {
+        match self.rx.try_recv() {
+            Ok(e) => Some(e),
+            Err(broadcast::error::TryRecvError::Lagged(missed)) => Some(Event::Lagged { missed }),
+            Err(_) => None,
         }
     }
 }

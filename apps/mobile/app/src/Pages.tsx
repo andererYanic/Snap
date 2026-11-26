@@ -92,7 +92,7 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
     ]);
 
   const unpair = (d: Device) =>
-    Alert.alert(t('Gerät entkoppeln'), t('„{name}“ entkoppeln? Das Gerät verliert alle Rechte und sieht deine Freigaben nicht mehr.', { name: d.name }), [
+    Alert.alert(t('Gerät entkoppeln'), t('„{name}“ entkoppeln? Beide Geräte sehen danach die Dateien des anderen nicht mehr; Offline-Kopien und Vorschaubilder werden gelöscht. Heruntergeladene Dateien bleiben.', { name: d.name }), [
       { text: t('Abbrechen'), style: 'cancel' },
       { text: t('Entkoppeln'), style: 'destructive', onPress: () => request({ PairRemove: { device: d.node_id } }).then(load).catch((e) => notify(e.message)) },
     ]);

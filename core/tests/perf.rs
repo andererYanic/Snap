@@ -1162,6 +1162,36 @@ fn docx_read() {
 
 #[test]
 #[ignore]
+fn unpair_cleanup() {
+    // Gerät mit 200 000 Katalogeinträgen entkoppeln; danach Einträge eines Dritten übernehmen
+    // (prüft je Herkunft einmal, ob sie entkoppelt ist).
+    let dir = tempfile::tempdir().unwrap();
+    let db = DatabaseManager::open(&dir.path().join("unpair.db")).unwrap();
+    let key = SecretKey::generate();
+    let origin = key.public().to_string();
+    db.add_device(&origin, "Laptop").unwrap();
+    let entries = signed_entries(&key, 200_000);
+    for chunk in entries.chunks(5000) {
+        db.apply_remote_entries(chunk).unwrap();
+    }
+    let t = Instant::now();
+    assert!(db.remove_device(&origin).unwrap());
+    report("Entkoppeln: 200k Einträge löschen", 1, t.elapsed());
+    let t = Instant::now();
+    assert!(db.was_unpaired(&origin).unwrap());
+    report("was_unpaired", 1, t.elapsed());
+    let other = SecretKey::generate();
+    let more = signed_entries(&other, 10_000);
+    let t = Instant::now();
+    assert_eq!(db.apply_remote_entries(&more).unwrap(), 10_000);
+    report("apply_remote_entries (10k, mit Entkoppelt-Prüfung)", 10_000, t.elapsed());
+    let t = Instant::now();
+    assert_eq!(db.apply_remote_entries(&entries[..10_000]).unwrap(), 0);
+    report("apply_remote_entries (10k entkoppelt, verworfen)", 10_000, t.elapsed());
+}
+
+#[test]
+#[ignore]
 fn formats_read() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();

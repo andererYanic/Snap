@@ -328,6 +328,57 @@ impl PairingProtocol {
     }
 }
 
+/// Schließcode „nicht gekoppelt“ (unbekanntes Gerät oder fehlendes Recht).
+pub const CLOSE_NOT_PAIRED: u32 = 1;
+/// Schließcode „ich habe dich entkoppelt“. Kommt er über eine Verbindung, die per TLS als genau
+/// dieses Gerät ausgewiesen ist, entkoppelt die Gegenseite ebenfalls. Er wirkt nur auf den
+/// Absender selbst – kein Gerät kann so ein drittes entkoppeln.
+pub const CLOSE_UNPAIRED: u32 = 3;
+
+/// Verbindung eines nicht (mehr) berechtigten Geräts schließen. Wurde es hier ausdrücklich
+/// entkoppelt (≤ 90 Tage), erfährt es das; sonst nur „nicht gekoppelt“ (z. B. nach einer
+/// Neuinstallation – das löst drüben nichts aus).
+pub fn reject(db: &crate::database::DatabaseManager, conn: &iroh::endpoint::Connection) {
+    let peer = conn.remote_id().to_string();
+    if !db.is_paired(&peer).unwrap_or(true) && db.was_unpaired(&peer).unwrap_or(false) {
+        conn.close(CLOSE_UNPAIRED.into(), b"unpaired");
+    } else {
+        conn.close(CLOSE_NOT_PAIRED.into(), b"not paired");
+    }
+}
+
+/// Hat die Gegenseite diese Verbindung mit „entkoppelt“ geschlossen?
+pub fn closed_as_unpaired(conn: &iroh::endpoint::Connection) -> bool {
+    matches!(
+        conn.close_reason(),
+        Some(iroh::endpoint::ConnectionError::ApplicationClosed(c)) if c.error_code == CLOSE_UNPAIRED.into()
+    )
+}
+
+/// Nach dem Ende einer Verbindung: Hat die Gegenseite uns entkoppelt, hier ebenfalls entkoppeln.
+/// Das Löschen (bei großen Katalogen bis ~1 s) läuft außerhalb der async-Threads.
+pub fn handle_close(db: &std::sync::Arc<crate::database::DatabaseManager>, conn: &iroh::endpoint::Connection) -> bool {
+    if !closed_as_unpaired(conn) {
+        return false;
+    }
+    let peer = conn.remote_id().to_string();
+    let db = db.clone();
+    let forget = move || match db.unpaired_by_peer(&peer) {
+        Ok(true) => {
+            tracing::info!("{} hat die Kopplung aufgehoben – hier ebenfalls entkoppelt", &peer[..10.min(peer.len())])
+        }
+        Ok(false) => {}
+        Err(e) => tracing::warn!("Entkoppeln durch die Gegenseite nicht übernommen: {e:#}"),
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => {
+            h.spawn_blocking(forget);
+        }
+        Err(_) => forget(),
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

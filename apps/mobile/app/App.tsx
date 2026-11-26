@@ -182,6 +182,11 @@ export default function App() {
         }
       } else if (ev.type === 'DropVisibilityChanged') {
         drop.syncRadio(ev.mode).catch(() => {});
+      } else if (ev.type === 'DeviceRemoved') {
+        // Geöffnete Dateien des Geräts sofort unzugänglich machen (Cache ist nur ein Cache)
+        core.clearRemoteCache().catch(() => {});
+      } else if (ev.type === 'DeviceUnpairedByPeer') {
+        notify(t('„{name}“ hat die Kopplung aufgehoben. Seine Dateien sind hier nicht mehr verfügbar.', { name: ev.name }));
       }
     });
     return () => {

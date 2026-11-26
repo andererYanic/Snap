@@ -231,9 +231,9 @@ async fn security_unpaired_and_revoked_devices_cannot_read_ledger() {
         other => panic!("{other:?}"),
     }
     publish(&a, &files, "neu.txt", b"y").await;
+    // B hat die Entkopplung erfahren und A ebenfalls entfernt – oder wird abgewiesen
     let results = sync(&b).await;
-    assert_eq!(results.len(), 1);
-    assert!(!results[0].ok && results[0].new_entries == 0, "A muss B abweisen: {results:?}");
+    assert!(results.iter().all(|r| !r.ok && r.new_entries == 0), "A muss B abweisen: {results:?}");
     assert!(remote_files(&b).await.iter().all(|f| f.name != "neu.txt"));
 
     a.shutdown().await;
