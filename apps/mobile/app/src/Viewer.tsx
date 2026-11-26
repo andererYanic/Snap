@@ -20,7 +20,7 @@ import { t } from './i18n';
 import { isMedia, isVideo, useThumb } from './thumbs';
 import { m } from './motion';
 import { Icon } from './Icon';
-import { clampV, range, rubber, rubberScale, settle, settleTarget } from './zoom';
+import { clampV, pinchBase, pinchStep, range, rubber, settle, settleTarget, type PinchState } from './zoom';
 
 export interface MediaItem {
   path: string;
@@ -74,6 +74,10 @@ export default function Viewer({ items, start, onClose, onEdit }: {
   // Geste: 0 offen, 1 blättern, 2 schließen, 3 Bild verschieben, 4 nichts
   const mode = useSharedValue(0);
   const start0 = useSharedValue({ s: 1, x: 0, y: 0, px: 0, py: 0 });
+  const pz = useSharedValue<PinchState>({ s: 1, px: 0, py: 0, base: 1, n: 2, fx: 0, fy: 0 });
+  // Während eines Zooms ruht das Verschieben (kein Mitlaufen, kein Schwung danach)
+  const pinching = useSharedValue(false);
+  const pinchedInPan = useSharedValue(false);
 
   useEffect(() => {
     count.value = items.length;
@@ -107,24 +111,31 @@ export default function Viewer({ items, start, onClose, onEdit }: {
     .onStart((e) => {
       cancelAnimation(tx);
       cancelAnimation(ty);
-      const s0 = s.value;
-      start0.value = { s: s0, x: tx.value, y: ty.value, px: (e.focalX - tx.value) / s0, py: (e.focalY - ty.value) / s0 };
+      cancelAnimation(s);
+      pinching.value = true;
+      pinchedInPan.value = true;
+      pz.value = pinchBase(s.value, tx.value, ty.value, e.focalX, e.focalY, e.scale, e.numberOfPointers);
       mode.value = 4;
       drag.value = settle(0);
     })
     .onUpdate((e) => {
-      const st = start0.value;
-      const ns = rubberScale(st.s * e.scale, 1, IMAGE_MAX_ZOOM);
-      s.value = ns;
-      tx.value = e.focalX - st.px * ns;
-      ty.value = e.focalY - st.py * ns;
+      const r = pinchStep(pz.value, { s: s.value, x: tx.value, y: ty.value }, e.scale, e.focalX, e.focalY, e.numberOfPointers, 1, IMAGE_MAX_ZOOM);
+      pz.value = r.st;
+      s.value = r.s;
+      tx.value = r.x;
+      ty.value = r.y;
     })
-    .onEnd((e) => {
+    .onEnd(() => {
+      // Letzter gültiger Fingerpunkt (nicht der Punkt beim Abheben des ersten Fingers)
       const b = box.value;
-      const to = settleTarget(s.value, tx.value, ty.value, e.focalX, e.focalY, 1, IMAGE_MAX_ZOOM, W, H, b.x, b.y, b.w, b.h);
+      const st = pz.value;
+      const to = settleTarget(s.value, tx.value, ty.value, st.fx, st.fy, 1, IMAGE_MAX_ZOOM, W, H, b.x, b.y, b.w, b.h);
       s.value = settle(to.s);
       tx.value = settle(to.x);
       ty.value = settle(to.y);
+    })
+    .onFinalize(() => {
+      pinching.value = false;
     });
 
   const pan = Gesture.Pan()
@@ -135,8 +146,12 @@ export default function Viewer({ items, start, onClose, onEdit }: {
       cancelAnimation(ty);
       start0.value = { s: s.value, x: tx.value, y: ty.value, px: 0, py: 0 };
       mode.value = s.value > ZOOMED ? 3 : 0;
+      pinchedInPan.value = false;
     })
     .onUpdate((e) => {
+      if (pinching.value || pinchedInPan.value) {
+        return;
+      }
       if (mode.value === 0) {
         if (Math.abs(e.translationX) < 10 && Math.abs(e.translationY) < 10) {
           return;
@@ -159,6 +174,9 @@ export default function Viewer({ items, start, onClose, onEdit }: {
       }
     })
     .onEnd((e) => {
+      if (pinchedInPan.value) {
+        return; // nach einem Zoom kein Schwung
+      }
       if (mode.value === 3) {
         const b = box.value;
         const sc = s.value;
