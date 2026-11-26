@@ -166,8 +166,6 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
         promise.resolve(map)
       } catch (e: Throwable) {
         promise.resolve(null)
-      } finally {
-        temp?.delete()
       }
     }
   }
@@ -276,6 +274,8 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
         promise.resolve(map)
       } catch (e: Throwable) {
         promise.resolve(null)
+      } finally {
+        temp?.delete()
       }
     }
   }
