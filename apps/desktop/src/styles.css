@@ -426,3 +426,4 @@ label { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px;
 .btn.link.danger { color: var(--danger); }
 .toast { display: flex; align-items: center; gap: 14px; }
 .toastbtn { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; padding: 4px 0; white-space: nowrap; }
+.offertext { white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }

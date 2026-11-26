@@ -180,6 +180,8 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropContacts
         | Request::DropSaveContact { .. }
         | Request::DropRemoveContact { .. }
+        | Request::DropRenameContact { .. }
+        | Request::DropSetName { .. }
         | Request::DropBlocked
         | Request::DropUnblock { .. }
         | Request::DropHotspotParse { .. }

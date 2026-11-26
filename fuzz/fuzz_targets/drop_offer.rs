@@ -5,7 +5,9 @@
 //!   Formatzeichen, nicht `.`/`..`, beginnen nicht mit `.`;
 //! - geprüfte Dateiliste: 1–1000 Einträge, Gesamtgröße = Summe ohne Überlauf;
 //! - Anzeigenamen: nicht leer, ≤ 64 Byte, ohne Steuerzeichen;
-//! - Vorschaubild: Ergebnis ist ein PNG mit höchstens 64 × 64 Pixeln.
+//! - Vorschaubild: Ergebnis ist ein PNG mit höchstens 64 × 64 Pixeln;
+//! - geteilter Text: ohne Steuerzeichen außer \n/\t; als Link nur http(s) ohne Leerzeichen und
+//!   ohne Zugangsdaten, und die Erkennung ist stabil.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use space_core::drop::wire::{self, Card, OfferFile, Probe};
@@ -19,7 +21,7 @@ fn check_name(n: &str) {
 
 fuzz_target!(|data: &[u8]| {
     let Some((&sel, rest)) = data.split_first() else { return };
-    match sel % 4 {
+    match sel % 5 {
         0 => {
             if let Ok(files) = serde_json::from_slice::<Vec<OfferFile>>(rest) {
                 if let Ok((valid, total)) = wire::validate_files(&files) {
@@ -46,6 +48,18 @@ fuzz_target!(|data: &[u8]| {
             if let Ok(png) = wire::decode_preview(&b64) {
                 let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap();
                 assert!(img.width() <= wire::MAX_PREVIEW_EDGE && img.height() <= wire::MAX_PREVIEW_EDGE);
+            }
+        }
+        4 => {
+            let t = String::from_utf8_lossy(rest);
+            let c = wire::clean_text(&t);
+            assert!(c.chars().all(|ch| ch == '\n' || ch == '\t' || !ch.is_control()));
+            assert_eq!(wire::clean_text(&c), c, "stabil");
+            if let Some(l) = wire::as_link(&t) {
+                assert!(l.starts_with("http://") || l.starts_with("https://"), "{l}");
+                assert!(!l.chars().any(char::is_whitespace));
+                assert!(!l.contains('@') || !l.split('/').nth(2).unwrap_or("").contains('@'), "keine Zugangsdaten: {l}");
+                assert_eq!(wire::as_link(&l).as_deref(), Some(l.as_str()), "stabil");
             }
         }
         _ => {

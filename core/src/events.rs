@@ -143,6 +143,12 @@ pub enum Event {
         error: Option<String>,
         /// Gegenüber kann jetzt als Kontakt gespeichert werden.
         can_save_contact: bool,
+        /// Empfangener Text (bereinigt), falls geteilt.
+        #[serde(default)]
+        text: Option<String>,
+        /// Text ist genau ein Link (nur http/https).
+        #[serde(default)]
+        link: Option<String>,
     },
     /// Sichtbarkeit für Snap Drop hat sich geändert (`off`, `contacts`, `everyone`).
     DropVisibilityChanged {

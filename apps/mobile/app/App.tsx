@@ -32,7 +32,8 @@ export default function App() {
   const [crash, setCrash] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: () => void; action?: { label: string; run: () => void } } | null>(null);
   // Snap Drop: Senden (gewählte Dateien), eingehendes Angebot, Kurzanfrage für den Offline-Weg
-  const [dropPaths, setDropPaths] = useState<string[] | null>(null);
+  const [dropShare, setDropShare] = useState<{ paths: string[]; text: string | null } | null>(null);
+  const setDropPaths = useCallback((paths: string[] | null) => setDropShare(paths ? { paths, text: null } : null), []);
   const [incoming, setIncoming] = useState<drop.IncomingOffer | null>(null);
   const [hotspot, setHotspot] = useState<{ data: string; offer: drop.HotspotOffer } | null>(null);
   const [, setSelecting] = useState(false);
@@ -115,6 +116,15 @@ export default function App() {
     }
     drop.listen();
     drop.onHotspotRequest((data, offer) => setHotspot({ data, offer }));
+    // Aus dem „Teilen“-Menü einer anderen App: Snap-Drop-Blatt mit den Inhalten öffnen
+    const pickShare = () =>
+      core.takeShare().then((sh) => {
+        if (sh && (sh.files.length > 0 || sh.text)) {
+          setDropShare({ paths: sh.files, text: sh.text });
+        }
+      }).catch(() => {});
+    pickShare();
+    const offShare = core.onShare(pickShare);
     drop.syncRadio().catch(() => {});
     const saveContact = (id: number) =>
       drop
@@ -138,7 +148,21 @@ export default function App() {
       } else if (ev.type === 'DropFinished') {
         const files: string[] = ev.files ?? [];
         const count = files.length === 1 ? t('1 Datei') : t('{n} Dateien', { n: files.length });
-        if (ev.incoming) {
+        if (ev.incoming && ev.ok && ev.text) {
+          // Text immer in die Zwischenablage; Links lassen sich direkt öffnen
+          drop.leaveHotspot();
+          core.copyText(ev.text).catch(() => {});
+          if (ev.link) {
+            const link: string = ev.link;
+            notifyAction(t('Link von {name} – in die Zwischenablage kopiert.', { name: ev.peer }), t('Öffnen'), () =>
+              core.openLink(link).catch((e) => notify(String(e?.message ?? e))),
+            );
+          } else if (ev.can_save_contact) {
+            notifyAction(t('Text von {name} in die Zwischenablage kopiert.', { name: ev.peer }), t('Als Kontakt speichern'), () => saveContact(ev.id));
+          } else {
+            notify(t('Text von {name} in die Zwischenablage kopiert.', { name: ev.peer }));
+          }
+        } else if (ev.incoming) {
           drop.leaveHotspot();
           if (!ev.ok) {
             notify(t('Empfang fehlgeschlagen: {error}', { error: ev.error ?? '' }));
@@ -162,6 +186,7 @@ export default function App() {
     });
     return () => {
       off();
+      offShare();
       drop.onHotspotRequest(null);
     };
   }, [ready, notify, notifyAction]);
@@ -268,7 +293,7 @@ export default function App() {
               )}
             </Animated.View>
           )}
-          {dropPaths && <DropSendSheet paths={dropPaths} theme={theme} notify={notify} onClose={() => setDropPaths(null)} />}
+          {dropShare && <DropSendSheet paths={dropShare.paths} text={dropShare.text} theme={theme} notify={notify} onClose={() => setDropShare(null)} />}
           {incoming && <OfferSheet offer={incoming} theme={theme} onDone={() => setIncoming(null)} />}
           {hotspot && <HotspotSheet offer={hotspot.offer} theme={theme} onAnswer={answerHotspot} />}
         </SafeAreaView>

@@ -148,6 +148,9 @@ fn main() {
             commands::drop_remove_contact,
             commands::drop_blocked,
             commands::drop_unblock,
+            commands::drop_set_name,
+            commands::drop_rename_contact,
+            commands::open_link,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -871,7 +871,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Drop { action: Some(DropAction::Send { peer, files }) } => {
             let paths = files.iter().map(|f| absolute(f)).collect::<Result<Vec<_>>>()?;
             eprintln!("⏳ Warte auf Annahme beim Empfänger …");
-            Request::DropSend { peer, paths }
+            Request::DropSend { peer, paths, text: None }
         }
         Commands::Drop { action: Some(DropAction::Offers) } => Request::DropOffers,
         Commands::Drop { action: Some(DropAction::Accept { id }) } => {
@@ -1057,11 +1057,14 @@ fn describe_event(e: &Event) -> String {
         Event::DropProgress { id, done_bytes, total_bytes, .. } => {
             format!("📦 Drop {id}: {} von {}", human_size(*done_bytes), human_size(*total_bytes))
         }
-        Event::DropFinished { id, incoming, ok, peer, files, error, .. } => format!(
+        Event::DropFinished { id, incoming, ok, peer, files, error, text, .. } => format!(
             "{} Drop {id} {} {peer}: {}",
             if *ok { "✅" } else { "❌" },
             if *incoming { "von" } else { "an" },
-            error.clone().unwrap_or_else(|| format!("{} Dateien", files.len()))
+            error.clone().unwrap_or_else(|| match text {
+                Some(t) => format!("Text: {}", t.chars().take(80).collect::<String>()),
+                None => format!("{} Dateien", files.len()),
+            })
         ),
         Event::DropVisibilityChanged { mode, .. } => format!("📡 Drop-Sichtbarkeit: {mode}"),
         Event::DropNearbyChanged => "📡 Geräte in der Nähe geändert".into(),

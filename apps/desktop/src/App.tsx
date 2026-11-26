@@ -85,6 +85,17 @@ export default function App() {
       const save = ev.can_save_contact
         ? { label: t("Als Kontakt speichern"), run: () => drop.saveContact(ev.id).then((c) => notify({ text: t("{name} ist jetzt ein Kontakt.", { name: c.name }) })).catch((e) => notify({ text: errorText(e), error: true })) }
         : undefined;
+      if (ev.incoming && ev.ok && ev.text) {
+        // Text in die Zwischenablage; Links lassen sich direkt öffnen
+        navigator.clipboard.writeText(ev.text).catch(() => {});
+        const link: string | null = ev.link ?? null;
+        notify(
+          link
+            ? { text: t("Link von {name} – in die Zwischenablage kopiert.", { name: ev.peer }), action: { label: t("Öffnen"), run: () => { drop.openLink(link).catch((e) => notify({ text: errorText(e), error: true })); } } }
+            : { text: t("Text von {name} in die Zwischenablage kopiert.", { name: ev.peer }), action: save },
+        );
+        return;
+      }
       if (ev.incoming && !ev.ok) notify({ text: t("Empfang fehlgeschlagen: {error}", { error: ev.error ?? "" }), error: true });
       else if (ev.incoming) notify({ text: t("{files} von {name} gespeichert.", { files: n === 1 ? t("1 Datei") : t("{n} Dateien", { n }), name: ev.peer }), action: save });
       else if (ev.ok) notify({ text: t("An {name} gesendet.", { name: ev.peer }), action: save });

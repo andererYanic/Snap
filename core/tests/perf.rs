@@ -1337,6 +1337,7 @@ async fn drop_transfer() {
         bdb.upsert_drop_contact(&DropContactRow {
             key: format!("{i:064x}"),
             name: format!("Kontakt {i}"),
+            alias: None,
             secret: blake3::hash(&i.to_be_bytes()).as_bytes().to_vec(),
             added_at: 0,
             last_seen: 0,

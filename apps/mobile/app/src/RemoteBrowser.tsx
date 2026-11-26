@@ -241,7 +241,7 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
       ) : rows === null ? (
         <ActivityIndicator style={s.loading} color={theme.accent as string} />
       ) : empty ? (
-        <Text style={s.note}>{trail.length ? t('Dieser Ordner ist leer.') : t('Dieses Gerät teilt noch keine Dateien mit dir.')}</Text>
+        <Text style={s.note}>{trail.length ? t('Dieser Ordner ist leer.') : t('Dieses Gerät gibt noch keine Ordner frei. Auf dem anderen Gerät: in „Dateien“ einen Ordner lange drücken › „Für Geräte freigeben“ – oder dort unter Einstellungen › Geräte auswählen.')}</Text>
       ) : (
         <FlatList
           data={rows}

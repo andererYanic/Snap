@@ -10,6 +10,8 @@ export interface DropStatus {
   mode: Mode;
   until: number | null;
   name: string;
+  default_name: string;
+  custom_name: boolean;
   fingerprint: string;
   dir: string;
   code: string | null;
@@ -33,6 +35,8 @@ export interface IncomingOffer {
   total: number;
   preview: boolean;
   expires_at: number;
+  text?: string | null;
+  link?: string | null;
 }
 
 export interface HotspotOffer {
@@ -46,6 +50,8 @@ export interface HotspotOffer {
 export interface Contact {
   key: string;
   name: string;
+  device_name: string;
+  renamed: boolean;
   fingerprint: string;
   added_at: number;
   last_seen: number;
@@ -77,6 +83,9 @@ export const preview = (id: number) => request<{ png: string | null }>({ DropPre
 export const contacts = () => request<{ contacts: Contact[] }>('DropContacts').then((r) => r.contacts);
 export const saveContact = (id: number) => request<Contact>({ DropSaveContact: { id } });
 export const removeContact = (key: string) => request({ DropRemoveContact: { key } });
+export const renameContact = (key: string, alias: string | null) => request<Contact>({ DropRenameContact: { key, alias } });
+/** Eigener Anzeigename (`null` = Gerätename). */
+export const setName = (name: string | null) => request<DropStatus>({ DropSetName: { name } });
 export const blocked = () => request<{ blocked: Blocked[] }>('DropBlocked').then((r) => r.blocked);
 export const unblock = (key: string) => request({ DropUnblock: { key } });
 export const addCode = (code: string) => request<NearbyPeer>({ DropAddCode: { code } });
@@ -275,9 +284,12 @@ export interface SendResult {
 }
 
 /** Sendet an ein Gerät aus der Liste; offline erreichbare Geräte über einen kurzen Hotspot. */
-export async function send(peer: NearbyPeer, paths: string[]): Promise<SendResult> {
+export async function send(peer: NearbyPeer, paths: string[], text: string | null = null): Promise<SendResult> {
   if (!peer.offline) {
-    return request<SendResult>({ DropSend: { peer: peer.id, paths } });
+    return request<SendResult>({ DropSend: { peer: peer.id, paths, text } });
+  }
+  if (paths.length === 0) {
+    throw new Error('Text lässt sich nur über ein gemeinsames Netz senden.');
   }
   const n = native();
   const device = deviceOf.get(peer.id);
@@ -305,7 +317,7 @@ export async function send(peer: NearbyPeer, paths: string[]): Promise<SendResul
     if (!id) {
       throw new Error('Ungültige Antwort vom anderen Gerät.');
     }
-    return await request<SendResult>({ DropSend: { peer: id, paths } });
+    return await request<SendResult>({ DropSend: { peer: id, paths, text } });
   } finally {
     n.closeLink(device);
     n.stopHotspot();

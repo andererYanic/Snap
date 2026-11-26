@@ -6,7 +6,7 @@ import * as core from './core';
 import { humanSize, request, shortDate } from './core';
 import { LANGUAGES, lang, locale, setLanguage, t } from './i18n';
 import type { Theme } from './theme';
-import { Glyph, SectionLabel, themed } from './ui';
+import { BottomSheet, Glyph, SectionLabel, themed } from './ui';
 import { Icon, type IconName } from './Icon';
 
 export interface Device {
@@ -26,10 +26,14 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
   const [online, setOnline] = useState<Set<string>>(new Set());
   const [invite, setInvite] = useState<string | null>(null);
   const [code, setCode] = useState('');
+  const [shares, setShares] = useState<{ name: string; root: string; file_count: number }[]>([]);
+  // Nach dem Koppeln: fragen, was das neue Gerät sehen soll
+  const [afterPair, setAfterPair] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       setDevices((await request<{ devices: Device[] }>('PairList')).devices);
+      setShares((await request<{ shares: { name: string; root: string; file_count: number }[] }>('ShareList')).shares ?? []);
       const peers = (await request<{ peers: { node_id: string; status: string }[] }>('Peers')).peers;
       setOnline(new Set(peers.filter((p) => p.status === 'online').map((p) => p.node_id)));
     } catch (e: any) {
@@ -47,7 +51,8 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
       setInvite(inv.code);
       const r = await request<{ device: Device }>('PairInviteWait');
       setInvite(null);
-      notify(t('„{name}“ ist jetzt gekoppelt. Rechte vergibst du einzeln.', { name: r.device.name }));
+      notify(t('„{name}“ ist jetzt gekoppelt.', { name: r.device.name }));
+      setAfterPair(r.device.name);
       load();
     } catch (e: any) {
       setInvite(null);
@@ -60,11 +65,31 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
       const r = await request<{ device: Device }>({ PairJoin: { code: code.trim() } });
       setCode('');
       notify(t('Mit „{name}“ gekoppelt.', { name: r.device.name }));
+      setAfterPair(r.device.name);
       load();
     } catch (e: any) {
       notify(e.message);
     }
   };
+
+  /** Ordner unter dem gemeinsamen Speicher für alle gekoppelten Geräte freigeben. */
+  const shareDirs = async (dirs: string[]) => {
+    try {
+      const root = await core.storageRoot();
+      for (const d of dirs) {
+        await request({ ShareAdd: { path: `${root}/${d}`, name: null, devices: null } });
+      }
+      notify(t('Freigegeben. Deine gekoppelten Geräte sehen diese Ordner jetzt.'));
+      load();
+    } catch (e: any) {
+      notify(e?.message ?? String(e));
+    }
+  };
+  const stopShare = (sh: { name: string }) =>
+    Alert.alert(t('Freigabe beenden'), t('„{name}“ nicht mehr für gekoppelte Geräte freigeben? Die Dateien bleiben auf diesem Gerät.', { name: sh.name }), [
+      { text: t('Abbrechen'), style: 'cancel' },
+      { text: t('Beenden'), style: 'destructive', onPress: () => request({ ShareRemove: { name: sh.name } }).then(load).catch((e) => notify(e.message)) },
+    ]);
 
   const unpair = (d: Device) =>
     Alert.alert(t('Gerät entkoppeln'), t('„{name}“ entkoppeln? Das Gerät verliert alle Rechte und sieht deine Freigaben nicht mehr.', { name: d.name }), [
@@ -108,6 +133,29 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
         </View>
       )}
 
+      <SectionLabel theme={theme} style={s.label}>{t('Meine Freigaben')}</SectionLabel>
+      <View style={s.group}>
+        {shares.length === 0 ? (
+          <Text style={[s.muted, s.block]}>{t('Noch keine Ordner freigegeben. In „Dateien“ einen Ordner lange drücken › „Für Geräte freigeben“.')}</Text>
+        ) : (
+          shares.map((sh, i) => (
+            <View key={sh.name}>
+              {i > 0 && <View style={s.sep} />}
+              <View style={s.row}>
+                <Glyph name={sh.name} dir theme={theme} size={32} />
+                <View style={s.grow}>
+                  <Text style={s.strong} numberOfLines={1}>{sh.name}</Text>
+                  <Text style={s.muted} numberOfLines={1}>{sh.root.replace(/^\/storage\/emulated\/0\/?/, '') || t('Interner Speicher')}</Text>
+                </View>
+                <Pressable onPress={() => stopShare(sh)} style={s.iconBtn} accessibilityLabel={t('Freigabe „{name}“ beenden', { name: sh.name })} android_ripple={{ color: theme.accentSoft as string, borderless: true }}>
+                  <Icon name="close" size={20} color={theme.text3 as string} />
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+
       <SectionLabel theme={theme} style={s.label}>{t('Neues Gerät koppeln')}</SectionLabel>
       <View style={s.group}>
         <View style={s.block}>
@@ -135,7 +183,19 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
           </View>
         </View>
       </View>
-      <Text style={s.foot}>{t('Gekoppelte Geräte sehen nur, was du freigibst. Rechte vergibst du am Computer pro Ordner.')}</Text>
+      <Text style={s.foot}>{t('Gekoppelte Geräte sehen nur Ordner, die du freigibst – sonst nichts.')}</Text>
+      <BottomSheet
+        visible={!!afterPair}
+        theme={theme}
+        title={t('Was soll „{name}“ von diesem Gerät sehen?', { name: afterPair ?? '' })}
+        onClose={() => setAfterPair(null)}
+        actions={[
+          { icon: 'photos', label: t('Fotos und Videos (DCIM)'), onPress: () => shareDirs(['DCIM']) },
+          { icon: 'download', label: t('Downloads'), onPress: () => shareDirs(['Download']) },
+          { icon: 'folder', label: t('Fotos und Downloads'), onPress: () => shareDirs(['DCIM', 'Download']) },
+          { icon: 'close', label: t('Später selbst wählen'), onPress: () => {} },
+        ]}
+      />
     </ScrollView>
   );
 }

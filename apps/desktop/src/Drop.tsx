@@ -28,6 +28,8 @@ export function DropPage({ notify }: { notify: Notify }) {
   const [people, setPeople] = useState<DropContact[]>([]);
   const [blocked, setBlocked] = useState<DropBlocked[]>([]);
   const [now, setNow] = useState(Date.now() / 1000);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   const load = useCallback(() => {
     drop.status().then(setSt).catch(fail(notify));
@@ -46,6 +48,30 @@ export function DropPage({ notify }: { notify: Notify }) {
       window.clearInterval(tick);
     };
   }, [load]);
+
+  const saveName = (value: string | null) => {
+    const p = editing === "me" ? drop.setName(value).then(setSt) : editing ? drop.renameContact(editing, value).then(load) : Promise.resolve();
+    p.then(() => setEditing(null)).catch(fail(notify));
+  };
+  const editor = (placeholder: string, reset: string | null) => (
+    <div className="line">
+      <input
+        className="field grow"
+        autoFocus
+        maxLength={40}
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") saveName(draft.trim() || null);
+          if (e.key === "Escape") setEditing(null);
+        }}
+      />
+      <button className="btn primary" onClick={() => saveName(draft.trim() || null)}>{t("Speichern")}</button>
+      {reset && <button className="btn" onClick={() => saveName(null)}>{reset}</button>}
+      <button className="btn" onClick={() => setEditing(null)}>{t("Abbrechen")}</button>
+    </div>
+  );
 
   const choose = (mode: DropMode) => drop.setVisibility(mode).then(setSt).catch(fail(notify));
   const minutes = st?.until ? Math.max(1, Math.ceil((st.until - now) / 60)) : 0;
@@ -87,12 +113,19 @@ export function DropPage({ notify }: { notify: Notify }) {
 
       <section className="panel">
         <h2>{t("Dieses Gerät")}</h2>
-        <div className="line">
-          <div className="grow">
-            <div className="strong">{st?.name}</div>
-            <div className="muted small">{t("Fingerabdruck {fp}", { fp: st?.fingerprint ?? "" })}</div>
+        {editing === "me" ? (
+          editor(st?.default_name ?? "", st?.custom_name ? t("Gerätename verwenden") : null)
+        ) : (
+          <div className="line">
+            <div className="grow">
+              <div className="strong">{st?.name}</div>
+              <div className="muted small">{t("Name für andere · Fingerabdruck {fp}", { fp: st?.fingerprint ?? "" })}</div>
+            </div>
+            <button className="btn" onClick={() => { setDraft(st?.custom_name ? st.name : ""); setEditing("me"); }}>
+              <Icon.rename /> {t("Ändern")}
+            </button>
           </div>
-        </div>
+        )}
         <div className="muted small ablage">{t("Ablage")}: {st?.dir}</div>
       </section>
 
@@ -101,18 +134,23 @@ export function DropPage({ notify }: { notify: Notify }) {
         {people.length === 0 && (
           <p className="muted small">{t("Nach einem Tausch kannst du das Gegenüber als Kontakt speichern. Kontakte erkennt Snap am Schlüssel, nicht am Namen.")}</p>
         )}
-        {people.map((c) => (
-          <div key={c.key} className="line person">
-            <Avatar name={c.name} contact />
-            <div className="grow">
-              <div className="strong">{c.name}</div>
-              <div className="muted small mono">{c.fingerprint}</div>
+        {people.map((c) =>
+          editing === c.key ? (
+            <div key={c.key}>{editor(c.device_name, c.renamed ? t("Namen des Geräts verwenden") : null)}</div>
+          ) : (
+            <div key={c.key} className="line person">
+              <Avatar name={c.name} contact />
+              <div className="grow">
+                <div className="strong">{c.name}</div>
+                <div className="muted small mono">{c.renamed ? `${c.device_name} · ${c.fingerprint}` : c.fingerprint}</div>
+              </div>
+              <button className="btn" onClick={() => { setDraft(c.renamed ? c.name : ""); setEditing(c.key); }}>{t("Umbenennen")}</button>
+              <button className="btn" onClick={() => drop.removeContact(c.key).then(() => { notify({ text: t("Kontakt entfernt.") }); load(); }).catch(fail(notify))}>
+                {t("Entfernen")}
+              </button>
             </div>
-            <button className="btn" onClick={() => drop.removeContact(c.key).then(() => { notify({ text: t("Kontakt entfernt.") }); load(); }).catch(fail(notify))}>
-              {t("Entfernen")}
-            </button>
-          </div>
-        ))}
+          ),
+        )}
       </section>
 
       {blocked.length > 0 && (
@@ -265,7 +303,27 @@ export function OfferDialog({ offer, onDone }: { offer: IncomingOffer; onDone: (
             </button>
           )}
         </div>
-        <p>{t("{name} möchte dir {files} senden ({size}).", { name, files: filesLabel(offer.files.length), size: humanSize(offer.total) })}</p>
+        <p>
+          {offer.files.length === 0
+            ? offer.link
+              ? t("{name} möchte dir einen Link senden.", { name })
+              : t("{name} möchte dir einen Text senden.", { name })
+            : t("{name} möchte dir {files} senden ({size}).", { name, files: filesLabel(offer.files.length), size: humanSize(offer.total) })}
+        </p>
+        {offer.text && (
+          <div className="offerfiles">
+            {offer.link ? (
+              <>
+                <div className="strong">{(/^https?:\/\/([^/?#]+)/i.exec(offer.link)?.[1] ?? offer.link).toLowerCase()}</div>
+                <div className="muted small ellipsis">{offer.link}</div>
+              </>
+            ) : (
+              <div className="offertext">{offer.text.slice(0, 600)}</div>
+            )}
+          </div>
+        )}
+        {offer.text && <div className="muted small">{t("Wird nach dem Annehmen in die Zwischenablage kopiert.")}</div>}
+        {offer.files.length > 0 && (
         <div className="offerfiles">
           {shown.map((f, i) => (
             <div key={i} className="line">
@@ -275,6 +333,7 @@ export function OfferDialog({ offer, onDone }: { offer: IncomingOffer; onDone: (
           ))}
           {offer.files.length > shown.length && <div className="muted small">{t("und {n} weitere", { n: offer.files.length - shown.length })}</div>}
         </div>
+        )}
         <div className="muted small">{t("Prüfcode")} <span className="checkcode">{offer.code}</span></div>
         <div className="line">
           {!offer.contact && <button className="btn link danger" onClick={() => answer(false, true)}>{t("Ablehnen und blockieren")}</button>}
