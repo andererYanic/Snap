@@ -848,6 +848,31 @@ test('Zoom: Fingerpunkt bleibt stehen, Grenzen mit Gummiband, Seiten finden, Auf
   expect(z.pageAt(lay.offsets, lay.height)).toBe(2);
 });
 
+test('Zoom-Mittelpunkt bleibt: erster Finger zuerst gehoben oder dritter Finger dazu – kein Sprung', () => {
+  const z = require('../src/zoom');
+  // Start bei Zoom 1, Finger-Mittelpunkt (200|300)
+  let st = z.pinchBase(1, 0, 0, 200, 300, 1, 2);
+  let cur = { s: 1, x: 0, y: 0 };
+  // Auf ×2 aufziehen, Mittelpunkt bleibt bei (200|300) → Inhaltspunkt bleibt dort
+  let r = z.pinchStep(st, cur, 2, 200, 300, 2, 1, 6);
+  expect(r.s).toBe(2);
+  expect(r.x).toBe(-200);
+  expect(r.y).toBe(-300);
+  ({ st } = r);
+  cur = { s: r.s, x: r.x, y: r.y };
+  // Ein Finger wird zuerst gehoben: Mittelpunkt springt zum anderen Finger → nichts bewegt sich
+  r = z.pinchStep(st, cur, 2, 320, 420, 1, 1, 6);
+  expect({ s: r.s, x: r.x, y: r.y }).toEqual(cur);
+  // Einrasten mit dem letzten gültigen Fingerpunkt: keine Verschiebung
+  const to = z.settleTarget(cur.s, cur.x, cur.y, r.st.fx, r.st.fy, 1, 6, 400, 800, 0, 0, 400, 800);
+  expect(to).toEqual({ s: 2, x: -200, y: -300 });
+  // Dritter Finger kommt dazu (Mittelpunkt springt): neu bezogen, kein Sprung
+  r = z.pinchStep(st, cur, 2, 260, 330, 3, 1, 6);
+  expect({ s: r.s, x: r.x, y: r.y }).toEqual(cur);
+  const r2 = z.pinchStep(r.st, cur, 2, 260, 330, 3, 1, 6);
+  expect({ s: r2.s, x: r2.x, y: r2.y }).toEqual(cur);
+});
+
 test('Sortieren nach Dateiformat: Ordner zuerst, Formate gruppiert, darin neueste zuerst', () => {
   const { entryOrder } = require('../src/Files');
   const e = (name: string, kind: string, mtime: number) => ({ name, kind, mtime, size: 0 });
