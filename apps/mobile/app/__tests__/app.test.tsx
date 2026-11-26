@@ -314,10 +314,11 @@ test('Feedback 2–4: Menü am Finger nur bei einer Datei, Leiste ab zwei bleibt
   await act(async () => { await new Promise<void>((resolve) => { setTimeout(() => resolve(), 260); }); });
   expect(calls).toContainEqual({ Search: { query: 'u', filter: {}, limit: 200 } });
   expect(allText(r)).toContain('urlaub.jpg');
-  // Anzeige: Ohne Zoom ist das Verschieben im Bild aus, damit Wischen zur nächsten Datei führt
+  // Anzeige: Bild lässt sich mit zwei Fingern zoomen; Wischen (Blättern/Schließen) ist immer aktiv
   await act(async () => { byLabel(r, 'urlaub.jpg').props.onPress(); });
   await flush();
-  expect((getByGestureTestId('viewer-pan') as any).config.enabled).toBe(false);
+  expect((getByGestureTestId('viewer-pinch') as any).config.enabled).toBe(true);
+  expect((getByGestureTestId('viewer-pan') as any).config.enabled).not.toBe(false);
 });
 
 test('Suchfeld bleibt beim ersten Buchstaben dasselbe Feld (Tastatur schließt nicht)', async () => {
@@ -814,16 +815,45 @@ test('Anderes Gerät: Archiv dort entpacken, mit Passwortabfrage', async () => {
   }
 });
 
-test('PDF-Zoom: Auflösungsstufen und Fingerpunkt bleibt stehen', () => {
-  const { renderStep, keepFocal, MAX_ZOOM } = require('../src/PdfViewer');
+test('Zoom: Fingerpunkt bleibt stehen, Grenzen mit Gummiband, Seiten finden, Auflösungsstufen', () => {
+  const { renderStep, MAX_ZOOM, layoutPages } = require('../src/PdfViewer');
+  const z = require('../src/zoom');
   expect(renderStep(1)).toBe(1);
   expect(renderStep(1.2)).toBe(1.5);
-  expect(renderStep(2.5)).toBe(3);
   expect(renderStep(9)).toBe(MAX_ZOOM);
-  // Punkt bei 100 px im Ausschnitt, gescrollt 300 px, Zoom ×2: Inhalt an 400 → 800, also 700 scrollen
-  expect(keepFocal(300, 100, 2)).toBe(700);
-  // Herauszoomen nie unter 0
-  expect(keepFocal(10, 100, 0.5)).toBe(0);
+  // Erlaubte Verschiebung: Inhalt so groß wie der Ausschnitt → fest; doppelt so groß → bis −400
+  expect(z.range(1, 400, 0, 400)).toEqual([0, 0]);
+  expect(z.range(2, 400, 0, 400)).toEqual([-400, 0]);
+  // Kurzer Inhalt: zentriert bzw. oben angelegt
+  expect(z.range(1, 400, 0, 200)).toEqual([100, 100]);
+  expect(z.range(1, 400, 0, 200, true)).toEqual([0, 0]);
+  // Gummiband: über die Grenze nur ein Teil der Bewegung
+  expect(z.rubber(-100, 0, 50)).toBeCloseTo(-35);
+  expect(z.rubber(20, 0, 50)).toBe(20);
+  const over = z.rubberScale(10, 1, 5);
+  expect(over).toBeGreaterThan(5);
+  expect(over).toBeLessThan(10);
+  expect(z.rubberScale(0.5, 1, 5)).toBeGreaterThan(0.5);
+  // Zoom ×2 um den Punkt (100|100): dieser Punkt bleibt an derselben Stelle
+  const to = z.settleTarget(2, -100, -100, 100, 100, 1, 5, 400, 800, 0, 0, 400, 800);
+  expect(to).toEqual({ s: 2, x: -100, y: -100 });
+  // Unter das Minimum gezogen → zurück auf 1 und in die Grenzen
+  const back = z.settleTarget(0.7, 60, 120, 200, 400, 1, 5, 400, 800, 0, 0, 400, 800);
+  expect(back).toEqual({ s: 1, x: 0, y: 0 });
+  // Seiten im Dokument finden
+  const lay = layoutPages([1.4, 1.4, 0.7]);
+  expect(lay.offsets[0]).toBeGreaterThan(0);
+  expect(z.pageAt(lay.offsets, 0)).toBe(0);
+  expect(z.pageAt(lay.offsets, lay.offsets[1] + 1)).toBe(1);
+  expect(z.pageAt(lay.offsets, lay.height)).toBe(2);
+});
+
+test('Sortieren nach Dateiformat: Ordner zuerst, Formate gruppiert, darin neueste zuerst', () => {
+  const { entryOrder } = require('../src/Files');
+  const e = (name: string, kind: string, mtime: number) => ({ name, kind, mtime, size: 0 });
+  const list = [e('b.pdf', 'File', 1), e('Fotos', 'Dir', 5), e('a.jpg', 'File', 3), e('c.pdf', 'File', 9), e('LIESMICH', 'File', 7), e('d.jpg', 'File', 8)];
+  list.sort(entryOrder('type', new Intl.Collator('de', { numeric: true, sensitivity: 'base' })));
+  expect(list.map((x) => x.name)).toEqual(['Fotos', 'd.jpg', 'a.jpg', 'c.pdf', 'b.pdf', 'LIESMICH']);
 });
 
 test('PDF: Textmarker zeichnen und speichern, Signieren mit ID, Hinweis zur Signatur', async () => {
@@ -1034,5 +1064,85 @@ test('Snap Drop: Sichtbarkeit, Angebot mit Prüfcode annehmen, Kontakt speichern
     expect(sent.DropSend.paths).toEqual(['/storage/emulated/0/liste.txt']);
   } finally {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
+
+test('PDF-Text: markieren rastet an Zeilen ein, Auswahl mit langem Drücken kopiert, Rückgängig je Zug', async () => {
+  const { rectsToMarks } = require('../src/PdfText');
+  // Zeile 10 % breit, 2 % hoch auf A4 (Verhältnis 1,414): Strichbreite = Zeilenhöhe in Seitenbreiten
+  const [mk] = rectsToMarks([[0.1, 0.2, 0.3, 0.02]], 1.414);
+  expect(mk.width).toBeCloseTo(0.0283, 3);
+  expect(mk.stroke[0][0]).toBeCloseTo(0.1 + mk.width / 2, 4);
+  expect(mk.stroke[1][0]).toBeCloseTo(0.4 - mk.width / 2, 4);
+  expect(mk.stroke[0][1]).toBeCloseTo(0.21, 4);
+
+  NativeModules.SnapCore.pdfInfo = jest.fn(async () => ({ pages: 1, ratios: [1.414] }));
+  NativeModules.SnapCore.pdfPage = jest.fn(async () => '/cache/pdf/seite.png');
+  NativeModules.SnapCore.pdfTextSupported = jest.fn(() => true);
+  NativeModules.SnapCore.pdfSelect = jest.fn(async () => ({ text: 'Mietvertrag', rects: [[0.1, 0.1, 0.4, 0.02], [0.1, 0.13, 0.2, 0.02]] }));
+  NativeModules.SnapCore.copyText = jest.fn(async () => null);
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    calls.push(req);
+    if (req.PdfVerify) return JSON.stringify({ PdfSignatures: { items: [] } });
+    if (req.PdfMark) return JSON.stringify({ PdfWritten: { path: '/storage/emulated/0/brief (markiert).pdf' } });
+    return origRequest(json);
+  });
+  try {
+    const PdfViewer = require('../src/PdfViewer').default;
+    const notes: string[] = [];
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      r = mount(<PdfViewer path="/storage/emulated/0/brief.pdf" name="brief.pdf" notify={(x: string) => notes.push(x)} onClose={() => {}} />);
+    });
+    await flush();
+
+    // Lange drücken wählt Text aus → Kopieren
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('select-page-0'), [
+        { state: State.BEGAN, x: 50, y: 40 },
+        { state: State.ACTIVE, x: 50, y: 40 },
+        { state: State.ACTIVE, x: 150, y: 60 },
+        { state: State.END, x: 150, y: 60 },
+      ]);
+    });
+    await flush();
+    await act(async () => { pressable(r, 'Kopieren').props.onPress(); });
+    await flush();
+    expect(NativeModules.SnapCore.copyText).toHaveBeenCalledWith('Mietvertrag');
+    expect(notes).toContain('Text kopiert.');
+
+    // Markieren: Werkzeug „Text“ ist vorgewählt; Ziehen markiert zwei Zeilen
+    await act(async () => { byLabel(r, 'Markieren').props.onPress(); });
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('textmark-page-0'), [
+        { state: State.BEGAN, x: 30, y: 40 },
+        { state: State.ACTIVE, x: 30, y: 40 },
+        { state: State.ACTIVE, x: 200, y: 60 },
+        { state: State.END, x: 200, y: 60 },
+      ]);
+    });
+    await flush();
+    // Zweiter Zug und Rückgängig entfernt nur diesen ganzen Zug
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('textmark-page-0'), [
+        { state: State.BEGAN, x: 30, y: 80 },
+        { state: State.ACTIVE, x: 30, y: 80 },
+        { state: State.END, x: 90, y: 80 },
+      ]);
+    });
+    await flush();
+    await act(async () => { byLabel(r, 'Rückgängig').props.onPress(); });
+    await act(async () => { pressable(r, 'Fertig').props.onPress(); });
+    await act(async () => { await pressable(r, 'Als Kopie speichern').props.onPress(); });
+    await flush();
+    const mark = (calls as any[]).find((c) => c.PdfMark)?.PdfMark;
+    expect(mark.layers.reduce((n: number, l: any) => n + l.strokes.length, 0)).toBe(2);
+    expect(mark.layers.every((l: any) => l.width > 0.02 && l.width < 0.04)).toBe(true);
+    expect(notes.some((n) => n.includes('Markierungen gespeichert'))).toBe(true);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+    delete NativeModules.SnapCore.pdfTextSupported;
   }
 });

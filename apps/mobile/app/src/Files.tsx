@@ -47,7 +47,7 @@ interface Item extends DirEntry {
   fuzzy?: boolean;
 }
 
-type Sort = 'name' | 'date' | 'size';
+type Sort = 'name' | 'date' | 'size' | 'type';
 const ROW = 64;
 const FOLDERS: [string, string][] = [
   ['Download', 'Downloads'],
@@ -57,6 +57,42 @@ const FOLDERS: [string, string][] = [
   ['Music', 'Musik'],
   ['Movies', 'Videos'],
 ];
+
+/** Endung in Kleinbuchstaben („“ ohne Endung). */
+export function extOf(name: string): string {
+  const i = name.lastIndexOf('.');
+  return i > 0 && i < name.length - 1 ? name.slice(i + 1).toLowerCase() : '';
+}
+
+/**
+ * Reihenfolge der Einträge: Ordner immer zuerst. „type“ gruppiert nach Dateiformat (Endung,
+ * alphabetisch; ohne Endung zuletzt) und sortiert innerhalb jeder Gruppe nach Datum, neueste zuerst.
+ */
+export function entryOrder(sort: 'name' | 'date' | 'size' | 'type', coll: Intl.Collator) {
+  return (a: { name: string; kind: string; mtime: number; size: number }, b: { name: string; kind: string; mtime: number; size: number }) => {
+    if ((a.kind === 'Dir') !== (b.kind === 'Dir')) {
+      return a.kind === 'Dir' ? -1 : 1;
+    }
+    if (sort === 'type') {
+      const ea = a.kind === 'Dir' ? '' : extOf(a.name);
+      const eb = b.kind === 'Dir' ? '' : extOf(b.name);
+      if (ea !== eb) {
+        if (!ea || !eb) {
+          return ea ? -1 : 1;
+        }
+        return coll.compare(ea, eb);
+      }
+      return b.mtime - a.mtime || coll.compare(a.name, b.name);
+    }
+    if (sort === 'date') {
+      return b.mtime - a.mtime;
+    }
+    if (sort === 'size') {
+      return b.size - a.size;
+    }
+    return coll.compare(a.name, b.name);
+  };
+}
 
 export default function Files({ theme, root, notify, selectionChanged, bottomSlot, onFont, onDrop, home = 0 }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
@@ -75,7 +111,19 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [naming, setNaming] = useState<{ mode: 'folder' | 'file' | 'rename'; from?: string; value: string } | null>(null);
   const [sheet, setSheet] = useState<'create' | 'more' | 'selection' | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
-  const [sort, setSort] = useState<Sort>('name');
+  const [sort, setSortState] = useState<Sort>('name');
+  // Gewählte Sortierung bleibt über Neustarts erhalten
+  useEffect(() => {
+    core.getPref('sort').then((v: string | null) => {
+      if (v === 'name' || v === 'date' || v === 'size' || v === 'type') {
+        setSortState(v);
+      }
+    }).catch(() => {});
+  }, []);
+  const setSort = (v: Sort) => {
+    setSortState(v);
+    core.setPref('sort', v);
+  };
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Item[] | null>(null);
@@ -231,20 +279,8 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   }, [path, root, sel, hits, menu, go]);
 
   const sorted = useMemo(() => {
-    const coll = new Intl.Collator(locale(), { numeric: true, sensitivity: 'base' });
     const v = [...items];
-    v.sort((a, b) => {
-      if ((a.kind === 'Dir') !== (b.kind === 'Dir')) {
-        return a.kind === 'Dir' ? -1 : 1;
-      }
-      if (sort === 'date') {
-        return b.mtime - a.mtime;
-      }
-      if (sort === 'size') {
-        return b.size - a.size;
-      }
-      return coll.compare(a.name, b.name);
-    });
+    v.sort(entryOrder(sort, new Intl.Collator(locale(), { numeric: true, sensitivity: 'base' })));
     return v;
   }, [items, sort]);
 
@@ -706,6 +742,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     { label: t('Nach Name sortieren'), onPress: () => setSort('name'), disabled: sort === 'name' },
     { label: t('Nach Datum sortieren'), onPress: () => setSort('date'), disabled: sort === 'date' },
     { label: t('Nach Größe sortieren'), onPress: () => setSort('size'), disabled: sort === 'size' },
+    { label: t('Nach Dateiformat sortieren'), onPress: () => setSort('type'), disabled: sort === 'type' },
     { label: hidden ? t('Versteckte Dateien ausblenden') : t('Versteckte Dateien anzeigen'), onPress: () => setHidden(!hidden) },
   ];
 
