@@ -391,3 +391,38 @@ label { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px;
 .usage .bar { width: 40%; height: 8px; border-radius: 4px; background: var(--layer-hover); overflow: hidden; }
 .usage .bar span { display: block; height: 100%; background: var(--accent); }
 .usage .size { width: 80px; text-align: right; }
+
+/* ---------------------------------------------------------------- Snap Drop */
+.seg { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--field); width: max-content; }
+.seg button { border: 0; background: transparent; color: var(--text); font: inherit; min-width: 104px; height: 32px; border-radius: 999px; cursor: pointer; }
+.seg button.on { background: var(--card); font-weight: 700; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.explain { margin: 10px 0 2px; }
+.ablage { margin-top: 8px; word-break: break-all; }
+.mono { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.person { padding: 6px 0; }
+.avatar { display: inline-grid; place-items: center; flex: none; border-radius: 50%; background: var(--field); color: var(--text-2); font-weight: 700; }
+.avatar.contact { background: var(--accent-soft); color: var(--accent); }
+.dialog.drop { width: min(460px, 92vw); gap: 12px; }
+.dialog.drop .peers { display: flex; flex-direction: column; max-height: 340px; overflow: auto; margin: 0 -8px; }
+.dialog.drop .peer { display: flex; align-items: center; gap: 12px; padding: 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.dialog.drop .peer:hover:not(:disabled) { background: var(--field); }
+.dialog.drop .peer:disabled { cursor: default; opacity: 0.6; }
+.dialog.drop .peer .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dialog.drop .peer .progress { width: 100%; margin-top: 4px; }
+.dialog.drop .peer .progress > span { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
+.dialog.drop .empty { display: grid; justify-items: center; gap: 6px; padding: 28px 16px; text-align: center; color: var(--text-2); }
+.offerhead { gap: 14px; }
+.offername { font-size: 17px; font-weight: 700; }
+.accent { color: var(--accent); }
+.previewbtn { border: 0; padding: 0; background: none; cursor: pointer; border-radius: 8px; overflow: hidden; width: 56px; height: 56px; }
+.previewbtn img { width: 56px; height: 56px; object-fit: cover; display: block; transition: filter 0.2s; }
+.previewbtn img.blur { filter: blur(9px) saturate(0.8); transform: scale(1.15); }
+.offerfiles { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--field); }
+.offerfiles .num { font-variant-numeric: tabular-nums; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.checkcode { color: var(--text); font-weight: 700; letter-spacing: 0.08em; margin-left: 6px; }
+.btn.link { background: transparent; border-color: transparent; padding-left: 0; }
+.btn.link.danger { color: var(--danger); }
+.toast { display: flex; align-items: center; gap: 14px; }
+.toastbtn { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; padding: 4px 0; white-space: nowrap; }

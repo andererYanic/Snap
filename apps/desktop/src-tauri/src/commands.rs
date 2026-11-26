@@ -639,3 +639,129 @@ mod font_tests {
         assert!(!is_font(&[0, 1]));
     }
 }
+
+// ---------------------------------------------------------------- Snap Drop
+
+fn drop_id(s: &str) -> UiResult<()> {
+    let hex = s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let code = s.starts_with("snapdrop1-") && s.len() <= 1024 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    if hex || code {
+        Ok(())
+    } else {
+        Err(UiError::new("InvalidInput", "Ungültiges Gerät."))
+    }
+}
+
+#[tauri::command]
+pub async fn drop_status(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::DropStatus).await
+}
+
+#[tauri::command]
+pub async fn drop_set_visibility(d: State<'_, Daemon>, mode: String) -> UiResult<Value> {
+    let mode = match mode.as_str() {
+        "off" => space_core::drop::Mode::Off,
+        "contacts" => space_core::drop::Mode::Contacts,
+        "everyone" => space_core::drop::Mode::Everyone,
+        _ => return Err(UiError::new("InvalidInput", "Ungültige Sichtbarkeit.")),
+    };
+    d.request(Request::DropSetVisibility { mode }).await
+}
+
+#[tauri::command]
+pub async fn drop_browse(d: State<'_, Daemon>, on: bool) -> UiResult<Value> {
+    d.request(Request::DropBrowse { on }).await
+}
+
+#[tauri::command]
+pub async fn drop_nearby(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::DropNearby).await
+}
+
+#[tauri::command]
+pub async fn drop_add_code(d: State<'_, Daemon>, code: String) -> UiResult<Value> {
+    let code = code.trim().to_string();
+    drop_id(&code)?;
+    d.request(Request::DropAddCode { code }).await
+}
+
+/// Dateien an ein Gerät in der Nähe senden. Der Empfänger stammt aus der Liste des Dienstes
+/// (nicht aus der Web-Ansicht); der Nutzer bestätigt im nativen Dialog – eine manipulierte
+/// Web-Ansicht kann so keine Dateien unbemerkt an fremde Geräte schicken.
+#[tauri::command]
+pub async fn drop_send(app: AppHandle, d: State<'_, Daemon>, peer: String, paths: Vec<String>) -> UiResult<Value> {
+    drop_id(&peer)?;
+    let list = self::paths(paths)?;
+    if list.len() > 1000 {
+        return Err(UiError::new("InvalidInput", "Höchstens 1000 Dateien."));
+    }
+    let name = if peer.starts_with("snapdrop1-") {
+        tr("Gerät per Code", &[])
+    } else {
+        let nearby = d.request(Request::DropNearby).await?;
+        let hit = nearby
+            .get("peers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.iter().find(|p| p.get("id").and_then(|i| i.as_str()) == Some(peer.as_str())).cloned())
+            .ok_or_else(|| UiError::new("NotFound", "Gerät ist nicht mehr in der Nähe."))?;
+        let n = hit
+            .get("contact")
+            .and_then(|c| c.as_str())
+            .or_else(|| hit.get("name").and_then(|c| c.as_str()))
+            .unwrap_or("?");
+        short_text(n, 64)
+    };
+    let text = tr("An „{name}“ senden?\n\n{files}", &[("name", &name), ("files", &summary(&list))]);
+    if !confirm(&app, tr("In der Nähe senden", &[]), text, tr("Senden", &[])).await {
+        return Err(cancelled());
+    }
+    d.request(Request::DropSend { peer, paths: list }).await
+}
+
+#[tauri::command]
+pub async fn drop_offers(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::DropOffers).await
+}
+
+#[tauri::command]
+pub async fn drop_respond(d: State<'_, Daemon>, id: u64, accept: bool, block: bool) -> UiResult<Value> {
+    d.request(Request::DropRespond { id, accept, block }).await
+}
+
+#[tauri::command]
+pub async fn drop_preview(d: State<'_, Daemon>, id: u64) -> UiResult<Value> {
+    d.request(Request::DropPreview { id }).await
+}
+
+#[tauri::command]
+pub async fn drop_contacts(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::DropContacts).await
+}
+
+#[tauri::command]
+pub async fn drop_save_contact(d: State<'_, Daemon>, id: u64) -> UiResult<Value> {
+    d.request(Request::DropSaveContact { id }).await
+}
+
+fn drop_key(key: &str) -> UiResult<String> {
+    if key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(key.to_string())
+    } else {
+        Err(UiError::new("InvalidInput", "Ungültiger Schlüssel."))
+    }
+}
+
+#[tauri::command]
+pub async fn drop_remove_contact(d: State<'_, Daemon>, key: String) -> UiResult<Value> {
+    d.request(Request::DropRemoveContact { key: drop_key(&key)? }).await
+}
+
+#[tauri::command]
+pub async fn drop_blocked(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::DropBlocked).await
+}
+
+#[tauri::command]
+pub async fn drop_unblock(d: State<'_, Daemon>, key: String) -> UiResult<Value> {
+    d.request(Request::DropUnblock { key: drop_key(&key)? }).await
+}

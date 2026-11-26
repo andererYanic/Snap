@@ -7,11 +7,13 @@ import Explorer from "./Explorer";
 import Photos from "./Photos";
 import { Backups, Devices, SettingsPage } from "./Pages";
 import { LinksPage, StoragePage } from "./Tools";
+import { DropPage, OfferDialog } from "./Drop";
+import { drop, type IncomingOffer } from "./api";
 
 /** Ein Tab: Ordner (mit Verlauf), Suche, Fotos oder Papierkorb. */
 export interface Tab {
   id: number;
-  kind: "folder" | "photos" | "trash" | "devices" | "backups" | "settings" | "links" | "storage";
+  kind: "folder" | "photos" | "trash" | "devices" | "backups" | "settings" | "links" | "storage" | "drop";
   path: string;
   history: string[];
   index: number;
@@ -25,6 +27,8 @@ export interface Clipboard {
 export interface Toast {
   text: string;
   error?: boolean;
+  /** Eine Aktion im Hinweis, z. B. „Als Kontakt speichern“. */
+  action?: { label: string; run: () => void };
 }
 
 let nextId = 1;
@@ -37,6 +41,7 @@ function tabTitle(tb: Tab, home: string): string {
   if (tb.kind === "backups") return t("Sicherungen");
   if (tb.kind === "settings") return t("Einstellungen");
   if (tb.kind === "links") return t("Freigabelinks");
+  if (tb.kind === "drop") return t("Snap Drop");
   if (tb.kind === "storage") return `${t("Speicher")}: ${baseName(tb.path)}`;
   if (tb.path === home) return t("Persönlicher Ordner");
   return baseName(tb.path);
@@ -51,14 +56,40 @@ export default function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [events, setEvents] = useState<DaemonEvent | null>(null);
   const [starting, setStarting] = useState(false);
+  const [incoming, setIncoming] = useState<IncomingOffer | null>(null);
   const toastTimer = useRef<number>(0);
   const home = places.find((p) => p.kind === "home")?.path ?? "/";
 
   const notify = useCallback((t: Toast) => {
     setToast(t);
     window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), t.error ? 7000 : 3500);
+    toastTimer.current = window.setTimeout(() => setToast(null), t.error ? 7000 : t.action ? 9000 : 3500);
   }, []);
+
+  // Snap Drop: eingehende Angebote und Ergebnisse
+  useEffect(() => {
+    if (!events) return;
+    const ev = events as Record<string, any>;
+    if (ev.type === "DropOffer") {
+      drop.offers().then((list) => setIncoming((cur) => cur ?? list.find((o) => o.id === ev.id) ?? null)).catch(() => {});
+    } else if (ev.type === "DropOfferClosed") {
+      setIncoming((cur) => {
+        if (cur?.id === ev.id) {
+          notify({ text: t("Das Angebot wurde zurückgezogen.") });
+          return null;
+        }
+        return cur;
+      });
+    } else if (ev.type === "DropFinished") {
+      const n: number = (ev.files ?? []).length;
+      const save = ev.can_save_contact
+        ? { label: t("Als Kontakt speichern"), run: () => drop.saveContact(ev.id).then((c) => notify({ text: t("{name} ist jetzt ein Kontakt.", { name: c.name }) })).catch((e) => notify({ text: errorText(e), error: true })) }
+        : undefined;
+      if (ev.incoming && !ev.ok) notify({ text: t("Empfang fehlgeschlagen: {error}", { error: ev.error ?? "" }), error: true });
+      else if (ev.incoming) notify({ text: t("{files} von {name} gespeichert.", { files: n === 1 ? t("1 Datei") : t("{n} Dateien", { n }), name: ev.peer }), action: save });
+      else if (ev.ok) notify({ text: t("An {name} gesendet.", { name: ev.peer }), action: save });
+    }
+  }, [events, notify]);
 
   // Dienststatus und Ereignisse
   useEffect(() => {
@@ -183,7 +214,7 @@ export default function App() {
               title={tb.kind === "folder" ? tb.path : undefined}
             >
               {(() => {
-                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, links: Icon.link, storage: Icon.chart, folder: Icon.home }[tb.kind];
+                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, links: Icon.link, storage: Icon.chart, drop: Icon.nearby, folder: Icon.home }[tb.kind];
                 return <I />;
               })()}
               <span className="label">{tabTitle(tb, home)}</span>
@@ -215,6 +246,8 @@ export default function App() {
             <SettingsPage notify={notify} />
           ) : tab?.kind === "links" ? (
             <LinksPage notify={notify} />
+          ) : tab?.kind === "drop" ? (
+            <DropPage notify={notify} />
           ) : tab?.kind === "storage" ? (
             <StoragePage key={tab.path} path={tab.path} notify={notify} onOpen={(dir) => updateTab(tab.id, (x) => ({ ...x, path: dir }))} />
           ) : tab ? (
@@ -240,7 +273,15 @@ export default function App() {
           ) : null}
         </div>
       </div>
-      {toast && <div className={`toast${toast.error ? " err" : ""}`}>{toast.text}</div>}
+      {toast && (
+        <div className={`toast${toast.error ? " err" : ""}`}>
+          <span>{toast.text}</span>
+          {toast.action && (
+            <button className="toastbtn" onClick={() => { toast.action?.run(); setToast(null); }}>{toast.action.label}</button>
+          )}
+        </div>
+      )}
+      {incoming && <OfferDialog offer={incoming} onDone={() => setIncoming(null)} />}
     </div>
   );
 }
@@ -292,6 +333,10 @@ function Sidebar({ places, tab, onGo }: { places: Place[]; tab?: Tab; onGo: (k: 
       <button className={`navitem${is("links", "") ? " active" : ""}`} onClick={() => onGo("links", "links:")}>
         <Icon.link size={16} />
         <span>{t("Freigabelinks")}</span>
+      </button>
+      <button className={`navitem${is("drop", "") ? " active" : ""}`} onClick={() => onGo("drop", "drop:")}>
+        <Icon.nearby size={16} />
+        <span>{t("Snap Drop")}</span>
       </button>
       <h4>{t("Dieser Computer")}</h4>
       <button className={`navitem${is("folder", "/") ? " active" : ""}`} onClick={() => onGo("folder", "/")}>

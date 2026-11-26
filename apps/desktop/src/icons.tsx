@@ -41,6 +41,7 @@ export const Icon: Record<string, (p: P) => JSX.Element> = {
   link: ({ size }) => <svg {...s(size)}><path d="M6.5 9.5a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-.8.8M9.5 6.5a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l.8-.8" /></svg>,
   chart: ({ size }) => <svg {...s(size)}><path d="M3 13.5h10M4.5 11V7M8 11V3.5M11.5 11V8" /></svg>,
   settings: ({ size }) => <svg {...s(size)}><circle cx="8" cy="8" r="2" /><path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8 3.4 3.4" /></svg>,
+  nearby: ({ size }) => <svg {...s(size)}><circle cx="8" cy="8" r="1.1" /><path d="M5.6 10.4a3.4 3.4 0 0 1 0-4.8M10.4 5.6a3.4 3.4 0 0 1 0 4.8M3.6 12.4a6.2 6.2 0 0 1 0-8.8M12.4 3.6a6.2 6.2 0 0 1 0 8.8" /></svg>,
   hidden: ({ size }) => <svg {...s(size)}><path d="M2 2l12 12M6.5 6.6A2 2 0 0 0 9.4 9.5M4.3 4.5C2.6 5.7 1.5 8 1.5 8s2.5 4.5 6.5 4.5c1.3 0 2.4-.4 3.3-1M7 3.6c.3 0 .7-.1 1-.1 4 0 6.5 4.5 6.5 4.5s-.5.9-1.3 1.9" /></svg>,
 };
 
