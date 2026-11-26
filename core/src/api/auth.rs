@@ -164,6 +164,26 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::LinkSetup(_)
         | Request::LinkCreate { .. }
         | Request::LinkList
+        // Snap Drop: nur lokal (liest beliebige eigene Dateien zum Senden, steuert die Sichtbarkeit).
+        | Request::DropStatus
+        | Request::DropSetVisibility { .. }
+        | Request::DropBrowse { .. }
+        | Request::DropNearby
+        | Request::DropAddCode { .. }
+        | Request::DropAddPeer { .. }
+        | Request::DropConnectInfo
+        | Request::DropSend { .. }
+        | Request::DropOffers
+        | Request::DropRespond { .. }
+        | Request::DropPreview { .. }
+        | Request::DropContacts
+        | Request::DropSaveContact { .. }
+        | Request::DropRemoveContact { .. }
+        | Request::DropBlocked
+        | Request::DropUnblock { .. }
+        | Request::DropHotspotParse { .. }
+        | Request::DropHotspotAccept { .. }
+        | Request::DropHotspotRequest { .. }
         | Request::LinkRevoke { .. }
         | Request::SpaceUsage { .. }
         | Request::Duplicates { .. }

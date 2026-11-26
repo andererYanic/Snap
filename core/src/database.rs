@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 pub fn now_unix() -> i64 {
     jiff::Timestamp::now().as_second()
@@ -44,6 +44,16 @@ pub struct BackupJobRow {
     pub last_ok: Option<i64>,
     pub last_error: Option<String>,
     pub last_snapshot: Option<String>,
+}
+
+/// Gespeicherter Drop-Kontakt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DropContactRow {
+    pub key: String,
+    pub name: String,
+    pub secret: Vec<u8>,
+    pub added_at: i64,
+    pub last_seen: i64,
 }
 
 /// Ein Freigabelink (lokal gespeichert; `secret` ist der Schlüssel aus dem Link).
@@ -633,6 +643,25 @@ impl DatabaseManager {
             // Migration -> 11: Ordneransicht fremder Geräte (Sprünge im Pfadindex statt Scan).
             conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_ledger_tree ON ledger_entries(origin, share, rel_path) WHERE deleted = 0;",
+            )?;
+        }
+        if version < 12 {
+            // Migration -> 12: Snap Drop (Kontakte mit gemeinsamem Geheimnis, Sperrliste).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS drop_contacts (
+                    key        TEXT    PRIMARY KEY,   -- Drop-Schlüssel (Hex)
+                    name       TEXT    NOT NULL,
+                    secret     BLOB    NOT NULL,      -- 32 Byte Kontakt-Geheimnis
+                    added_at   INTEGER NOT NULL,
+                    last_seen  INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS drop_blocked (
+                    key        TEXT    PRIMARY KEY,
+                    name       TEXT    NOT NULL,
+                    blocked_at INTEGER NOT NULL
+                );
+                ",
             )?;
         }
         if version > 0 && version < 3 {
@@ -1872,6 +1901,75 @@ impl DatabaseManager {
 
     pub fn remove_backup_job(&self, id: &str) -> Result<bool> {
         Ok(self.conn().execute("DELETE FROM backup_jobs WHERE id = ?1", params![id])? > 0)
+    }
+
+    // --- Snap Drop ---
+
+    pub fn drop_contacts(&self) -> Result<Vec<DropContactRow>> {
+        let conn = self.read();
+        let mut stmt =
+            conn.prepare_cached("SELECT key, name, secret, added_at, last_seen FROM drop_contacts ORDER BY name")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(DropContactRow {
+                    key: r.get(0)?,
+                    name: r.get(1)?,
+                    secret: r.get(2)?,
+                    added_at: r.get(3)?,
+                    last_seen: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Speichert oder aktualisiert einen Kontakt (neues Geheimnis ersetzt das alte).
+    pub fn upsert_drop_contact(&self, c: &DropContactRow) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO drop_contacts (key, name, secret, added_at, last_seen) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(key) DO UPDATE SET name = excluded.name, secret = excluded.secret, last_seen = excluded.last_seen",
+            params![c.key, c.name, c.secret, c.added_at, c.last_seen],
+        )?;
+        Ok(())
+    }
+
+    pub fn touch_drop_contact(&self, key: &str, now: i64) -> Result<()> {
+        self.conn().execute("UPDATE drop_contacts SET last_seen = ?2 WHERE key = ?1", params![key, now])?;
+        Ok(())
+    }
+
+    pub fn remove_drop_contact(&self, key: &str) -> Result<bool> {
+        Ok(self.conn().execute("DELETE FROM drop_contacts WHERE key = ?1", params![key])? > 0)
+    }
+
+    pub fn drop_blocked(&self) -> Result<Vec<(String, String, i64)>> {
+        let conn = self.read();
+        let mut stmt =
+            conn.prepare_cached("SELECT key, name, blocked_at FROM drop_blocked ORDER BY blocked_at DESC")?;
+        let rows =
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn is_drop_blocked(&self, key: &str) -> Result<bool> {
+        Ok(self
+            .read()
+            .query_row("SELECT EXISTS(SELECT 1 FROM drop_blocked WHERE key = ?1)", params![key], |r| r.get(0))?)
+    }
+
+    /// Sperrt einen Absender (und entfernt ihn aus den Kontakten).
+    pub fn block_drop(&self, key: &str, name: &str, now: i64) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT OR REPLACE INTO drop_blocked (key, name, blocked_at) VALUES (?1, ?2, ?3)",
+            params![key, name, now],
+        )?;
+        conn.execute("DELETE FROM drop_contacts WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
+    pub fn unblock_drop(&self, key: &str) -> Result<bool> {
+        Ok(self.conn().execute("DELETE FROM drop_blocked WHERE key = ?1", params![key])? > 0)
     }
 
     pub fn add_link(&self, l: &LinkRow) -> Result<()> {

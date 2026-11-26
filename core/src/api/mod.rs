@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod devices;
+pub mod drop_api;
 pub mod error;
 pub mod explorer;
 pub mod fileops;
@@ -180,6 +181,25 @@ pub(crate) async fn handle_request(
             message: "Sicherung von diesem Gerät entfernt (Daten am Ziel bleiben).".into(),
         }),
         Request::LinkList => crate::links::list(inner).map(|(items, base_url)| Response::Links { items, base_url }),
+        Request::DropStatus
+        | Request::DropSetVisibility { .. }
+        | Request::DropBrowse { .. }
+        | Request::DropNearby
+        | Request::DropAddCode { .. }
+        | Request::DropAddPeer { .. }
+        | Request::DropConnectInfo
+        | Request::DropSend { .. }
+        | Request::DropOffers
+        | Request::DropRespond { .. }
+        | Request::DropPreview { .. }
+        | Request::DropContacts
+        | Request::DropSaveContact { .. }
+        | Request::DropRemoveContact { .. }
+        | Request::DropBlocked
+        | Request::DropUnblock { .. }
+        | Request::DropHotspotParse { .. }
+        | Request::DropHotspotAccept { .. }
+        | Request::DropHotspotRequest { .. } => drop_api::handle(inner, req).await,
         Request::LinkRevoke { id } => crate::links::revoke(inner, &id).await.map(Response::Link),
         Request::UploadRuleList => inner.db.upload_rules().map(|rules| Response::UploadRules { rules }),
         Request::UploadRuleRemove { id } => match inner.db.remove_upload_rule(id) {
@@ -307,6 +327,25 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::LinkSetup(_) => "link.setup",
         Request::LinkCreate { .. } => "link.create",
         Request::LinkList => "link.list",
+        Request::DropStatus => "drop.status",
+        Request::DropSetVisibility { .. } => "drop.visibility",
+        Request::DropBrowse { .. } => "drop.browse",
+        Request::DropNearby => "drop.nearby",
+        Request::DropAddCode { .. } => "drop.add_code",
+        Request::DropAddPeer { .. } => "drop.add_peer",
+        Request::DropConnectInfo => "drop.connect_info",
+        Request::DropSend { .. } => "drop.send",
+        Request::DropOffers => "drop.offers",
+        Request::DropRespond { .. } => "drop.respond",
+        Request::DropPreview { .. } => "drop.preview",
+        Request::DropContacts => "drop.contacts",
+        Request::DropSaveContact { .. } => "drop.contact.save",
+        Request::DropRemoveContact { .. } => "drop.contact.remove",
+        Request::DropBlocked => "drop.blocked",
+        Request::DropUnblock { .. } => "drop.unblock",
+        Request::DropHotspotParse { .. } => "drop.hotspot.parse",
+        Request::DropHotspotAccept { .. } => "drop.hotspot.accept",
+        Request::DropHotspotRequest { .. } => "drop.hotspot.request",
         Request::LinkRevoke { .. } => "link.revoke",
         Request::SpaceUsage { .. } => "space.usage",
         Request::Duplicates { .. } => "duplicates",

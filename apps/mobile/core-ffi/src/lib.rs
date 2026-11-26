@@ -117,10 +117,15 @@ pub fn mobile_config(opts: &CoreOptions) -> Result<space_core::config::Config, S
     cfg.index_home = false;
     cfg.index_drives = false;
     cfg.sync_interval_hours = 6.0;
+    // Snap Drop: Telefon, im WLAN auffindbar, Offline-Weg über Hotspot möglich.
+    cfg.drop_kind = space_core::drop::wire::DeviceKind::Phone;
+    cfg.drop_mdns = true;
+    cfg.drop_hotspot = true;
     if !opts.storage_root.is_empty() {
         let storage = absolute(&opts.storage_root, "storage_root")?;
         cfg.pin_dir = storage.join("Snap");
         cfg.download_dir = storage.join("Download").join("Snap");
+        cfg.drop_dir = storage.join("Download").join("Snap Drop");
         cfg.trash_dir = storage.join(".Trash-snap");
     }
     Ok(cfg)

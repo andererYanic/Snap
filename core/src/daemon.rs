@@ -69,6 +69,8 @@ pub struct DaemonInner {
     pub(crate) rules_notify: Arc<Notify>,
     pub(crate) upload_watchers: Mutex<std::collections::HashMap<i64, notify::RecommendedWatcher>>,
     pub(crate) backups: crate::backup::BackupService,
+    /// Snap Drop (Senden an Personen in der Nähe).
+    pub(crate) drop: Arc<crate::drop::DropService>,
 }
 
 impl DaemonInner {
@@ -275,6 +277,23 @@ impl Daemon {
         };
         let settings = Arc::new(crate::settings::Settings::load(db.clone(), &config)?);
         let thumbs = crate::media::ThumbCache::new(config.thumb_dir(), settings.thumb_cache_bytes());
+        let drop = crate::drop::DropService::new(
+            crate::drop::DropOptions {
+                dir: config.drop_dir.clone(),
+                identity_path: config.drop_key_path(),
+                name: config.device_name.clone(),
+                kind: config.drop_kind,
+                use_relay: config.use_relay,
+                relay_urls: config.relay_urls.clone(),
+                relay_fallback_n0: config.relay_fallback_n0,
+                loopback_only,
+                mdns: config.drop_mdns && !loopback_only,
+                // Eigene, kleinere Reserve: ein Foto soll auch auf einem fast vollen Telefon ankommen.
+                reserve_bytes: 512 * 1024 * 1024,
+                can_join_hotspot: config.drop_hotspot,
+            },
+            db.clone(),
+        )?;
         let inner = Arc::new(DaemonInner {
             config,
             network,
@@ -299,12 +318,16 @@ impl Daemon {
             rules_notify: Arc::new(Notify::new()),
             upload_watchers: Mutex::new(std::collections::HashMap::new()),
             backups: Default::default(),
+            drop,
         });
         let _ = ops_slot.set(Arc::downgrade(&inner));
         if inner.config.live_connections {
             inner.live.start();
         }
         backfill_ledger(&inner)?;
+        if let Err(e) = inner.drop.restore().await {
+            tracing::warn!("Snap Drop: Sichtbarkeit nicht wiederhergestellt: {e:#}");
+        }
         let daemon = Self { inner: inner.clone(), tasks: Arc::new(Mutex::new(Vec::new())) };
 
         let ipc = tokio::spawn(run_ipc_server(inner.clone(), listener));
@@ -396,6 +419,7 @@ impl Daemon {
     }
 
     pub async fn shutdown(&self) {
+        self.inner.drop.shutdown().await;
         self.inner.live.shutdown();
         self.inner.watchers.lock().unwrap().clear();
         self.inner.upload_watchers.lock().unwrap().clear();

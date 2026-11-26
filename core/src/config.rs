@@ -75,6 +75,8 @@ pub struct ConfigFile {
     pub upload_reserve_gb: Option<u64>,
     /// Gültigkeit neuer Freigabelinks in Tagen. Standard: 7.
     pub link_default_days: Option<u32>,
+    /// Snap Drop: Ablage für empfangene Dateien. Standard: `<Downloads>/Snap Drop`.
+    pub drop_dir: Option<PathBuf>,
 }
 
 /// Vollständig aufgelöste Laufzeitkonfiguration.
@@ -112,6 +114,14 @@ pub struct Config {
     pub upload_daily_gb: u64,
     pub upload_reserve_gb: u64,
     pub link_default_days: u32,
+    /// Snap Drop: Ablage für empfangene Dateien.
+    pub drop_dir: PathBuf,
+    /// Snap Drop: Gerätetyp für das Symbol beim Gegenüber.
+    pub drop_kind: crate::drop::wire::DeviceKind,
+    /// Snap Drop: im Netz per mDNS finden/gefunden werden (in Tests aus).
+    pub drop_mdns: bool,
+    /// Snap Drop: kann einem Hotspot beitreten (Offline-Weg).
+    pub drop_hotspot: bool,
 }
 
 /// Prüft eigene Relais-Adressen: nur `https://` mit Rechnername, ohne Zugangsdaten, höchstens 8.
@@ -140,6 +150,10 @@ impl Config {
 
     pub fn blob_store_path(&self) -> PathBuf {
         self.data_dir.join("blobs")
+    }
+
+    pub fn drop_key_path(&self) -> PathBuf {
+        self.data_dir.join("drop.key")
     }
 
     pub fn secret_key_path(&self) -> PathBuf {
@@ -211,6 +225,12 @@ impl Config {
                     .unwrap_or_else(|| data_dir.join("downloads"))
                     .join(APP_NAME)
             });
+        let drop_dir = file.drop_dir.map(expand_tilde).unwrap_or_else(|| {
+            directories::UserDirs::new()
+                .and_then(|u| u.download_dir().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| data_dir.join("downloads"))
+                .join("Snap Drop")
+        });
 
         let pin_dir = env_path("SPACE_PIN_DIR").or(file.pin_dir.map(expand_tilde)).unwrap_or_else(|| {
             directories::BaseDirs::new().map(|b| b.home_dir().join("Snap")).unwrap_or_else(|| data_dir.join("pinned"))
@@ -249,6 +269,10 @@ impl Config {
             upload_daily_gb: file.upload_daily_gb.unwrap_or(20),
             upload_reserve_gb: file.upload_reserve_gb.unwrap_or(5),
             link_default_days: file.link_default_days.unwrap_or(7).clamp(1, 3650),
+            drop_dir,
+            drop_kind: crate::drop::wire::DeviceKind::Laptop,
+            drop_mdns: true,
+            drop_hotspot: false,
         })
     }
 
@@ -281,6 +305,10 @@ impl Config {
             upload_daily_gb: 20,
             upload_reserve_gb: 0,
             link_default_days: 7,
+            drop_dir: root.join("Snap Drop"),
+            drop_kind: crate::drop::wire::DeviceKind::Laptop,
+            drop_mdns: false,
+            drop_hotspot: false,
         }
     }
 }

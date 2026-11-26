@@ -643,3 +643,20 @@ Messung (`perf.rs::pdf_mark_sign_verify`, Release, PDF mit 200 Seiten, 0,8 MB):
 - Prüfung mit `apps/mobile/app/e2e/perf.sh` (400 Dateien, Wischen, Ziehen-Auswählen, `gfxinfo`)
   auf dem Gerät steht aus; der Kern ist unverändert (keine neuen Abfragen, kein Einfluss auf die
   16-ms-Grenze der Kernaufrufe).
+
+## Review 34 – Snap Drop, Kern (2026-11-26)
+
+Messung (`perf.rs::drop_transfer`, Release, 127.0.0.1):
+
+| Schritt | Zeit |
+|---|---|
+| Oberflächen-Abfragen `status` + `nearby` + `offers` | 0,6 µs |
+| Angebot mit 1 000 Dateien prüfen (Namen, Summen, Hashes) | 0,26 ms |
+| Probe: Verbindung + Abgleich mit 512 Kontakten (Höchstzahl) | 1,7 ms |
+| Übertragung 256 MiB inkl. BLAKE3 auf beiden Seiten | 314 MB/s |
+
+- Keine Oberflächen-Abfrage berührt Netz oder Festplatte (nur Speicher unter kurzen Sperren).
+- Hashen beim Sender läuft in `spawn_blocking`; Empfang schreibt in 256-KiB-Blöcken und hasht
+  dabei mit, ohne die Datei ein zweites Mal zu lesen.
+- Kontakt-Abgleich: ein BLAKE3-Keyed-Hash je Kontakt und ein Mengen-Nachschlag je Tag.
+- Fortschritt höchstens 4× pro Sekunde; mDNS-Dienst läuft nur, solange man sichtbar ist oder sucht.
