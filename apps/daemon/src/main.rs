@@ -1022,6 +1022,7 @@ fn describe_event(e: &Event) -> String {
         Event::JobRemoved { job_id } => format!("🗑️  Auftrag {job_id} entfernt"),
         Event::DevicePaired { name, .. } => format!("🔗 Gerät '{name}' gekoppelt"),
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
+        Event::DeviceUnpairedByPeer { name, .. } => format!("✂️  '{name}' hat die Kopplung aufgehoben"),
         Event::ShareScanned { name, changed, deleted, total } => {
             format!("📂 Freigabe '{name}': {changed} neu/geändert, {deleted} gelöscht, {total} insgesamt")
         }

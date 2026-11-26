@@ -138,6 +138,8 @@ export const videoSave = (path: string, p: VideoParams, mode: 'copy' | 'temp'): 
 export const videoProgress = (): Promise<number> => native().videoProgress();
 export const videoCancel = (): void => native().videoCancel();
 export const cacheDir = (): Promise<string> => native().cacheDir();
+/** Geöffnete Dateien anderer Geräte aus dem Cache löschen (nach dem Entkoppeln). */
+export const clearRemoteCache = (): Promise<void> => native().clearRemoteCache?.() ?? Promise.resolve();
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);
 export const hasAllFilesAccess = (): Promise<boolean> => native().hasAllFilesAccess();
 export const requestAllFilesAccess = (): void => native().requestAllFilesAccess();

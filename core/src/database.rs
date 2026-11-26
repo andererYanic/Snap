@@ -10,7 +10,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
+/// So lange merkt sich ein Gerät, wen es entkoppelt hat (um es der Gegenseite sagen zu können).
+pub const UNPAIRED_KEEP_SECS: i64 = 90 * 24 * 3600;
 
 pub fn now_unix() -> i64 {
     jiff::Timestamp::now().as_second()
@@ -686,6 +688,18 @@ impl DatabaseManager {
                 conn.execute_batch("ALTER TABLE drop_contacts ADD COLUMN alias TEXT;")?;
             }
         }
+        if version < 14 {
+            // Migration -> 14: entkoppelte Geräte (90 Tage), damit die Gegenseite beim nächsten
+            // Verbindungsversuch erfährt, dass die Kopplung aufgehoben wurde.
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS unpaired_devices (
+                    node_id     TEXT PRIMARY KEY,
+                    unpaired_at INTEGER NOT NULL
+                );
+                ",
+            )?;
+        }
         if version > 0 && version < 3 {
             // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
             conn.execute(
@@ -1351,8 +1365,23 @@ impl DatabaseManager {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let mut n = 0;
+        // Einträge entkoppelter Geräte nie übernehmen – auch nicht über ein drittes Gerät oder
+        // aus einem Abgleich, der beim Entkoppeln noch lief.
+        let mut blocked: HashMap<String, bool> = HashMap::new();
         for e in entries {
-            n += Self::upsert_entry(&tx, e)?;
+            let is_blocked = match blocked.get(&e.origin) {
+                Some(b) => *b,
+                None => {
+                    let b: bool = tx
+                        .prepare_cached("SELECT EXISTS(SELECT 1 FROM unpaired_devices WHERE node_id = ?1)")?
+                        .query_row(params![e.origin], |r| r.get(0))?;
+                    blocked.insert(e.origin.clone(), b);
+                    b
+                }
+            };
+            if !is_blocked {
+                n += Self::upsert_entry(&tx, e)?;
+            }
         }
         tx.commit()?;
         if n > 0 {
@@ -1818,6 +1847,8 @@ impl DatabaseManager {
             .execute(params![node_id, name, now_unix()])?
             > 0;
         if inserted {
+            // Neu gekoppelt: nicht mehr als „entkoppelt“ gemerkt.
+            conn.prepare_cached("DELETE FROM unpaired_devices WHERE node_id = ?1")?.execute(params![node_id])?;
             // Standardrecht jeder Kopplung: nur die Dateiliste lesen.
             conn.prepare_cached(
                 "INSERT OR IGNORE INTO device_grants (node_id, capability, folder, granted_at) VALUES (?1, 'catalog.read', '', ?2)",
@@ -1836,6 +1867,35 @@ impl DatabaseManager {
                 .execute(params![node_id, name])?;
         }
         Ok(())
+    }
+
+    /// Namen eines gekoppelten Geräts aktualisieren (koppelt nie neu – anders als `add_device`).
+    pub fn update_device_name(&self, node_id: &str, name: &str) -> Result<()> {
+        self.conn()
+            .prepare_cached("UPDATE devices SET name = ?2 WHERE node_id = ?1 AND name != ?2")?
+            .execute(params![node_id, name])?;
+        Ok(())
+    }
+
+    /// Hat dieses Gerät `node_id` in den letzten 90 Tagen ausdrücklich entkoppelt?
+    pub fn was_unpaired(&self, node_id: &str) -> Result<bool> {
+        Ok(self
+            .read()
+            .prepare_cached("SELECT EXISTS(SELECT 1 FROM unpaired_devices WHERE node_id = ?1 AND unpaired_at >= ?2)")?
+            .query_row(params![node_id, now_unix() - UNPAIRED_KEEP_SECS], |r| r.get(0))?)
+    }
+
+    /// Die Gegenseite hat die Kopplung aufgehoben (über eine authentifizierte Verbindung von
+    /// genau diesem Gerät gemeldet): hier ebenfalls entkoppeln. Gibt `true` zurück, wenn das
+    /// Gerät bis eben gekoppelt war.
+    pub fn unpaired_by_peer(&self, node_id: &str) -> Result<bool> {
+        let name = self.find_devices(node_id)?.into_iter().find(|d| d.node_id == node_id).map(|d| d.name);
+        let Some(name) = name else { return Ok(false) };
+        let removed = self.remove_device(node_id)?;
+        if removed {
+            self.emit(Event::DeviceUnpairedByPeer { node_id: node_id.to_string(), name });
+        }
+        Ok(removed)
     }
 
     pub fn is_paired(&self, node_id: &str) -> Result<bool> {
@@ -2349,6 +2409,19 @@ impl DatabaseManager {
             "UPDATE op_approvals SET state = 'rejected' WHERE node_id = ?1 AND state = 'pending'",
             params![node_id],
         )?;
+        if removed {
+            // Wartende Downloads vom Gerät sind sinnlos geworden (Pins räumt der Daemon auf).
+            tx.execute("DELETE FROM pending_pins WHERE peer_id = ?1 AND action != 'PIN'", params![node_id])?;
+            tx.execute(
+                "INSERT INTO unpaired_devices (node_id, unpaired_at) VALUES (?1, ?2)
+                 ON CONFLICT(node_id) DO UPDATE SET unpaired_at = excluded.unpaired_at",
+                params![node_id, now_unix()],
+            )?;
+            tx.execute(
+                "DELETE FROM unpaired_devices WHERE unpaired_at < ?1",
+                params![now_unix() - UNPAIRED_KEEP_SECS],
+            )?;
+        }
         tx.commit()?;
         if removed {
             self.emit(Event::DeviceRemoved { node_id: node_id.to_string() });
@@ -3326,5 +3399,60 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute("CREATE TABLE files (id TEXT)", []).unwrap();
         assert!(DatabaseManager::init(conn).is_err());
+    }
+
+    #[test]
+    fn entkoppelte_geraete_bleiben_draussen() {
+        let db = DatabaseManager::open_in_memory().unwrap();
+        let key = iroh::SecretKey::generate();
+        let origin = key.public().to_string();
+        let entry = |id: i64| {
+            let mut e = LedgerEntry {
+                origin: origin.clone(),
+                entry_id: id,
+                seq: id,
+                hash: format!("{:064x}", id),
+                name: format!("d{id}.txt"),
+                size: 1,
+                created_at: 0,
+                deleted: false,
+                signature: String::new(),
+                share: "Docs".into(),
+                rel_path: format!("d{id}.txt"),
+            };
+            e.signature = e.sign(&key);
+            e
+        };
+        db.add_device(&origin, "Laptop").unwrap();
+        assert_eq!(db.apply_remote_entries(&[entry(1)]).unwrap(), 1);
+        assert!(!db.was_unpaired(&origin).unwrap());
+
+        // Entkoppeln: Einträge weg, Gerät gemerkt
+        assert!(db.remove_device(&origin).unwrap());
+        assert!(db.was_unpaired(&origin).unwrap());
+        assert_eq!(db.remote_dir(&origin, None, "", None, 100).unwrap().dirs.len(), 0);
+        // Ein noch laufender Abgleich oder ein drittes Gerät bringt nichts zurück …
+        assert_eq!(db.apply_remote_entries(&[entry(2)]).unwrap(), 0);
+        // … und der Namensabgleich koppelt nicht neu
+        db.update_device_name(&origin, "Laptop 2").unwrap();
+        assert!(!db.is_paired(&origin).unwrap());
+        // Ein zweites Entkoppeln durch die Gegenseite ist harmlos
+        assert!(!db.unpaired_by_peer(&origin).unwrap());
+
+        // Erneut koppeln: nicht mehr gemerkt, Einträge kommen wieder an
+        db.add_device(&origin, "Laptop").unwrap();
+        assert!(!db.was_unpaired(&origin).unwrap());
+        assert_eq!(db.apply_remote_entries(&[entry(3)]).unwrap(), 1);
+
+        // Entkoppeln durch die Gegenseite: Ereignis mit Namen
+        let mut sub = db.events().subscribe();
+        assert!(db.unpaired_by_peer(&origin).unwrap());
+        let mut got = false;
+        while let Some(ev) = sub.try_next() {
+            if matches!(&ev, Event::DeviceUnpairedByPeer { name, .. } if name == "Laptop") {
+                got = true;
+            }
+        }
+        assert!(got);
     }
 }

@@ -81,6 +81,8 @@ Leistungsgrenzen (relevant für DoS-Fragen): `core/tests/perf.rs`, Ergebnisse in
 
 - `core/tests/remote_ops.rs`: fremde/entkoppelte Gegenstellen, manipulierte Rahmen, Pfadtricks,
   Symlinks, Massenschutz, Entpacken (Zip-Slip, Passwort-Raten, Passwort nie gespeichert).
+- `core/tests/unpair.rs`: Entkoppeln erreicht die Gegenseite sofort bzw. beim Wiederkommen; nur
+  der Absender selbst wird entkoppelt; Neuinstallation und Fremde lösen nichts aus.
 - `core/tests/two_nodes.rs`, `core/tests/live.rs`, `core/tests/upload.rs`, `core/tests/stream.rs`,
   `core/tests/links.rs`, `gateway/cloudflare/test/`.
 

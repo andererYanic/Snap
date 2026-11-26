@@ -311,7 +311,7 @@ pub async fn pair_join(d: State<'_, Daemon>, code: String) -> UiResult<Value> {
 #[tauri::command]
 pub async fn pair_remove(app: AppHandle, d: State<'_, Daemon>, device: String, name: String) -> UiResult<Value> {
     let text = tr(
-        "„{name}“ entkoppeln? Das Gerät verliert alle Rechte und sieht deine Freigaben nicht mehr.",
+        "„{name}“ entkoppeln? Beide Geräte sehen danach die Dateien des anderen nicht mehr; Offline-Kopien und Vorschaubilder werden gelöscht. Heruntergeladene Dateien bleiben.",
         &[("name", &short_text(&name, 80))],
     );
     if !confirm(&app, tr("Gerät entkoppeln", &[]), text, tr("Entkoppeln", &[])).await {

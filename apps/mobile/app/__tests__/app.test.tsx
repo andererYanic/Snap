@@ -1329,3 +1329,16 @@ test('CSV- und Kartenparser: Anführungszeichen, leere Zellen, gleich breite Zei
   expect(blocks[1].rows).toContainEqual(['Beginn', '26.11.2026 09:30']);
   expect(blocks[1].rows).toContainEqual(['Ort', 'Büro, Raum 2']);
 });
+
+test('Entkoppeln durch die Gegenseite: Hinweis und Cache der fremden Dateien geleert', async () => {
+  const { DeviceEventEmitter } = require('react-native');
+  NativeModules.SnapCore.clearRemoteCache = jest.fn(async () => null);
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<App />); });
+  await flush();
+  await act(async () => { DeviceEventEmitter.emit('snap-event', JSON.stringify({ type: 'DeviceRemoved', node_id: 'ab' })); });
+  await act(async () => { DeviceEventEmitter.emit('snap-event', JSON.stringify({ type: 'DeviceUnpairedByPeer', node_id: 'ab', name: 'Laptop' })); });
+  await flush();
+  expect(NativeModules.SnapCore.clearRemoteCache).toHaveBeenCalled();
+  expect(allText(r)).toContain('„Laptop“ hat die Kopplung aufgehoben');
+});

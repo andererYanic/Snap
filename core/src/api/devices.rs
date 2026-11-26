@@ -12,16 +12,20 @@ pub(crate) async fn pair_invite(inner: &DaemonInner) -> Result<Response> {
     Ok(Response::PairInvite { code: invite.encode(), expires_at: invite.expires_at })
 }
 
-pub(crate) fn pair_remove(inner: &DaemonInner, query: &str) -> Result<Response> {
+pub(crate) async fn pair_remove(inner: &DaemonInner, query: &str) -> Result<Response> {
     let found = inner.db.find_devices(query)?;
     match found.as_slice() {
         [] => api_bail!(NotFound, "Kein gekoppeltes Gerät '{query}' gefunden. Siehe `space-daemon pair list`."),
         [d] => {
-            inner.db.remove_device(&d.node_id)?;
+            // Große Kataloge brauchen beim Löschen bis ~1 s – nicht auf den async-Threads.
+            let (db, id) = (inner.db.clone(), d.node_id.clone());
+            tokio::task::spawn_blocking(move || db.remove_device(&id))
+                .await
+                .map_err(|e| anyhow::anyhow!("Entkoppeln abgebrochen: {e}"))??;
             Ok(Response::Success {
                 message: format!(
-                    "'{}' entkoppelt. Das Gerät kann deine Dateiliste nicht mehr abrufen; \
-                     seine Einträge wurden hier entfernt.",
+                    "'{}' entkoppelt. Beide Geräte sehen die Dateien des anderen nicht mehr \
+                     (die Gegenseite erfährt es sofort oder beim nächsten Kontakt).",
                     d.name
                 ),
             })

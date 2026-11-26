@@ -696,3 +696,22 @@ Messung `core/tests/perf.rs::formats_read`, Release-Build:
 - App-Pakete: Split-APKs werden in 256-KiB-Blöcken direkt aus dem ZIP in die Installer-Sitzung
   kopiert (kein Zwischenentpacken); für die App-Infos wird nur die Haupt-APK kurz in den Cache
   kopiert und danach gelöscht.
+
+## Review 37 – Entkoppeln in beide Richtungen (2026-11-26)
+
+Messung `core/tests/perf.rs::unpair_cleanup` (Release) und `core/tests/unpair.rs`:
+
+| Fall | Zeit |
+|---|---|
+| Gegenseite erfährt das Entkoppeln (Live-Verbindung, Loopback) | 1,6 ms |
+| Gegenseite war offline: übernommen nach dem Wiederkommen | 52 ms nach dem ersten Verbindungsversuch |
+| Gerät mit 200 000 Katalogeinträgen aus der Datenbank löschen | 1,3 s |
+| `was_unpaired` (beim Abweisen einer Verbindung) | 0,4 ms |
+| 10 000 fremde Einträge übernehmen, mit Entkoppelt-Prüfung | 77 ms (vorher 79 ms) |
+| 10 000 Einträge eines entkoppelten Geräts verwerfen | 0,5 ms |
+
+- Das Löschen läuft in `spawn_blocking` (über die API und beim Entkoppeln durch die Gegenseite);
+  Lesezugriffe der Oberfläche laufen über eigene WAL-Leseverbindungen weiter und warten nicht.
+- Die Entkoppelt-Prüfung beim Übernehmen kostet eine indizierte Abfrage je Herkunft und Seite.
+- Offline-Kopien und Vorschaubilder räumt die Pin-Schleife danach im Hintergrund auf; die
+  Vorschaubilder liegen je Gerät in einem eigenen Ordner und verschwinden mit einem Aufruf.

@@ -213,12 +213,13 @@ impl LiveManager {
                     if let Some(h) = self.dialers.lock().unwrap().remove(&node_id) {
                         h.abort();
                     }
-                    self.disconnect(&node_id, b"unpaired");
+                    // Die Gegenseite erfährt es sofort (authentifizierter Schließcode).
+                    self.disconnect(&node_id, crate::pairing::CLOSE_UNPAIRED, b"unpaired");
                     self.storage.lock().unwrap().remove(&node_id);
                 }
                 // Wurde catalog.read entzogen, endet die Live-Verbindung sofort.
                 Event::GrantsChanged { node_id } if !self.may_see_us(&node_id) => {
-                    self.disconnect(&node_id, b"revoked");
+                    self.disconnect(&node_id, crate::pairing::CLOSE_NOT_PAIRED, b"revoked");
                 }
                 _ => {}
             }
@@ -238,9 +239,9 @@ impl LiveManager {
         }
     }
 
-    fn disconnect(&self, node_id: &str, reason: &[u8]) {
+    fn disconnect(&self, node_id: &str, code: u32, reason: &[u8]) {
         if let Some(p) = self.peers.lock().unwrap().remove(node_id) {
-            p.conn.close(1u32.into(), reason);
+            p.conn.close(code.into(), reason);
         }
     }
 
@@ -279,8 +280,11 @@ impl LiveManager {
             match attempt {
                 Ok(Ok(conn)) => {
                     let started = Instant::now();
-                    if let Err(e) = self.clone().session(peer.clone(), conn, true).await {
+                    if let Err(e) = self.clone().session(peer.clone(), conn.clone(), true).await {
                         tracing::debug!("Live-Verbindung zu {} beendet: {e:#}", short(&peer));
+                    }
+                    if crate::pairing::handle_close(&self.ctx.db, &conn) {
+                        return; // entkoppelt – der Wähler endet
                     }
                     // Nach einer längeren, stabilen Verbindung sofort neu versuchen.
                     if started.elapsed() > Duration::from_secs(30) {
@@ -418,6 +422,8 @@ impl LiveManager {
         .await;
 
         reader.abort();
+        // Vor dem eigenen Schließen prüfen: danach meldet die Verbindung nur noch „lokal geschlossen“.
+        crate::pairing::handle_close(&self.ctx.db, &conn);
         conn.close(0u32.into(), b"bye");
         if self.unregister(&peer, &conn) && !self.is_connected(&peer) {
             let _ = self.ctx.db.mark_peer_disconnected(&peer);
@@ -529,12 +535,13 @@ impl ProtocolHandler for LiveProtocol {
         let peer = conn.remote_id().to_string();
         let caller = Caller::Device(peer.clone());
         if authorize(&self.mgr.ctx.db, &[], &caller, Capability::CatalogRead, None, "live.connect").is_err() {
-            conn.close(1u32.into(), b"not paired");
+            crate::pairing::reject(&self.mgr.ctx.db, &conn);
             return Ok(());
         }
-        if let Err(e) = self.mgr.clone().session(peer.clone(), conn, false).await {
+        if let Err(e) = self.mgr.clone().session(peer.clone(), conn.clone(), false).await {
             tracing::debug!("Live-Verbindung von {} beendet: {e:#}", short(&peer));
         }
+        crate::pairing::handle_close(&self.mgr.ctx.db, &conn);
         Ok(())
     }
 }

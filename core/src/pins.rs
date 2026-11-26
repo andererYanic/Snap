@@ -250,6 +250,17 @@ pub async fn run_pin_loop(inner: Arc<DaemonInner>) {
         tokio::select! {
             ev = sub.next() => match ev {
                 Some(Event::RemoteCatalogChanged { .. }) | Some(Event::Lagged { .. }) => {}
+                Some(Event::DeviceRemoved { node_id }) => {
+                    let inner2 = inner.clone();
+                    match tokio::task::spawn_blocking(move || forget_device_files(&inner2, &node_id)).await {
+                        Ok(Ok((removed, kept))) if removed + kept > 0 => {
+                            tracing::info!("Entkoppelt: {removed} Offline-Kopien entfernt, {kept} lokal veränderte behalten");
+                        }
+                        Ok(Err(e)) => tracing::warn!("Aufräumen nach dem Entkoppeln fehlgeschlagen: {e:#}"),
+                        _ => {}
+                    }
+                    continue;
+                }
                 Some(_) => continue,
                 None => return,
             },
@@ -261,6 +272,39 @@ pub async fn run_pin_loop(inner: Arc<DaemonInner>) {
             tracing::warn!("Pin-Abgleich fehlgeschlagen: {e:#}");
         }
     }
+}
+
+/// Nach dem Entkoppeln: Offline-Kopien (Pins) und Vorschaubilder des Geräts entfernen.
+/// Lokal veränderte Kopien bleiben als normale Dateien liegen (sie gehören jetzt dem Nutzer);
+/// ausdrücklich heruntergeladene Dateien werden nie angefasst. Gibt (entfernt, behalten) zurück.
+pub fn forget_device_files(inner: &DaemonInner, node_id: &str) -> Result<(usize, usize)> {
+    let db = &inner.db;
+    let root = inner.config.pin_dir.clone();
+    let (mut removed, mut kept) = (0, 0);
+    for pin in db.list_pins()?.into_iter().filter(|p| p.origin == node_id) {
+        let stop = root.join(&pin.dir_name);
+        for rec in db.pinned_of_pin(pin.id)? {
+            let path = PathBuf::from(&rec.path);
+            // Nur Dateien unter dem eigenen Pin-Ordner (nie durch Symlinks oder nach außen).
+            if !path.starts_with(&stop) {
+                continue;
+            }
+            if rec.state == "ok" && unchanged_since_written(&path, &rec) {
+                std::fs::remove_file(&path)?;
+                remove_empty_parents(&path, &stop);
+                removed += 1;
+            } else if std::fs::symlink_metadata(&path).is_ok() && rec.state != "pending" {
+                kept += 1;
+            }
+        }
+        db.remove_pin(pin.id)?;
+        let _ = std::fs::remove_dir(&stop); // nur, wenn leer
+    }
+    let thumbs = crate::remote_thumbs::device_dir(&inner.config.thumb_dir(), node_id);
+    if thumbs.is_dir() {
+        std::fs::remove_dir_all(&thumbs)?;
+    }
+    Ok((removed, kept))
 }
 
 #[cfg(test)]
