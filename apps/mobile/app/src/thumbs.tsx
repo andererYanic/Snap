@@ -9,6 +9,8 @@ const VIDEO = /\.(mp4|mkv|mov|webm|3gp|m4v)$/i;
 export const isMedia = (name: string) => MEDIA.test(name);
 export const isVideo = (name: string) => VIDEO.test(name);
 export const isImage = (name: string) => MEDIA.test(name) && !VIDEO.test(name);
+const AUDIO = /\.(mp3|flac|m4a|ogg|oga|opus|wav|aac|wma|amr|mid|midi)$/i;
+export const isAudio = (name: string) => AUDIO.test(name);
 
 const cache = new Map<string, string | null>();
 const pending = new Map<string, Promise<string | null>>();

@@ -14,13 +14,15 @@ import * as core from './core';
 import { humanSize, joinPath, parentOf, relativeDate, request, type DirEntry } from './core';
 import { locale, t } from './i18n';
 import type { Theme } from './theme';
-import { isMedia, isVideo, Thumb } from './thumbs';
+import { isAudio, isMedia, isVideo, Thumb } from './thumbs';
 import { BottomSheet, Glyph, SectionLabel, Tap, themed, type SheetAction } from './ui';
 import { Icon } from './Icon';
 import Editor from './Editor';
 import RemoteBrowser, { type RemoteDevice } from './RemoteBrowser';
 import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
+import { ApkSheet, isApk } from './Apk';
+import ArchiveViewer, { isArchiveListable } from './ArchiveViewer';
 import Viewer, { type MediaItem } from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
@@ -48,6 +50,8 @@ interface Item extends DirEntry {
 }
 
 type Sort = 'name' | 'date' | 'size' | 'type';
+/** Ausführbare Dateien anderer Systeme (auf Android nicht startbar). */
+const FOREIGN_PROGRAM = /\.(exe|msi|msix|appx|com|scr|deb|rpm|appimage|flatpak|flatpakref|snap|run|bin|dmg|pkg|app|jar)$/i;
 const ROW = 64;
 const FOLDERS: [string, string][] = [
   ['Download', 'Downloads'],
@@ -128,6 +132,8 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Item[] | null>(null);
   const [searching, setSearching] = useState(false); // Anfrage läuft noch
+  const [apk, setApk] = useState<{ path: string; name: string; size: number } | null>(null);
+  const [archive, setArchive] = useState<{ path: string; name: string } | null>(null);
   const [pdf, setPdf] = useState<{ path: string; name: string; mode?: 'view' | 'mark' | 'sign' } | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
@@ -291,6 +297,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   // ------------------------------------------------------------ Aktionen
   const fail = (e: any) => notify(e?.message ?? String(e));
   const fileOp = (op: unknown) => request({ FileOp: { op, wait: true } });
+  /** Programme anderer Systeme: verständlicher Hinweis statt „keine App gefunden“. */
+  const openFailed = (name: string, err: unknown) =>
+    FOREIGN_PROGRAM.test(name) ? notify(t('„{name}“ ist ein Programm für Windows, Linux oder macOS und lässt sich auf Android nicht ausführen.', { name })) : fail(err);
 
   const open = (e: Item) => {
     if (sel.size) {
@@ -310,12 +319,16 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     } else if (/\.pdf$/i.test(e.name)) {
       // PDFs zeigt die App selbst (Android zeichnet die Seiten)
       setPdf({ path: e.path, name: e.name });
-    } else if (isMedia(e.name)) {
+    } else if (isMedia(e.name) || isAudio(e.name)) {
       // Alle Dateien des Ordners bzw. der Treffer: Wischen führt zur nächsten/vorigen Datei
       const files = shown.filter((x) => x.kind === 'File');
       setViewer({ items: files, start: Math.max(0, files.findIndex((x) => x.path === e.path)) });
+    } else if (isApk(e.name)) {
+      setApk({ path: e.path, name: e.name, size: e.size ?? 0 });
+    } else if (isArchiveListable(e.name)) {
+      setArchive({ path: e.path, name: e.name });
     } else {
-      core.openFile(e.path).catch(fail);
+      core.openFile(e.path).catch((err) => openFailed(e.name, err));
     }
   };
 
@@ -325,10 +338,14 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       setTextFile({ path, name });
     } else if (/\.pdf$/i.test(name)) {
       setPdf({ path, name });
-    } else if (isMedia(name)) {
+    } else if (isMedia(name) || isAudio(name)) {
       setViewer({ items: [{ path, name }], start: 0 });
+    } else if (isApk(name)) {
+      setApk({ path, name, size: 0 });
+    } else if (isArchiveListable(name)) {
+      setArchive({ path, name });
     } else {
-      core.openFile(path).catch(fail);
+      core.openFile(path).catch((err) => openFailed(name, err));
     }
   };
 
@@ -1013,6 +1030,20 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         </View>
       )}
       {textFile && <TextViewer path={textFile.path} name={textFile.name} theme={theme} onClose={() => setTextFile(null)} />}
+      {apk && <ApkSheet path={apk.path} name={apk.name} size={apk.size} theme={theme} notify={notify} onClose={() => setApk(null)} />}
+      {archive && (
+        <ArchiveViewer
+          path={archive.path}
+          name={archive.name}
+          theme={theme}
+          onClose={() => setArchive(null)}
+          onExtract={() => {
+            const a = archive.path;
+            setArchive(null);
+            extractAll([a]);
+          }}
+        />
+      )}
       {pdf && <PdfViewer path={pdf.path} name={pdf.name} initialMode={pdf.mode} notify={notify} onChanged={load} onClose={() => setPdf(null)} />}
       {viewer && (
         <Viewer
@@ -1105,7 +1136,7 @@ const FileRow = memo(function FileRow({ e, on, shared, grid, tile, tileH, theme,
         <Tap theme={theme} onPress={press} onLongPress={noop} delayLongPress={LONG_PRESS} style={[s.tile, on && s.tileOn]} label={e.name} selected={on}>
           <View style={[s.tileThumb, { width: tile - 12, height: tile - 12 }]}>
             <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} size={56} />
-            {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
+            {e.kind === 'File' && (isMedia(e.name) || isAudio(e.name)) && <Thumb path={e.path} edge={320} style={s.fillImg} />}
             {on && (
               <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.tileCheck, { backgroundColor: theme.accent }]}>
                 <Icon name="check" size={16} color={theme.onAccent as string} strokeWidth={2.4} />
@@ -1122,7 +1153,7 @@ const FileRow = memo(function FileRow({ e, on, shared, grid, tile, tileH, theme,
     <Tap theme={theme} onPress={press} onLongPress={noop} delayLongPress={LONG_PRESS} style={[s.row, on && s.rowOn]} label={e.name} selected={on}>
       <View style={s.iconBox}>
         <Glyph name={e.name} dir={e.kind === 'Dir'} theme={theme} />
-        {e.kind === 'File' && isMedia(e.name) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
+        {e.kind === 'File' && (isMedia(e.name) || isAudio(e.name)) && <Thumb path={e.path} edge={160} style={s.thumbImg} />}
         {on && (
           <Animated.View entering={m(popIn)} exiting={m(popOut)} style={[s.check, { backgroundColor: theme.accent }]}>
             <Icon name="check" size={20} color={theme.onAccent as string} strokeWidth={2.4} />

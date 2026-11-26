@@ -12,9 +12,119 @@ import type { Theme } from './theme';
 import { themed } from './ui';
 
 const MD = /\.(md|markdown)$/i;
-const DOCX = /\.docx$/i;
+/** Formate, die der Kern als Leseansicht liefert. */
+const DOCS = /\.(docx|odt|ods|odp|epub|pptx|xlsx)$/i;
+const TABLE = /\.(csv|tsv)$/i;
+const CARD = /\.(vcf|vcard|ics|ical)$/i;
+/** Text, Code und Konfiguration: als reiner Text angezeigt (höchstens 2 MB). */
+const PLAIN = /\.(txt|text|log|json|jsonc|json5|xml|ini|conf|cfg|yaml|yml|toml|properties|env|gradle|kts?|java|js|mjs|cjs|jsx|ts|tsx|py|rb|rs|go|c|h|cc|cpp|hpp|cs|swift|m|mm|php|pl|lua|r|dart|scala|sh|bash|zsh|fish|ps1|bat|cmd|sql|html?|css|scss|sass|less|svg|vue|svelte|srt|vtt|ass|sub|tex|bib|rst|adoc|org|nfo|diff|patch|gitignore|gitattributes|editorconfig|dockerfile|makefile|cmake|lock|plist|desktop|service|reg|csv|tsv)$/i;
+const BARE = /^(readme|license|licence|copying|changelog|authors|makefile|dockerfile|notice|todo)$/i;
 /** Dateien, die die Textanzeige öffnet. */
-export const isText = (name: string) => /\.(txt|md|markdown|log|csv|json|xml|ini|conf|cfg|yaml|yml|toml|docx)$/i.test(name);
+export const isText = (name: string) => MD.test(name) || DOCS.test(name) || PLAIN.test(name) || CARD.test(name) || BARE.test(name);
+/** Höchstens so viele Tabellenzeilen werden gezeichnet (der Rest steht als Hinweis darunter). */
+const MAX_SHOWN_ROWS = 400;
+
+/** CSV/TSV → Tabelle (Anführungszeichen, eingebettete Trennzeichen und Zeilenumbrüche). */
+export function parseCsv(text: string, sep: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < text.length && rows.length < 5000; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (c === '"') {
+        quoted = false;
+      } else {
+        cell += c;
+      }
+    } else if (c === '"' && cell === '') {
+      quoted = true;
+    } else if (c === sep) {
+      row.push(cell);
+      cell = '';
+    } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') {
+        i++;
+      }
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else {
+      cell += c;
+    }
+  }
+  if (cell !== '' || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  const width = Math.min(200, Math.max(0, ...rows.map((r) => r.length)));
+  return rows.map((r) => {
+    const x = r.slice(0, width).map((v) => v.slice(0, 500));
+    while (x.length < width) {
+      x.push('');
+    }
+    return x;
+  });
+}
+
+/** Trennzeichen raten: Tab bei .tsv, sonst das häufigste aus ; , Tab in der ersten Zeile. */
+function csvSep(name: string, text: string): string {
+  if (/\.tsv$/i.test(name)) {
+    return '\t';
+  }
+  const first = text.slice(0, text.indexOf('\n') >>> 0 || 2000);
+  const counts = [';', ',', '\t'].map((c) => [c, first.split(c).length] as const);
+  return counts.sort((a, b) => b[1] - a[1])[0][0];
+}
+
+/** Visitenkarten (vCard) und Termine (iCalendar) → lesbare Blöcke. */
+export function parseCard(text: string): Block[] {
+  // Gefaltete Zeilen (Fortsetzung mit Leerzeichen/Tab) zusammenführen
+  const lines = text.replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n');
+  const out: Block[] = [];
+  const unescape = (v: string) => v.replace(/\\n/gi, '\n').replace(/\\([,;\\])/g, '$1');
+  const when = (v: string) => {
+    const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2}))?/.exec(v);
+    return m ? `${m[3]}.${m[2]}.${m[1]}${m[4] ? ` ${m[4]}:${m[5]}` : ''}` : v;
+  };
+  const LABEL: Record<string, string> = {
+    TEL: 'Telefon', EMAIL: 'E-Mail', ADR: 'Adresse', ORG: 'Organisation', TITLE: 'Position', URL: 'Web', BDAY: 'Geburtstag', NOTE: 'Notiz',
+    DTSTART: 'Beginn', DTEND: 'Ende', LOCATION: 'Ort', DESCRIPTION: 'Beschreibung', ORGANIZER: 'Organisiert von',
+  };
+  let rows: string[][] = [];
+  const flush = () => {
+    if (rows.length) {
+      out.push({ type: 'table', rows: [[t('Feld'), t('Wert')], ...rows] });
+      rows = [];
+    }
+  };
+  for (const line of lines) {
+    const i = line.indexOf(':');
+    if (i <= 0) {
+      continue;
+    }
+    const key = line.slice(0, i).split(';')[0].toUpperCase();
+    const value = unescape(line.slice(i + 1)).trim();
+    if (key === 'BEGIN' && (value === 'VCARD' || value === 'VEVENT')) {
+      flush();
+    } else if (key === 'FN' || key === 'SUMMARY') {
+      out.push({ type: 'heading', level: 2, inline: [{ text: value }] });
+    } else if (LABEL[key] && value) {
+      const v = key === 'ADR' ? value.split(';').filter(Boolean).join(', ') : /^DT|BDAY/.test(key) ? when(value) : value.replace(/^mailto:/i, '');
+      rows.push([t(LABEL[key]), v.slice(0, 2000)]);
+    }
+    if (out.length > 2000) {
+      break;
+    }
+  }
+  flush();
+  return out;
+}
 
 /** Bild aus einer Word-Datei: Breite des Bildschirms, Seitenverhältnis aus dem Bild. */
 function DocImage({ file }: { file: string }) {
@@ -76,13 +186,16 @@ function BlockView({ b, s, theme }: { b: Block; s: ReturnType<typeof styles>; th
       return (
         <ScrollView horizontal style={s.tableWrap} showsHorizontalScrollIndicator={false}>
           <View style={[s.table, { borderColor: theme.stroke }]}>
-            {b.rows.map((row, i) => (
+            {b.rows.slice(0, MAX_SHOWN_ROWS).map((row, i) => (
               <View key={i} style={[s.tr, i === 0 && { backgroundColor: theme.accentSoft }, { borderColor: theme.stroke }]}>
                 {row.map((cell, k) => (
                   <Text key={k} style={[s.text, s.td, i === 0 && s.bold, { borderColor: theme.stroke }]} selectable>{cell}</Text>
                 ))}
               </View>
             ))}
+            {b.rows.length > MAX_SHOWN_ROWS && (
+              <Text style={[s.text, s.td]}>{t('… und {n} weitere Zeilen', { n: b.rows.length - MAX_SHOWN_ROWS })}</Text>
+            )}
           </View>
         </ScrollView>
       );
@@ -112,14 +225,14 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
   const [docx, setDocx] = useState<Block[] | null>(null);
   const s = styles(theme);
   const md = MD.test(name);
-  const isDocx = DOCX.test(name);
+  const isDocx = DOCS.test(name);
 
   useEffect(() => {
     if (isDocx) {
-      // Word: der Kern liest Text, Überschriften, Listen, Tabellen und Bilder (Leseansicht)
+      // Office/E-Book: der Kern liest Text, Überschriften, Listen, Tabellen und Bilder (Leseansicht)
       core
         .docxImageDir()
-        .then((dir) => core.request<{ blocks: any[]; truncated: boolean }>({ ReadDocx: { path, image_dir: dir } }))
+        .then((dir) => core.request<{ blocks: any[]; truncated: boolean }>({ ReadDocument: { path, image_dir: dir } }))
         .then((d) => {
           setDocx(fromDocx(d.blocks));
           setDoc({ text: '', truncated: d.truncated });
@@ -130,7 +243,26 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
     }
   }, [path, isDocx]);
 
-  const blocks = useMemo(() => (docx ? docx : doc && doc !== 'error' && md ? parseMarkdown(doc.text) : null), [doc, md, docx]);
+  const blocks = useMemo((): Block[] | null => {
+    if (docx) {
+      return docx;
+    }
+    if (!doc || doc === 'error') {
+      return null;
+    }
+    if (md) {
+      return parseMarkdown(doc.text);
+    }
+    if (TABLE.test(name)) {
+      const rows = parseCsv(doc.text, csvSep(name, doc.text));
+      return rows.length ? [{ type: 'table', rows }] : null;
+    }
+    if (CARD.test(name)) {
+      const b = parseCard(doc.text);
+      return b.length ? b : null;
+    }
+    return null;
+  }, [doc, md, docx, name]);
   // Reiner Text: in Abschnitte teilen, damit lange Dateien flüssig scrollen (virtualisierte Liste)
   const chunks = useMemo(() => {
     if (!doc || doc === 'error') {
@@ -154,7 +286,7 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
           </Pressable>
           <Text style={s.title} numberOfLines={1}>{name}</Text>
           {isDocx && <Text style={s.badge}>{t('Leseansicht')}</Text>}
-          {md && (
+          {(md || TABLE.test(name) || CARD.test(name)) && (
             <Pressable onPress={() => setRaw((v) => !v)} style={s.btn} accessibilityLabel={raw ? t('Formatiert anzeigen') : t('Quelltext anzeigen')}>
               <Text style={s.small}>{raw ? t('Formatiert') : t('Quelltext')}</Text>
             </Pressable>

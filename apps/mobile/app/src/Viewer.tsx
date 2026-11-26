@@ -17,7 +17,7 @@ import Animated, {
 import Video from 'react-native-video';
 import * as core from './core';
 import { t } from './i18n';
-import { isMedia, isVideo, useThumb } from './thumbs';
+import { isAudio, isMedia, isVideo, useThumb } from './thumbs';
 import { m } from './motion';
 import { Icon } from './Icon';
 import { clampV, pinchBase, pinchStep, range, rubber, settle, settleTarget, type PinchState } from './zoom';
@@ -265,7 +265,9 @@ export default function Viewer({ items, start, onClose, onEdit }: {
                 const it = items[i];
                 return (
                   <View key={it.path} style={[styles.slot, { left: i * W }]}>
-                    {!isMedia(it.name) ? (
+                    {isAudio(it.name) ? (
+                      <AudioPage item={it} active={i === index} />
+                    ) : !isMedia(it.name) ? (
                       <FilePage item={it} />
                     ) : isVideo(it.name) ? (
                       <VideoPage item={it} active={i === index} />
@@ -356,6 +358,86 @@ function FilePage({ item }: { item: MediaItem }) {
   );
 }
 
+const fmtTime = (s: number) => {
+  const t0 = Math.max(0, Math.floor(s));
+  const h = Math.floor(t0 / 3600);
+  const m = Math.floor((t0 % 3600) / 60);
+  const sec = String(t0 % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+};
+
+/** Audio: Cover (falls eingebettet), Titel/Interpret, großer Abspielknopf, Zeitleiste zum Springen. */
+function AudioPage({ item, active }: { item: MediaItem; active: boolean }) {
+  const cover = useThumb(item.uri ? null : item.path, 720);
+  const player = useRef<any>(null);
+  const [playing, setPlaying] = useState(false);
+  const [pos, setPos] = useState(0);
+  const [dur, setDur] = useState(0);
+  const [meta, setMeta] = useState<{ title?: string | null; artist?: string | null; album?: string | null }>({});
+  const [error, setError] = useState(false);
+  const trackW = useRef(1);
+  useEffect(() => {
+    if (!active) {
+      setPlaying(false);
+    }
+  }, [active]);
+  useEffect(() => {
+    if (!item.uri) {
+      core.request<any>({ Metadata: { path: item.path } }).then((m) => setMeta(m ?? {})).catch(() => {});
+    }
+  }, [item.path, item.uri]);
+  const seekTo = (x: number) => {
+    if (dur > 0) {
+      const t0 = Math.max(0, Math.min(1, x / trackW.current)) * dur;
+      player.current?.seek(t0);
+      setPos(t0);
+    }
+  };
+  const scrub = Gesture.Pan().minDistance(0).onBegin((e) => runOnJS(seekTo)(e.x)).onUpdate((e) => runOnJS(seekTo)(e.x));
+  const title = meta.title || item.name.replace(/\.[^.]+$/, '');
+  const sub = [meta.artist, meta.album].filter(Boolean).join(' · ');
+  return (
+    <View style={styles.page}>
+      <Video
+        ref={player}
+        source={{ uri: item.uri ?? `file://${item.path}` }}
+        paused={!playing || !active}
+        playInBackground={false}
+        onLoad={(e: any) => setDur(e?.duration ?? 0)}
+        onProgress={(e: any) => setPos(e?.currentTime ?? 0)}
+        onEnd={() => { setPlaying(false); setPos(0); player.current?.seek(0); }}
+        onError={() => setError(true)}
+        style={styles.hiddenPlayer}
+      />
+      <View style={styles.cover}>
+        {cover ? <Image source={{ uri: cover }} style={styles.coverImg} /> : <Icon name="music" size={96} color="rgba(255,255,255,0.55)" strokeWidth={1.2} />}
+      </View>
+      <Text style={styles.audioTitle} numberOfLines={2}>{title}</Text>
+      {sub ? <Text style={styles.audioSub} numberOfLines={1}>{sub}</Text> : null}
+      {error ? (
+        <Text style={styles.errorText}>{t('Diese Audiodatei lässt sich nicht abspielen.')}</Text>
+      ) : (
+        <>
+          <GestureDetector gesture={scrub}>
+            <View style={styles.track} onLayout={(e) => (trackW.current = e.nativeEvent.layout.width || 1)} accessibilityRole="adjustable" accessibilityLabel={t('Position')}>
+              <View style={styles.trackBg} />
+              <View style={[styles.trackOn, { width: `${dur > 0 ? Math.min(100, (pos / dur) * 100) : 0}%` }]} />
+              <View style={[styles.knob, { left: `${dur > 0 ? Math.min(100, (pos / dur) * 100) : 0}%` }]} />
+            </View>
+          </GestureDetector>
+          <View style={styles.times}>
+            <Text style={styles.time}>{fmtTime(pos)}</Text>
+            <Text style={styles.time}>{dur > 0 ? fmtTime(dur) : '–:––'}</Text>
+          </View>
+          <Pressable onPress={() => setPlaying((p) => !p)} style={styles.playBtn} accessibilityRole="button" accessibilityLabel={playing ? t('Pause') : t('Abspielen')}>
+            <Icon name={playing ? 'pause' : 'play'} size={34} color="#0B1F1A" fill={playing ? undefined : '#0B1F1A'} strokeWidth={playing ? 3 : 1.6} />
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
 function VideoPage({ item, active }: { item: MediaItem; active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setError(null), [item.path]);
@@ -406,5 +488,17 @@ const styles = StyleSheet.create({
   fileName: { color: '#fff', fontSize: 17, fontWeight: '600', textAlign: 'center', marginHorizontal: 32, marginBottom: 18 },
   errorBox: { alignItems: 'center', padding: 24 },
   errorText: { color: '#eee', fontSize: 15, textAlign: 'center', marginBottom: 12 },
+  hiddenPlayer: { width: 0, height: 0, position: 'absolute' },
+  cover: { width: W * 0.68, height: W * 0.68, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.08)', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', marginBottom: 28 },
+  coverImg: { width: '100%', height: '100%' },
+  audioTitle: { color: '#fff', fontSize: 20, lineHeight: 26, fontWeight: '700', textAlign: 'center', marginHorizontal: 32 },
+  audioSub: { color: '#bbb', fontSize: 14, marginTop: 6, marginHorizontal: 32, textAlign: 'center' },
+  track: { width: W - 64, height: 32, justifyContent: 'center', marginTop: 28 },
+  trackBg: { position: 'absolute', left: 0, right: 0, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.22)' },
+  trackOn: { position: 'absolute', left: 0, height: 4, borderRadius: 2, backgroundColor: '#72C7B2' },
+  knob: { position: 'absolute', width: 14, height: 14, borderRadius: 7, marginLeft: -7, backgroundColor: '#fff' },
+  times: { width: W - 64, flexDirection: 'row', justifyContent: 'space-between' },
+  time: { color: '#bbb', fontSize: 12, fontVariant: ['tabular-nums'] },
+  playBtn: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#72C7B2', justifyContent: 'center', alignItems: 'center', marginTop: 20 },
   errorBtn: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)' },
 });

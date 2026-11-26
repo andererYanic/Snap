@@ -150,3 +150,10 @@ path = "fuzz_targets/drop_connect.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "doc_read"
+path = "fuzz_targets/doc_read.rs"
+test = false
+doc = false
+bench = false

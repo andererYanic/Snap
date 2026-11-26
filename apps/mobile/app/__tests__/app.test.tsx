@@ -33,7 +33,14 @@ NativeModules.SnapCore = {
     const req = JSON.parse(json);
     calls.push(req);
     if (req.ListDir) return JSON.stringify(listing);
-    if (req.ReadDocx) {
+    if (req.ArchiveList) {
+      return JSON.stringify({ Archive: { total_size: 3000, truncated: false, encrypted: false, entries: [
+        { name: 'urlaub/', size: 0, dir: true },
+        { name: 'urlaub/strand.jpg', size: 2000, dir: false },
+        { name: 'liesmich.txt', size: 1000, dir: false },
+      ] } });
+    }
+    if (req.ReadDocx || req.ReadDocument) {
       return JSON.stringify({ Docx: { truncated: false, blocks: [
         { type: 'heading', level: 1, inline: [{ text: 'Bewerbung' }] },
         { type: 'paragraph', inline: [{ text: 'Sehr geehrte ' }, { text: 'Damen', bold: true }] },
@@ -209,8 +216,25 @@ test('Datei antippen öffnet sie mit der passenden App, „+“ legt eine Textda
   await flush();
   await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
   await flush();
+  // Archive zeigt die App selbst (Inhalt ohne Entpacken, Ordner aufklappbar)
+  NativeModules.SnapCore.openFile.mockClear();
   await act(async () => { byLabel(r, 'urlaub.zip').props.onPress(); });
-  expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/urlaub.zip');
+  await flush();
+  expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+  expect(calls).toContainEqual({ ArchiveList: { path: '/storage/emulated/0/urlaub.zip' } });
+  expect(allText(r)).toContain('liesmich.txt');
+  expect(allText(r)).not.toContain('strand.jpg');
+  await act(async () => { pressable(r, 'urlaub').props.onPress(); });
+  expect(allText(r)).toContain('strand.jpg');
+  const back = () => r.root.findAll((n) => n.props.accessibilityLabel === 'Zurück' && typeof n.props.onPress === 'function').pop()!;
+  await act(async () => { back().props.onPress(); });
+  expect(allText(r)).not.toContain('strand.jpg');
+  // „Entpacken“ nutzt die normale Dateioperation (hier mit Passwortabfrage)
+  await act(async () => { await pressable(r, 'Entpacken').props.onPress(); });
+  await flush();
+  expect(calls).toContainEqual({ FileOp: { op: { Extract: { archive: '/storage/emulated/0/urlaub.zip' } }, wait: true } });
+  expect(allText(r)).not.toContain('liesmich.txt');
+  await act(async () => { pressable(r, 'Abbrechen').props.onPress(); });
   // „+“ → „Neue Textdatei“ → Name bestätigen
   await act(async () => { byLabel(r, 'Neu').props.onPress(); });
   await act(async () => { pressable(r, 'Neue Textdatei').props.onPress(); });
@@ -503,7 +527,7 @@ test('DOCX öffnet die Leseansicht (Kern liest, App zeigt Überschrift, Tabelle,
     await act(async () => { byLabel(r, 'zz-bewerbung.docx').props.onPress(); });
     await flush();
     await flush();
-    expect(calls).toContainEqual({ ReadDocx: { path: '/storage/emulated/0/zz-bewerbung.docx', image_dir: '/cache/docx' } });
+    expect(calls).toContainEqual({ ReadDocument: { path: '/storage/emulated/0/zz-bewerbung.docx', image_dir: '/cache/docx' } });
     expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
     const text = allText(r);
     expect(text).toContain('Bewerbung');
@@ -1217,4 +1241,91 @@ test('Geteilter Link landet in der Zwischenablage und lässt sich öffnen; Ordne
   } finally {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
+});
+
+test('Formate: APK zeigt App-Infos und installiert, CSV als Tabelle, Visitenkarte, Audio im eingebauten Player', async () => {
+  const extra = [
+    { name: 'zz-app.apk', kind: 'File', size: 5_000_000, mtime: 1700000000, hidden: false },
+    { name: 'zz-daten.csv', kind: 'File', size: 40, mtime: 1700000000, hidden: false },
+    { name: 'zz-kontakt.vcf', kind: 'File', size: 60, mtime: 1700000000, hidden: false },
+    { name: 'zz-lied.mp3', kind: 'File', size: 3_000_000, mtime: 1700000000, hidden: false },
+    { name: 'zz-spiel.xapk', kind: 'File', size: 90_000_000, mtime: 1700000000, hidden: false },
+  ];
+  listing.DirListing.entries.push(...extra);
+  NativeModules.SnapCore.apkInfo = jest.fn(async (p: string) => (p.endsWith('.xapk') ? { label: 'Spiel', package: 'org.beispiel.spiel', version: '1.0', versionCode: 1, self: false, splits: 3, obb: true } : { label: 'Notizen', package: 'org.beispiel.notizen', version: '2.1', versionCode: 21, installedVersion: '2.0', installedCode: 20, self: false }));
+  NativeModules.SnapCore.installApk = jest.fn(async (p: string) => (p.endsWith('.xapk') ? 'installed' : 'started'));
+  const texts: Record<string, string> = {
+    '/storage/emulated/0/zz-daten.csv': 'Name;Ort\n"Müller; Anna";Berlin\nBob;"Köln\nPorz"\n',
+    '/storage/emulated/0/zz-kontakt.vcf': 'BEGIN:VCARD\r\nFN:Erika Muster\r\nTEL;TYPE=cell:+49 30 1234\r\nEMAIL:erika@example.org\r\nEND:VCARD\r\n',
+  };
+  NativeModules.SnapCore.readText = jest.fn(async (p: string) => ({ text: texts[p] ?? '', truncated: false }));
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+    await flush();
+    NativeModules.SnapCore.openFile.mockClear();
+
+    // APK: Infos, Aktualisierung erkannt, Installer gestartet
+    await act(async () => { byLabel(r, 'zz-app.apk').props.onPress(); });
+    await flush();
+    expect(NativeModules.SnapCore.apkInfo).toHaveBeenCalledWith('/storage/emulated/0/zz-app.apk');
+    let text = allText(r);
+    expect(text).toContain('Notizen');
+    expect(text).toContain('org.beispiel.notizen');
+    expect(text).toContain('Aktualisierung von 2.0 auf 2.1');
+    await act(async () => { await pressable(r, 'Aktualisieren').props.onPress(); });
+    await flush();
+    expect(NativeModules.SnapCore.installApk).toHaveBeenCalledWith('/storage/emulated/0/zz-app.apk');
+    expect(allText(r)).not.toContain('org.beispiel.notizen');
+
+    // App-Paket (mehrere APKs): Teile und OBB-Hinweis, Ergebnis der Installer-Sitzung
+    await act(async () => { byLabel(r, 'zz-spiel.xapk').props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('App-Paket aus 3 Teilen');
+    expect(allText(r)).toContain('OBB');
+    await act(async () => { await pressable(r, 'Installieren').props.onPress(); });
+    await flush();
+    expect(NativeModules.SnapCore.installApk).toHaveBeenCalledWith('/storage/emulated/0/zz-spiel.xapk');
+    expect(allText(r)).toContain('„Spiel“ installiert.');
+
+    // CSV: Trennzeichen erkannt, Anführungszeichen mit Trennzeichen und Zeilenumbruch
+    await act(async () => { byLabel(r, 'zz-daten.csv').props.onPress(); });
+    await flush();
+    text = allText(r);
+    expect(text).toContain('Müller; Anna');
+    expect(text).toContain('Köln\nPorz');
+    expect(text).toContain('Berlin');
+    const close = () => r.root.findAll((n) => ['Zurück', 'Schließen'].includes(n.props.accessibilityLabel) && typeof n.props.onPress === 'function').pop()!;
+    await act(async () => { close().props.onPress(); });
+
+    // Visitenkarte: Name als Überschrift, Felder als Tabelle
+    await act(async () => { byLabel(r, 'zz-kontakt.vcf').props.onPress(); });
+    await flush();
+    text = allText(r);
+    expect(text).toContain('Erika Muster');
+    expect(text).toContain('Telefon');
+    expect(text).toContain('+49 30 1234');
+    expect(text).toContain('erika@example.org');
+    await act(async () => { close().props.onPress(); });
+
+    // Audio: eingebauter Player statt fremder App
+    await act(async () => { byLabel(r, 'zz-lied.mp3').props.onPress(); });
+    await flush();
+    expect(r.root.findAll((n) => n.props.accessibilityLabel === 'Abspielen' || n.props.accessibilityLabel === 'Pause').length).toBeGreaterThan(0);
+    expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+  } finally {
+    listing.DirListing.entries.splice(-extra.length);
+  }
+});
+
+test('CSV- und Kartenparser: Anführungszeichen, leere Zellen, gleich breite Zeilen, Termine', () => {
+  const { parseCsv, parseCard } = require('../src/TextViewer');
+  expect(parseCsv('a,b,c\n1,"x,""y""",\n2', ',')).toEqual([['a', 'b', 'c'], ['1', 'x,"y"', ''], ['2', '', '']]);
+  expect(parseCsv('a\tb\r\nc\td\r\n', '\t')).toEqual([['a', 'b'], ['c', 'd']]);
+  const blocks = parseCard('BEGIN:VEVENT\nSUMMARY:Treffen\nDTSTART:20261126T0930\nLOCATION:Büro\\, Raum 2\nEND:VEVENT');
+  expect(blocks[0]).toMatchObject({ type: 'heading' });
+  expect(blocks[1].rows).toContainEqual(['Beginn', '26.11.2026 09:30']);
+  expect(blocks[1].rows).toContainEqual(['Ort', 'Büro, Raum 2']);
 });

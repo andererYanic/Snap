@@ -166,6 +166,8 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
         promise.resolve(map)
       } catch (e: Throwable) {
         promise.resolve(null)
+      } finally {
+        temp?.delete()
       }
     }
   }
@@ -205,6 +207,116 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
       } catch (e: Throwable) {
         promise.resolve(null)
       }
+    }
+  }
+
+  /**
+   * App-Infos aus einer APK (ohne sie zu installieren): Name, Paket, Version, installierte Version,
+   * Symbol (PNG im Cache). null, wenn keine gültige APK.
+   */
+  @ReactMethod
+  fun apkInfo(path: String, promise: Promise) {
+    val f = regularFile(path) ?: return promise.resolve(null)
+    scope.launch {
+      // App-Pakete (mehrere APKs): Infos aus der Haupt-APK, die kurz in den Cache kopiert wird
+      var temp: java.io.File? = null
+      try {
+        var splits = 1
+        var obb = false
+        val apkFile = if (ApkBundles.BUNDLE.containsMatchIn(f.name)) {
+          java.util.zip.ZipFile(f).use { zip ->
+            val b = ApkBundles.inspect(zip) ?: return@launch promise.resolve(null)
+            splits = b.apks.size
+            obb = b.obb
+            ApkBundles.extractBase(zip, b, java.io.File(ctx.cacheDir, "apkbase")).also { temp = it }
+          }
+        } else {
+          f
+        }
+        val pm = ctx.packageManager
+        @Suppress("DEPRECATION")
+        val info = pm.getPackageArchiveInfo(apkFile.absolutePath, 0) ?: return@launch promise.resolve(null)
+        val app = info.applicationInfo ?: return@launch promise.resolve(null)
+        app.sourceDir = apkFile.absolutePath
+        app.publicSourceDir = apkFile.absolutePath
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        map.putInt("splits", splits)
+        map.putBoolean("obb", obb)
+        map.putString("label", app.loadLabel(pm).toString().take(100))
+        map.putString("package", info.packageName)
+        map.putString("version", info.versionName ?: "")
+        @Suppress("DEPRECATION")
+        val code = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+        map.putDouble("versionCode", code.toDouble())
+        val installed = try {
+          @Suppress("DEPRECATION")
+          pm.getPackageInfo(info.packageName, 0)
+        } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+          null
+        }
+        if (installed != null) {
+          map.putString("installedVersion", installed.versionName ?: "")
+          @Suppress("DEPRECATION")
+          val ic = if (Build.VERSION.SDK_INT >= 28) installed.longVersionCode else installed.versionCode.toLong()
+          map.putDouble("installedCode", ic.toDouble())
+        }
+        map.putBoolean("self", info.packageName == ctx.packageName)
+        try {
+          val d = app.loadIcon(pm)
+          val bmp = android.graphics.Bitmap.createBitmap(128, 128, android.graphics.Bitmap.Config.ARGB_8888)
+          val c = android.graphics.Canvas(bmp)
+          d.setBounds(0, 0, 128, 128)
+          d.draw(c)
+          val dir = java.io.File(ctx.cacheDir, "apkicons").apply { mkdirs() }
+          val out = java.io.File(dir, "${info.packageName.filter { it.isLetterOrDigit() || it == '.' }}-$code.png")
+          out.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+          bmp.recycle()
+          map.putString("icon", out.absolutePath)
+        } catch (_: Throwable) {}
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /**
+   * APK an den Installer des Systems übergeben. Fehlt die Erlaubnis „Unbekannte Apps
+   * installieren“, öffnet sich zuerst diese Einstellung (Ergebnis `"permission"`).
+   */
+  @ReactMethod
+  fun installApk(path: String, promise: Promise) {
+    val f = regularFile(path) ?: return promise.reject("apk", "Nur Dateien lassen sich installieren.")
+    val bundle = ApkBundles.BUNDLE.containsMatchIn(f.name)
+    if (!bundle && !f.name.endsWith(".apk", ignoreCase = true)) return promise.reject("apk", "Keine APK-Datei.")
+    try {
+      if (Build.VERSION.SDK_INT >= 26 && !ctx.packageManager.canRequestPackageInstalls()) {
+        ctx.startActivity(
+          Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        return promise.resolve("permission")
+      }
+      if (bundle) {
+        // Mehrere APKs: Installer-Sitzung; das Versprechen endet mit dem Ergebnis
+        scope.launch {
+          ApkBundles.install(ctx.applicationContext, f) { r ->
+            when (r) {
+              null -> promise.resolve("installed")
+              "aborted" -> promise.resolve("aborted")
+              else -> promise.reject("apk", r)
+            }
+          }
+        }
+        return
+      }
+      val intent = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(contentUri(f), "application/vnd.android.package-archive")
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+      ctx.startActivity(intent)
+      promise.resolve("started")
+    } catch (e: Throwable) {
+      promise.reject("apk", e.message ?: e.toString())
     }
   }
 

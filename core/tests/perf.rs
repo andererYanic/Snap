@@ -1162,6 +1162,95 @@ fn docx_read() {
 
 #[test]
 #[ignore]
+fn formats_read() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let zip_of = |name: &str, files: &[(String, String)]| {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (n, c) in files {
+            w.start_file(n.as_str(), zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(c.as_bytes()).unwrap();
+        }
+        let p = dir.path().join(name);
+        std::fs::write(&p, w.finish().unwrap().into_inner()).unwrap();
+        p
+    };
+    // Tabelle: 5 000 Zeilen × 12 Spalten, halb geteilte Zeichenketten (größte erlaubte Ansicht)
+    let mut sheet = String::from("<worksheet><sheetData>");
+    for r in 1..=5000 {
+        sheet.push_str(&format!(r#"<row r="{r}">"#));
+        for c in 0..12u8 {
+            let col = (b'A' + c) as char;
+            if c % 2 == 0 {
+                sheet.push_str(&format!(r#"<c r="{col}{r}" t="s"><v>{}</v></c>"#, (r + c as usize) % 500));
+            } else {
+                sheet.push_str(&format!(r#"<c r="{col}{r}"><v>{}.25</v></c>"#, r * 7));
+            }
+        }
+        sheet.push_str("</row>");
+    }
+    sheet.push_str("</sheetData></worksheet>");
+    let sst: String = (0..500).map(|i| format!("<si><t>Eintrag {i}</t></si>")).collect();
+    let xlsx = zip_of(
+        "gross.xlsx",
+        &[
+            (
+                "xl/workbook.xml".into(),
+                r#"<workbook><sheets><sheet name="Daten" r:id="rId1" xmlns:r="r"/></sheets></workbook>"#.into(),
+            ),
+            (
+                "xl/_rels/workbook.xml.rels".into(),
+                r#"<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>"#.into(),
+            ),
+            ("xl/sharedStrings.xml".into(), format!("<sst>{sst}</sst>")),
+            ("xl/worksheets/sheet1.xml".into(), sheet.clone()),
+        ],
+    );
+    let n = 5;
+    let t = Instant::now();
+    for _ in 0..n {
+        space_core::docs::read_document(&xlsx, None).unwrap();
+    }
+    report(&format!("xlsx: 5000×12 Zellen ({} KB XML)", sheet.len() / 1024), n, t.elapsed());
+
+    // Buch: 300 Kapitel à 40 Absätze
+    let mut files = vec![(
+        "META-INF/container.xml".to_string(),
+        r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#.to_string(),
+    )];
+    let (mut manifest, mut spine) = (String::new(), String::new());
+    for k in 0..300 {
+        manifest.push_str(&format!(r#"<item id="k{k}" href="k{k}.xhtml" media-type="application/xhtml+xml"/>"#));
+        spine.push_str(&format!(r#"<itemref idref="k{k}"/>"#));
+        let body: String =
+            (0..40).map(|i| format!("<p>Absatz {i} mit <i>etwas</i> Text, wie in einem Roman.</p>")).collect();
+        files.push((format!("OEBPS/k{k}.xhtml"), format!("<html><body><h2>Kapitel {k}</h2>{body}</body></html>")));
+    }
+    files.push((
+        "OEBPS/content.opf".into(),
+        format!("<package><manifest>{manifest}</manifest><spine>{spine}</spine></package>"),
+    ));
+    let epub = zip_of("buch.epub", &files);
+    let t = Instant::now();
+    let mut blocks = 0;
+    for _ in 0..n {
+        blocks = space_core::docs::read_document(&epub, None).unwrap().blocks.len();
+    }
+    report(&format!("epub: 300 Kapitel → {blocks} Blöcke"), n, t.elapsed());
+
+    // Archiv mit 10 000 Einträgen auflisten (Obergrenze der Ansicht)
+    let entries: Vec<(String, String)> =
+        (0..10_000).map(|i| (format!("ordner{}/datei{i}.txt", i % 50), "x".into())).collect();
+    let zip = zip_of("viele.zip", &entries);
+    let t = Instant::now();
+    for _ in 0..n {
+        assert_eq!(space_core::docs::list_archive(&zip).unwrap().entries.len(), 10_000);
+    }
+    report("zip: 10 000 Einträge auflisten", n, t.elapsed());
+}
+
+#[test]
+#[ignore]
 fn remote_dir_tree() {
     // Ordneransicht eines fremden Geräts: 100k Einträge, 20 Jahre × 12 Monate + 5000 lose Dateien
     let dir = tempfile::tempdir().unwrap();

@@ -297,6 +297,16 @@ pub enum Request {
         #[serde(default)]
         image_dir: Option<PathBuf>,
     },
+    /// Leseansicht für DOCX, ODT/ODS/ODP, EPUB, PPTX, XLSX (nach Endung). Nur lokal.
+    ReadDocument {
+        path: PathBuf,
+        #[serde(default)]
+        image_dir: Option<PathBuf>,
+    },
+    /// Inhalt eines Archivs (ZIP, TAR, TAR.GZ) auflisten, ohne zu entpacken. Nur lokal.
+    ArchiveList {
+        path: PathBuf,
+    },
     /// Indexierte Orte anzeigen.
     IndexRoots,
     /// Ordner zur Suche hinzufügen (oder wieder aktivieren).
@@ -697,6 +707,7 @@ pub enum Response {
         hits: Vec<crate::index::SearchHit>,
     },
     Docx(crate::docx::DocxDoc),
+    Archive(crate::docs::ArchiveListing),
     SignId {
         id: Option<crate::pdfsign::id::IdInfo>,
         /// Eine Unterschrift ist gespeichert.

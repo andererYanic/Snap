@@ -21,6 +21,7 @@ import java.security.MessageDigest
 object Thumbnails {
   private val slots = Semaphore(4)
   private val video = Regex("\\.(mp4|mkv|mov|webm|3gp|m4v|avi)$", RegexOption.IGNORE_CASE)
+  private val audio = Regex("\\.(mp3|flac|m4a|ogg|opus|wav|aac|wma)$", RegexOption.IGNORE_CASE)
 
   suspend fun get(context: Context, path: String, edge: Int): String? = withContext(Dispatchers.IO) {
     val src = File(path)
@@ -42,9 +43,31 @@ object Thumbnails {
     }
   }
 
+  /** Eingebettetes Cover einer Audiodatei (höchstens 10 MB), passend verkleinert. */
+  private fun audioCover(src: File, edge: Int): Bitmap? {
+    val r = android.media.MediaMetadataRetriever()
+    return try {
+      r.setDataSource(src.absolutePath)
+      val pic = r.embeddedPicture ?: return null
+      if (pic.size > 10 * 1024 * 1024) return null
+      val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      BitmapFactory.decodeByteArray(pic, 0, pic.size, bounds)
+      if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth.toLong() * bounds.outHeight > 50_000_000L) return null
+      var sample = 1
+      while (bounds.outWidth / (sample * 2) >= edge && bounds.outHeight / (sample * 2) >= edge) sample *= 2
+      BitmapFactory.decodeByteArray(pic, 0, pic.size, BitmapFactory.Options().apply { inSampleSize = sample })
+    } catch (_: Throwable) {
+      null
+    } finally {
+      try { r.release() } catch (_: Throwable) {}
+    }
+  }
+
   private fun render(src: File, edge: Int): Bitmap? = try {
     val isVideo = video.containsMatchIn(src.name)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    if (audio.containsMatchIn(src.name)) {
+      audioCover(src, edge)
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       val size = Size(edge, edge)
       if (isVideo) ThumbnailUtils.createVideoThumbnail(src, size, null) else ThumbnailUtils.createImageThumbnail(src, size, null)
     } else if (isVideo) {

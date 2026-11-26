@@ -53,7 +53,11 @@ pub struct DocxDoc {
 }
 
 /// Liest einen Teil des ZIP vollständig, aber höchstens `MAX_PART` Bytes. `None`, wenn er fehlt.
-fn read_part<R: Read + std::io::Seek>(zip: &mut zip::ZipArchive<R>, name: &str, max: u64) -> Result<Option<Vec<u8>>> {
+pub(crate) fn read_part<R: Read + std::io::Seek>(
+    zip: &mut zip::ZipArchive<R>,
+    name: &str,
+    max: u64,
+) -> Result<Option<Vec<u8>>> {
     let entry = match zip.by_name(name) {
         Ok(e) => e,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
@@ -73,7 +77,7 @@ fn read_part<R: Read + std::io::Seek>(zip: &mut zip::ZipArchive<R>, name: &str, 
 }
 
 /// Wert eines Attributs nach lokalem Namen (Präfix wie `w:` oder `r:` egal).
-fn attr(e: &BytesStart, local: &[u8]) -> Option<String> {
+pub(crate) fn attr(e: &BytesStart, local: &[u8]) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|a| a.key.local_name().as_ref().as_bytes() == local)
@@ -81,7 +85,7 @@ fn attr(e: &BytesStart, local: &[u8]) -> Option<String> {
 }
 
 /// Text eines Entitäten-Verweises: nur die fünf vordefinierten und Zeichencodes.
-fn entity(r: &quick_xml::events::BytesRef) -> Option<String> {
+pub(crate) fn entity(r: &quick_xml::events::BytesRef) -> Option<String> {
     if let Ok(Some(c)) = r.resolve_char_ref() {
         return Some(c.to_string());
     }
@@ -99,7 +103,7 @@ fn entity(r: &quick_xml::events::BytesRef) -> Option<String> {
     )
 }
 
-fn reader(xml: &[u8]) -> quick_xml::Reader<&[u8]> {
+pub(crate) fn reader(xml: &[u8]) -> quick_xml::Reader<&[u8]> {
     let mut r = quick_xml::Reader::from_reader(xml);
     r.config_mut().check_end_names = false;
     r
@@ -234,7 +238,7 @@ fn image_part(target: &str) -> Option<String> {
     [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].iter().any(|e| lower.ends_with(e)).then_some(name)
 }
 
-fn safe_link(url: &str) -> Option<String> {
+pub(crate) fn safe_link(url: &str) -> Option<String> {
     let l = url.to_ascii_lowercase();
     (l.starts_with("https://") || l.starts_with("http://") || l.starts_with("mailto:")).then(|| url.to_string())
 }
