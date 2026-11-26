@@ -141,10 +141,10 @@ class SnapDropModule(private val ctx: ReactApplicationContext) : ReactContextBas
 
     override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, ch: BluetoothGattCharacteristic) {
       val s = server ?: return
-      if (ch.uuid != INFO) return s.sendResponse(device, requestId, BluetoothGatt.GATT_READ_NOT_PERMITTED, offset, null)
+      if (ch.uuid != INFO) { s.sendResponse(device, requestId, BluetoothGatt.GATT_READ_NOT_PERMITTED, offset, null); return }
       val v = info
-      if (v.isEmpty()) return s.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
-      if (offset > v.size) return s.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null)
+      if (v.isEmpty()) { s.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return }
+      if (offset > v.size) { s.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null); return }
       s.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, v.copyOfRange(offset, v.size))
     }
 
