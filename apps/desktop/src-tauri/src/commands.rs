@@ -644,7 +644,8 @@ mod font_tests {
 
 fn drop_id(s: &str) -> UiResult<()> {
     let hex = s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
-    let code = s.starts_with("snapdrop1-") && s.len() <= 1024 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    let code =
+        s.starts_with("snapdrop1-") && s.len() <= 1024 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
     if hex || code {
         Ok(())
     } else {
