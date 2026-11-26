@@ -660,3 +660,16 @@ Messung (`perf.rs::drop_transfer`, Release, 127.0.0.1):
   dabei mit, ohne die Datei ein zweites Mal zu lesen.
 - Kontakt-Abgleich: ein BLAKE3-Keyed-Hash je Kontakt und ein Mengen-Nachschlag je Tag.
 - Fortschritt höchstens 4× pro Sekunde; mDNS-Dienst läuft nur, solange man sichtbar ist oder sucht.
+
+## Review 35 – Zoomen, PDF-Scrollen, Textauswahl (2026-11-26)
+
+- Zoom, Verschieben, Blättern und Schwung laufen vollständig als Worklets auf dem UI-Thread
+  (Reanimated); während einer Geste gibt es keinen Umweg über JavaScript und kein neues Layout.
+  Nach dem Loslassen wird nur die Auflösung der sichtbaren Seiten angepasst (Stufen 1/1,5/2/3/4/5).
+- PDF: Seiten sind absolut positioniert; gezeichnet werden nur die sichtbaren Seiten ± 1. Die
+  sichtbaren Seiten berechnet eine Reaktion auf dem UI-Thread (Binärsuche über die Seitenkanten)
+  und meldet nur Änderungen an die Oberfläche.
+- Bildanzeige: höchstens drei Bilder gleichzeitig (aktuelles und Nachbarn).
+- Textauswahl: höchstens eine Abfrage an Android gleichzeitig, immer mit dem neuesten Fingerpunkt;
+  zum Schluss genau eine abschließende Abfrage.
+- Messung auf dem Gerät (Bildrate beim Zoomen großer PDFs, `gfxinfo`) steht aus.
