@@ -10,7 +10,7 @@ import { ActivityIndicator, Alert, Dimensions, Image, Modal, PixelRatio, Pressab
 import { Text } from './text';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDecay } from 'react-native-reanimated';
-import { pageAt, range, rubber, rubberScale, settle, settleTarget } from './zoom';
+import { pageAt, pinchBase, pinchStep, range, rubber, settle, settleTarget, type PinchState } from './zoom';
 import * as core from './core';
 import { request } from './core';
 import { t } from './i18n';
@@ -191,6 +191,10 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
   const contentH = useSharedValue(1);
   const offsetsSV = useSharedValue<number[]>([PAD]);
   const start0 = useSharedValue({ s: 1, x: 0, y: 0, px: 0, py: 0 });
+  const pz = useSharedValue<PinchState>({ s: 1, px: 0, py: 0, base: 1, n: 2, fx: 0, fy: 0 });
+  // Während eines Zooms ruht das Scrollen (kein Mitlaufen, kein Schwung danach)
+  const pinching = useSharedValue(false);
+  const pinchedInPan = useSharedValue(false);
   const lastShown = useSharedValue([0, 2, 0]);
 
   useEffect(() => {
@@ -242,22 +246,28 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
     .onStart((e) => {
       cancelAnimation(tx);
       cancelAnimation(ty);
-      const s0 = zs.value;
-      start0.value = { s: s0, x: tx.value, y: ty.value, px: (e.focalX - tx.value) / s0, py: (e.focalY - ty.value) / s0 };
+      cancelAnimation(zs);
+      pinching.value = true;
+      pinchedInPan.value = true;
+      pz.value = pinchBase(zs.value, tx.value, ty.value, e.focalX, e.focalY, e.scale, e.numberOfPointers);
     })
     .onUpdate((e) => {
-      const st = start0.value;
-      const ns = rubberScale(st.s * e.scale, MIN_ZOOM, MAX_ZOOM);
-      zs.value = ns;
-      tx.value = e.focalX - st.px * ns;
-      ty.value = e.focalY - st.py * ns;
+      const r = pinchStep(pz.value, { s: zs.value, x: tx.value, y: ty.value }, e.scale, e.focalX, e.focalY, e.numberOfPointers, MIN_ZOOM, MAX_ZOOM);
+      pz.value = r.st;
+      zs.value = r.s;
+      tx.value = r.x;
+      ty.value = r.y;
     })
-    .onEnd((e) => {
-      const to = settleTarget(zs.value, tx.value, ty.value, e.focalX, e.focalY, MIN_ZOOM, MAX_ZOOM, vw.value, vh.value, 0, 0, W, contentH.value, true);
+    .onEnd(() => {
+      const st = pz.value;
+      const to = settleTarget(zs.value, tx.value, ty.value, st.fx, st.fy, MIN_ZOOM, MAX_ZOOM, vw.value, vh.value, 0, 0, W, contentH.value, true);
       zs.value = settle(to.s);
       tx.value = settle(to.x);
       ty.value = settle(to.y);
       runOnJS(setScale)(to.s);
+    })
+    .onFinalize(() => {
+      pinching.value = false;
     });
   const pan = Gesture.Pan()
     .withTestId('pdf-pan')
@@ -268,8 +278,12 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
       cancelAnimation(tx);
       cancelAnimation(ty);
       start0.value = { s: zs.value, x: tx.value, y: ty.value, px: 0, py: 0 };
+      pinchedInPan.value = false;
     })
     .onUpdate((e) => {
+      if (pinching.value || pinchedInPan.value) {
+        return;
+      }
       const sc = zs.value;
       const [x0, x1] = range(sc, vw.value, 0, W);
       const [y0, y1] = range(sc, vh.value, 0, contentH.value, true);
@@ -277,6 +291,9 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
       ty.value = rubber(start0.value.y + e.translationY, y0, y1);
     })
     .onEnd((e) => {
+      if (pinchedInPan.value) {
+        return; // nach einem Zoom kein Schwung
+      }
       const sc = zs.value;
       const [x0, x1] = range(sc, vw.value, 0, W);
       const [y0, y1] = range(sc, vh.value, 0, contentH.value, true);

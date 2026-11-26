@@ -94,3 +94,42 @@ export function pageAt(offsets: number[], y: number): number {
   }
   return Math.max(0, lo);
 }
+
+/** Laufender Zwei-Finger-Zoom: Bezugspunkt (Inhaltskoordinaten) und letzter gültiger Fingerpunkt. */
+export interface PinchState {
+  s: number;
+  px: number;
+  py: number;
+  /** `scale` der Geste zum Zeitpunkt des Bezugs. */
+  base: number;
+  /** Fingerzahl beim Bezug. */
+  n: number;
+  fx: number;
+  fy: number;
+}
+
+/** Neuer Bezug: Der Inhaltspunkt unter (`fx`|`fy`) bleibt ab jetzt unter dem Fingerpunkt. */
+export function pinchBase(s: number, x: number, y: number, fx: number, fy: number, scale: number, n: number): PinchState {
+  'worklet';
+  return { s, px: (fx - x) / s, py: (fy - y) / s, base: scale || 1, n, fx, fy };
+}
+
+/**
+ * Ein Schritt des Zooms. Ändert sich die Zahl der Finger (z. B. einer wird zuerst gehoben), springt
+ * der Mittelpunkt der Finger – dann wird neu bezogen statt das Bild mitzureißen. Mit weniger als
+ * zwei Fingern bleibt alles stehen.
+ */
+export function pinchStep(
+  st: PinchState, cur: { s: number; x: number; y: number },
+  scale: number, fx: number, fy: number, n: number, min: number, max: number,
+): { st: PinchState; s: number; x: number; y: number } {
+  'worklet';
+  if (n < 2) {
+    return { st, s: cur.s, x: cur.x, y: cur.y };
+  }
+  if (n !== st.n) {
+    return { st: pinchBase(cur.s, cur.x, cur.y, fx, fy, scale, n), s: cur.s, x: cur.x, y: cur.y };
+  }
+  const ns = rubberScale(st.s * (scale / st.base), min, max);
+  return { st: { ...st, fx, fy }, s: ns, x: fx - st.px * ns, y: fy - st.py * ns };
+}
