@@ -716,7 +716,7 @@ pub async fn drop_send(app: AppHandle, d: State<'_, Daemon>, peer: String, paths
     if !confirm(&app, tr("In der Nähe senden", &[]), text, tr("Senden", &[])).await {
         return Err(cancelled());
     }
-    d.request(Request::DropSend { peer, paths: list }).await
+    d.request(Request::DropSend { peer, paths: list, text: None }).await
 }
 
 #[tauri::command]
@@ -765,4 +765,36 @@ pub async fn drop_blocked(d: State<'_, Daemon>) -> UiResult<Value> {
 #[tauri::command]
 pub async fn drop_unblock(d: State<'_, Daemon>, key: String) -> UiResult<Value> {
     d.request(Request::DropUnblock { key: drop_key(&key)? }).await
+}
+
+#[tauri::command]
+pub async fn drop_set_name(d: State<'_, Daemon>, name: Option<String>) -> UiResult<Value> {
+    if name.as_ref().is_some_and(|n| n.chars().count() > 40) {
+        return Err(UiError::new("InvalidInput", "Höchstens 40 Zeichen."));
+    }
+    d.request(Request::DropSetName { name }).await
+}
+
+#[tauri::command]
+pub async fn drop_rename_contact(d: State<'_, Daemon>, key: String, alias: Option<String>) -> UiResult<Value> {
+    if alias.as_ref().is_some_and(|n| n.chars().count() > 40) {
+        return Err(UiError::new("InvalidInput", "Höchstens 40 Zeichen."));
+    }
+    d.request(Request::DropRenameContact { key: drop_key(&key)?, alias }).await
+}
+
+/// Empfangenen Link mit dem Standard-Browser öffnen – nur `http`/`https` (geprüft im Kern),
+/// als einzelnes Argument ohne Shell.
+#[tauri::command]
+pub async fn open_link(url: String) -> UiResult<()> {
+    let link = space_core::drop::wire::as_link(&url)
+        .ok_or_else(|| UiError::new("InvalidInput", "Nur Web-Links lassen sich öffnen."))?;
+    std::process::Command::new("xdg-open")
+        .arg(&link)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| UiError::new("Internal", format!("Öffnen nicht möglich: {e}")))?;
+    Ok(())
 }

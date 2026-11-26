@@ -196,6 +196,8 @@ pub(crate) async fn handle_request(
         | Request::DropContacts
         | Request::DropSaveContact { .. }
         | Request::DropRemoveContact { .. }
+        | Request::DropRenameContact { .. }
+        | Request::DropSetName { .. }
         | Request::DropBlocked
         | Request::DropUnblock { .. }
         | Request::DropHotspotParse { .. }
@@ -343,6 +345,8 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropContacts => "drop.contacts",
         Request::DropSaveContact { .. } => "drop.contact.save",
         Request::DropRemoveContact { .. } => "drop.contact.remove",
+        Request::DropRenameContact { .. } => "drop.contact.rename",
+        Request::DropSetName { .. } => "drop.name",
         Request::DropBlocked => "drop.blocked",
         Request::DropUnblock { .. } => "drop.unblock",
         Request::DropHotspotParse { .. } => "drop.hotspot.parse",

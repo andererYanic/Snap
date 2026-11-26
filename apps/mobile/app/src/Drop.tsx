@@ -14,6 +14,11 @@ import type { Theme } from './theme';
 import { SectionLabel, themed } from './ui';
 
 const size = (n: number) => core.humanSize(n, locale());
+/** Rechnername eines Links (für die Anzeige; der volle Link steht darunter). */
+export function hostOf(url: string): string {
+  const m = /^https?:\/\/([^/?#]+)/i.exec(url);
+  return m ? m[1].toLowerCase() : url;
+}
 const filesLabel = (n: number) => (n === 1 ? t('1 Datei') : t('{n} Dateien', { n }));
 
 function kindIcon(kind: drop.NearbyPeer['kind']): IconName {
@@ -59,8 +64,8 @@ function Sheet({ theme, onClose, children }: { theme: Theme; onClose: () => void
 
 type SendState = { peer: string; phase: 'waiting' | 'sending' | 'done' | 'failed'; done: number; total: number; error?: string };
 
-export function DropSendSheet({ paths, theme, onClose, notify }: {
-  paths: string[]; theme: Theme; onClose: () => void; notify: (text: string) => void;
+export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
+  paths: string[]; text?: string | null; theme: Theme; onClose: () => void; notify: (text: string) => void;
 }) {
   const s = styles(theme);
   const [peers, setPeers] = useState<drop.NearbyPeer[]>([]);
@@ -107,7 +112,7 @@ export function DropSendSheet({ paths, theme, onClose, notify }: {
     core.haptic('select');
     setState({ peer: p.id, phase: 'waiting', done: 0, total: 0 });
     try {
-      const r = await drop.send(p, paths);
+      const r = await drop.send(p, paths, text);
       if (r.ok) {
         // Hinweis (mit „Als Kontakt speichern“) kommt über das Ereignis `DropFinished`.
         setState({ peer: p.id, phase: 'done', done: 1, total: 1 });
@@ -135,7 +140,12 @@ export function DropSendSheet({ paths, theme, onClose, notify }: {
     }
   };
 
-  const subtitle = paths.length === 1 ? paths[0].slice(paths[0].lastIndexOf('/') + 1) : filesLabel(paths.length);
+  const textOnly = paths.length === 0;
+  const subtitle = textOnly
+    ? (text ?? '').replace(/\s+/g, ' ').slice(0, 80)
+    : paths.length === 1
+      ? paths[0].slice(paths[0].lastIndexOf('/') + 1)
+      : filesLabel(paths.length);
 
   return (
     <Sheet theme={theme} onClose={onClose}>
@@ -158,6 +168,8 @@ export function DropSendSheet({ paths, theme, onClose, notify }: {
           peers.map((p) => {
             const mine = state?.peer === p.id ? state : null;
             const name = p.contact ?? p.name ?? t('Snap-Gerät');
+            // Text braucht ein gemeinsames Netz (der Offline-Weg trägt nur Dateien)
+            const unavailable = textOnly && p.offline;
             const meta = mine?.phase === 'waiting'
               ? t('Wartet auf Annahme …')
               : mine?.phase === 'sending'
@@ -175,9 +187,9 @@ export function DropSendSheet({ paths, theme, onClose, notify }: {
               <Pressable
                 key={p.id}
                 onPress={() => sendTo(p)}
-                disabled={busy}
+                disabled={busy || unavailable}
                 android_ripple={{ color: theme.accentSoft as string }}
-                style={[s.peer, busy && !mine && s.dim]}
+                style={[s.peer, ((busy && !mine) || unavailable) && s.dim]}
                 accessibilityRole="button"
                 accessibilityLabel={t('An {name} senden', { name })}
               >
@@ -277,8 +289,25 @@ export function OfferSheet({ offer, theme, onDone }: { offer: drop.IncomingOffer
           ) : null}
         </View>
         <Text style={s.offerText}>
-          {t('{name} möchte dir {files} senden ({size}).', { name, files: filesLabel(offer.files.length), size: size(offer.total) })}
+          {offer.files.length === 0
+            ? offer.link
+              ? t('{name} möchte dir einen Link senden.', { name })
+              : t('{name} möchte dir einen Text senden.', { name })
+            : t('{name} möchte dir {files} senden ({size}).', { name, files: filesLabel(offer.files.length), size: size(offer.total) })}
         </Text>
+        {offer.text ? (
+          <View style={s.fileBox}>
+            {offer.link ? (
+              <>
+                <Text style={s.linkHost} numberOfLines={1}>{hostOf(offer.link)}</Text>
+                <Text style={s.meta} numberOfLines={2}>{offer.link}</Text>
+              </>
+            ) : (
+              <Text style={s.fileName} numberOfLines={6}>{offer.text}</Text>
+            )}
+          </View>
+        ) : null}
+        {offer.files.length > 0 && (
         <View style={s.fileBox}>
           {shown.map((f, i) => (
             <View key={i} style={s.fileRow}>
@@ -288,6 +317,8 @@ export function OfferSheet({ offer, theme, onDone }: { offer: drop.IncomingOffer
           ))}
           {more > 0 ? <Text style={s.meta}>{t('und {n} weitere', { n: more })}</Text> : null}
         </View>
+        )}
+        {offer.text ? <Text style={s.meta}>{t('Wird nach dem Annehmen in die Zwischenablage kopiert.')}</Text> : null}
         <Text style={s.code} accessibilityLabel={t('Prüfcode {code}', { code: offer.code })}>
           {t('Prüfcode')}  <Text style={s.codeNum}>{offer.code}</Text>
         </Text>
@@ -355,6 +386,9 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
   const [people, setPeople] = useState<drop.Contact[]>([]);
   const [blockedList, setBlocked] = useState<drop.Blocked[]>([]);
   const [now, setNow] = useState(Date.now() / 1000);
+  // Bearbeiten: eigener Anzeigename (`'me'`) oder lokaler Name eines Kontakts (Schlüssel)
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
 
   const load = useCallback(() => {
     drop.status().then(setSt).catch(() => {});
@@ -384,6 +418,45 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
       notify(String(e?.message ?? e));
     }
   };
+
+  const saveName = async (value: string | null) => {
+    try {
+      if (editing === 'me') {
+        setSt(await drop.setName(value));
+        drop.syncRadio().catch(() => {});
+      } else if (editing) {
+        await drop.renameContact(editing, value);
+        load();
+      }
+      setEditing(null);
+      core.haptic('tick');
+    } catch (e: any) {
+      notify(String(e?.message ?? e));
+    }
+  };
+  const editor = (placeholder: string, reset: string | null) => (
+    <View style={s.editRow}>
+      <TextInput
+        value={draft}
+        onChangeText={setDraft}
+        autoFocus
+        maxLength={40}
+        placeholder={placeholder}
+        placeholderTextColor={theme.text3 as string}
+        style={s.nameInput}
+        onSubmitEditing={() => saveName(draft.trim() || null)}
+        accessibilityLabel={t('Name')}
+      />
+      <Pressable onPress={() => saveName(draft.trim() || null)} style={s.tonal} accessibilityRole="button">
+        <Text style={s.tonalText}>{t('Speichern')}</Text>
+      </Pressable>
+      {reset ? (
+        <Pressable onPress={() => saveName(null)} style={s.iconBtn} accessibilityLabel={reset}>
+          <Icon name="restore" size={20} color={theme.text2 as string} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
 
   const modes: { key: drop.Mode; label: string }[] = [
     { key: 'off', label: t('Aus') },
@@ -433,13 +506,24 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
 
       <SectionLabel theme={theme} style={s.section}>{t('Dieses Gerät')}</SectionLabel>
       <View style={s.card}>
-        <View style={s.row}>
-          <Icon name="phone" size={22} color={theme.text2 as string} />
-          <View style={s.grow}>
-            <Text style={s.label}>{st?.name ?? ''}</Text>
-            <Text style={s.meta}>{t('Fingerabdruck {fp}', { fp: st?.fingerprint ?? '' })}</Text>
-          </View>
-        </View>
+        {editing === 'me' ? (
+          editor(st?.default_name ?? '', st?.custom_name ? t('Gerätename verwenden') : null)
+        ) : (
+          <Pressable
+            onPress={() => { setDraft(st?.custom_name ? st.name : ''); setEditing('me'); }}
+            style={s.row}
+            android_ripple={{ color: theme.accentSoft as string }}
+            accessibilityRole="button"
+            accessibilityLabel={t('Name für andere ändern')}
+          >
+            <Icon name="phone" size={22} color={theme.text2 as string} />
+            <View style={s.grow}>
+              <Text style={s.label}>{st?.name ?? ''}</Text>
+              <Text style={s.meta}>{t('Name für andere · Fingerabdruck {fp}', { fp: st?.fingerprint ?? '' })}</Text>
+            </View>
+            <Icon name="rename" size={20} color={theme.text3 as string} />
+          </Pressable>
+        )}
         <View style={s.sep} />
         <View style={s.row}>
           <Icon name="download" size={22} color={theme.text2 as string} />
@@ -458,20 +542,29 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
           people.map((c, i) => (
             <View key={c.key}>
               {i > 0 ? <View style={s.sep} /> : null}
-              <View style={s.row}>
-                <Avatar name={c.name} contact theme={theme} size={36} />
-                <View style={s.grow}>
-                  <Text style={s.label} numberOfLines={1}>{c.name}</Text>
-                  <Text style={s.meta}>{c.fingerprint}</Text>
+              {editing === c.key ? (
+                editor(c.device_name, c.renamed ? t('Namen des Geräts verwenden') : null)
+              ) : (
+                <View style={s.row}>
+                  <Avatar name={c.name} contact theme={theme} size={36} />
+                  <Pressable
+                    style={s.grow}
+                    onPress={() => { setDraft(c.renamed ? c.name : ''); setEditing(c.key); }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('{name} umbenennen', { name: c.name })}
+                  >
+                    <Text style={s.label} numberOfLines={1}>{c.name}</Text>
+                    <Text style={s.meta} numberOfLines={1}>{c.renamed ? `${c.device_name} · ${c.fingerprint}` : c.fingerprint}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => drop.removeContact(c.key).then(() => { notify(t('Kontakt entfernt.')); load(); }).catch(() => {})}
+                    style={s.iconBtn}
+                    accessibilityLabel={t('{name} entfernen', { name: c.name })}
+                  >
+                    <Icon name="close" size={20} color={theme.text3 as string} />
+                  </Pressable>
                 </View>
-                <Pressable
-                  onPress={() => drop.removeContact(c.key).then(() => { notify(t('Kontakt entfernt.')); load(); }).catch(() => {})}
-                  style={s.iconBtn}
-                  accessibilityLabel={t('{name} entfernen', { name: c.name })}
-                >
-                  <Icon name="close" size={20} color={theme.text3 as string} />
-                </Pressable>
-              </View>
+              )}
             </View>
           ))
         )}
@@ -544,6 +637,8 @@ const styles = themed((th: Theme) =>
     fileRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     fileName: { flex: 1, color: th.text, fontSize: 14, lineHeight: 20 },
     fileSize: { color: th.text2, fontSize: 13, fontVariant: ['tabular-nums'] },
+    linkHost: { color: th.text, fontSize: 16, lineHeight: 22, fontWeight: '700' },
+    nameInput: { flex: 1, minHeight: 44, borderRadius: 22, paddingHorizontal: 14, backgroundColor: th.surface2, color: th.text, fontSize: 15 },
     code: { color: th.text2, fontSize: 13, lineHeight: 18 },
     codeNum: { color: th.text, fontSize: 15, fontWeight: '700', letterSpacing: 1 },
     para: { marginTop: -4 },
@@ -565,5 +660,6 @@ const styles = themed((th: Theme) =>
     segText: { color: th.text, fontSize: 15 },
     segTextOn: { fontWeight: '700' },
     explain: { marginTop: 12 },
+    editRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
     foot: { marginTop: 20, marginHorizontal: 4, lineHeight: 19 },
   }));

@@ -275,6 +275,7 @@ fn offer(id: &DropIdentity, session: &[u8; 32], files: Vec<OfferFile>) -> Offer 
         proof: Proof::new(&id.public(), &id.sign_session(session)),
         files,
         preview: None,
+        text: None,
     }
 }
 
@@ -525,4 +526,105 @@ async fn bluetooth_daten_offline_geraete_und_neustart() {
     a.svc.add_peer(&stumm, "bluetooth");
     next_event(&mut ev, |e| matches!(e, Event::DropNearbyChanged)).await;
     assert!(!a.svc.nearby().iter().any(|p| p.id == wire::hex(stumm.endpoint.as_bytes())));
+}
+
+#[tokio::test]
+async fn eigener_anzeigename_und_lokale_kontaktnamen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+
+    // Eigener Name: andere sehen ihn, Zurücksetzen nimmt wieder den Gerätenamen
+    let st = b.svc.set_name(Some("  Bens\u{202E} Laptop ")).unwrap();
+    assert_eq!(st.name, "Bens Laptop");
+    assert!(st.custom_name);
+    assert_eq!(st.default_name, "Ben");
+    assert!(b.svc.set_name(Some(&"x".repeat(41))).is_err());
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let peer = a.svc.add_code(&code_of(&b)).await.unwrap();
+    assert_eq!(peer.name.as_deref(), Some("Bens Laptop"));
+    assert_eq!(b.svc.connect_info().await.unwrap().name.as_deref(), Some("Bens Laptop"));
+
+    // Tausch, dann Kontakt speichern und lokal umbenennen
+    let f = write(&tmp.path().join("src"), "a.txt", b"x");
+    let send = {
+        let (svc, id, f) = (a.svc.clone(), peer.id.clone(), f.clone());
+        tokio::spawn(async move { svc.send(&id, vec![f]).await.unwrap() })
+    };
+    let offer_id = answer(&mut b, true, false).await;
+    let r = send.await.unwrap();
+    assert!(r.ok);
+    let c = a.svc.save_contact(r.id).unwrap();
+    assert_eq!((c.name.as_str(), c.renamed), ("Bens Laptop", false));
+    b.svc.save_contact(offer_id).unwrap();
+    let c = a.svc.rename_contact(&c.key, Some("Ben (Arbeit)")).unwrap();
+    assert_eq!((c.name.as_str(), c.device_name.as_str(), c.renamed), ("Ben (Arbeit)", "Bens Laptop", true));
+    assert!(a.svc.rename_contact(&"00".repeat(32), Some("x")).is_err());
+
+    // Gegenüber benennt sich um: der lokale Name bleibt, der Gerätename wird aktualisiert
+    b.svc.set_name(None).unwrap();
+    let peer = a.svc.add_code(&code_of(&b)).await.unwrap();
+    assert_eq!(peer.contact.as_deref(), Some("Ben (Arbeit)"));
+    let send = {
+        let (svc, id) = (a.svc.clone(), peer.id.clone());
+        tokio::spawn(async move { svc.send(&id, vec![f]).await.unwrap() })
+    };
+    answer(&mut b, true, false).await;
+    assert!(send.await.unwrap().ok);
+    let c = &a.svc.contacts().unwrap()[0];
+    assert_eq!((c.name.as_str(), c.device_name.as_str()), ("Ben (Arbeit)", "Ben"));
+    // Lokalen Namen entfernen → wieder der Name des Geräts
+    let c = a.svc.rename_contact(&c.key, None).unwrap();
+    assert_eq!((c.name.as_str(), c.renamed), ("Ben", false));
+}
+
+#[tokio::test]
+async fn text_und_links_teilen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let peer = a.svc.add_code(&code_of(&b)).await.unwrap();
+
+    // Link: Angebot zeigt ihn erkannt, nach dem Annehmen kommt er im Ergebnis an – keine Datei
+    let send = {
+        let (svc, id) = (a.svc.clone(), peer.id.clone());
+        tokio::spawn(async move {
+            svc.send_with_text(&id, vec![], Some("https://example.org/rezept".into())).await.unwrap()
+        })
+    };
+    let ev = next_event(&mut b.events, |e| matches!(e, Event::DropOffer { .. })).await;
+    let Event::DropOffer { id, files, kinds, .. } = ev else { unreachable!() };
+    assert_eq!(files, 0);
+    assert_eq!(kinds, vec!["link".to_string()]);
+    let offer = b.svc.pending_offers().into_iter().find(|o| o.id == id).unwrap();
+    assert_eq!(offer.link.as_deref(), Some("https://example.org/rezept"));
+    b.svc.respond(id, true, false).unwrap();
+    assert!(send.await.unwrap().ok);
+    let fin = next_event(&mut b.events, |e| matches!(e, Event::DropFinished { incoming: true, .. })).await;
+    let Event::DropFinished { ok, text, link, files, .. } = fin else { unreachable!() };
+    assert!(ok && files.is_empty());
+    assert_eq!(text.as_deref(), Some("https://example.org/rezept"));
+    assert_eq!(link.as_deref(), Some("https://example.org/rezept"));
+    assert!(inbox_files(&b).is_empty());
+
+    // Text mit Steuerzeichen: bereinigt, kein Link; „javascript:“ wird nie ein Link
+    let send = {
+        let (svc, id) = (a.svc.clone(), peer.id.clone());
+        tokio::spawn(async move {
+            svc.send_with_text(&id, vec![], Some("javascript:alert(1)\u{202E}\u{7}".into())).await.unwrap()
+        })
+    };
+    answer(&mut b, true, false).await;
+    assert!(send.await.unwrap().ok);
+    let fin = next_event(&mut b.events, |e| matches!(e, Event::DropFinished { incoming: true, .. })).await;
+    let Event::DropFinished { text, link, .. } = fin else { unreachable!() };
+    assert_eq!(text.as_deref(), Some("javascript:alert(1)"));
+    assert_eq!(link, None);
+
+    // Zu langer oder leerer Text wird schon beim Sender abgewiesen
+    let r = a.svc.send_with_text(&peer.id, vec![], Some("x".repeat(70_000))).await.unwrap();
+    assert!(!r.ok);
+    let r = a.svc.send_with_text(&peer.id, vec![], Some("   ".into())).await.unwrap();
+    assert!(!r.ok);
 }

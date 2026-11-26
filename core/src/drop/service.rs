@@ -53,6 +53,12 @@ const CHUNK: usize = 256 * 1024;
 const PART_SUFFIX: &str = ".snap-part";
 
 const SETTING_BASE_MODE: &str = "drop_visibility";
+const META_NAME: &str = "name";
+
+/// Angezeigter Name eines Kontakts: eigener (lokaler) Name vor dem Namen des Geräts.
+fn label(c: &DropContactRow) -> String {
+    c.alias.clone().unwrap_or_else(|| c.name.clone())
+}
 
 /// Einstellungen für Snap Drop.
 #[derive(Debug, Clone)]
@@ -99,7 +105,14 @@ pub struct DropStatus {
     pub mode: Mode,
     /// Ende von „Alle“ (Unix-Sekunden).
     pub until: Option<i64>,
+    /// Name, den andere sehen.
     pub name: String,
+    /// Gerätename (gilt, solange kein eigener Name gesetzt ist).
+    #[serde(default)]
+    pub default_name: String,
+    /// Ein eigener Anzeigename ist gesetzt.
+    #[serde(default)]
+    pub custom_name: bool,
     /// Fingerabdruck des eigenen Drop-Schlüssels.
     pub fingerprint: String,
     pub dir: String,
@@ -135,6 +148,12 @@ pub struct IncomingOffer {
     pub total: u64,
     pub preview: bool,
     pub expires_at: i64,
+    /// Geteilter Text (bereinigt).
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Text ist genau ein Link (nur http/https).
+    #[serde(default)]
+    pub link: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -148,7 +167,14 @@ pub struct OfferedFile {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ContactInfo {
     pub key: String,
+    /// Angezeigter Name (lokaler Name, sonst der Name des Geräts).
     pub name: String,
+    /// Name, den sich das Gerät selbst gibt.
+    #[serde(default)]
+    pub device_name: String,
+    /// Lokaler Name gesetzt.
+    #[serde(default)]
+    pub renamed: bool,
     pub fingerprint: String,
     pub added_at: i64,
     pub last_seen: i64,
@@ -418,6 +444,24 @@ impl DropService {
         }
     }
 
+    /// Name, den andere sehen: eigener Anzeigename oder der Gerätename (bereinigt).
+    pub fn my_name(&self) -> String {
+        let custom = self.db.drop_meta(META_NAME).ok().flatten();
+        super::wire::display_name(custom.as_deref().unwrap_or(&self.opts.name))
+    }
+
+    /// Eigenen Anzeigenamen setzen (`None` oder leer = wieder den Gerätenamen verwenden).
+    pub fn set_name(&self, name: Option<&str>) -> Result<DropStatus> {
+        let cleaned = name.map(str::trim).filter(|n| !n.is_empty()).map(super::wire::display_name);
+        if let Some(n) = &cleaned {
+            if n.chars().count() > 40 {
+                api_bail!(InvalidInput, "Höchstens 40 Zeichen");
+            }
+        }
+        self.db.set_drop_meta(META_NAME, cleaned.as_deref())?;
+        self.status()
+    }
+
     pub fn status(&self) -> Result<DropStatus> {
         let (mode, until) = {
             let v = self.vis.lock().unwrap_or_else(|e| e.into_inner());
@@ -427,7 +471,9 @@ impl DropService {
         Ok(DropStatus {
             mode,
             until,
-            name: super::wire::display_name(&self.opts.name),
+            name: self.my_name(),
+            default_name: super::wire::display_name(&self.opts.name),
+            custom_name: self.db.drop_meta(META_NAME).ok().flatten().is_some(),
             fingerprint: identity::fingerprint(&self.identity.public()),
             dir: self.opts.dir.display().to_string(),
             code: if mode == Mode::Off { None } else { code },
@@ -451,7 +497,7 @@ impl DropService {
             info.addrs = addrs;
         }
         let mut out = info.clone();
-        out.name = everyone.then(|| super::wire::display_name(&self.opts.name));
+        out.name = everyone.then(|| self.my_name());
         Some(out)
     }
 
@@ -601,7 +647,7 @@ impl DropService {
             return Ok(());
         }
         let card = Card::Visible {
-            name: super::wire::display_name(&self.opts.name),
+            name: self.my_name(),
             kind: self.opts.kind,
             proof: contact.as_ref().map(|_| Proof::new(&self.identity.public(), &self.identity.sign_session(&session))),
         };
@@ -629,7 +675,7 @@ impl DropService {
         if offer.total.saturating_add(self.opts.reserve_bytes) > free {
             return reply(&mut send, false, "space").await;
         }
-        let contact_name = self.contact_by_key(&sender_key)?.map(|c| c.name);
+        let contact_name = self.contact_by_key(&sender_key)?.map(|c| label(&c));
         let pre_accepted = self.take_pre_accept(conn.remote_id(), &offer);
 
         let (tx, rx) = oneshot::channel();
@@ -717,6 +763,8 @@ impl DropService {
                     files: saved.iter().map(|p| p.display().to_string()).collect(),
                     error: None,
                     can_save_contact: can_save,
+                    text: offer.text.clone(),
+                    link: offer.link.clone(),
                 });
                 let _ = tokio::time::timeout(IO_TIMEOUT, conn.closed()).await;
             }
@@ -730,6 +778,8 @@ impl DropService {
                     files: vec![],
                     error: Some(format!("{e:#}")),
                     can_save_contact: false,
+                    text: None,
+                    link: None,
                 });
             }
         }
@@ -849,22 +899,7 @@ impl DropService {
     // --- Kontakte ---
 
     pub fn contacts(&self) -> Result<Vec<ContactInfo>> {
-        Ok(self
-            .db
-            .drop_contacts()?
-            .into_iter()
-            .map(|c| ContactInfo {
-                fingerprint: super::wire::hex_array::<32>(&c.key)
-                    .ok()
-                    .and_then(|k| PublicKey::from_bytes(&k).ok())
-                    .map(|k| identity::fingerprint(&k))
-                    .unwrap_or_default(),
-                key: c.key,
-                name: c.name,
-                added_at: c.added_at,
-                last_seen: c.last_seen,
-            })
-            .collect())
+        Ok(self.db.drop_contacts()?.into_iter().map(contact_info).collect())
     }
 
     /// Speichert das Gegenüber eines eben beendeten Tauschs als Kontakt.
@@ -880,6 +915,7 @@ impl DropService {
         let row = DropContactRow {
             key: hex(ex.key.as_bytes()),
             name: ex.name,
+            alias: None,
             secret: ex.secret.to_vec(),
             added_at: now,
             last_seen: now,
@@ -887,13 +923,25 @@ impl DropService {
         self.db.upsert_drop_contact(&row)?;
         let _ = self.db.unblock_drop(&row.key);
         self.invalidate_cards();
-        Ok(ContactInfo {
-            fingerprint: identity::fingerprint(&ex.key),
-            key: row.key,
-            name: row.name,
-            added_at: now,
-            last_seen: now,
-        })
+        // Ein schon vorhandener lokaler Name bleibt erhalten
+        let stored = self.contact_by_key(&row.key)?.unwrap_or(row);
+        Ok(contact_info(stored))
+    }
+
+    /// Kontakt lokal umbenennen (`None` oder leer = wieder den Namen des Geräts zeigen).
+    pub fn rename_contact(&self, key: &str, alias: Option<&str>) -> Result<ContactInfo> {
+        let cleaned = alias.map(str::trim).filter(|a| !a.is_empty()).map(super::wire::display_name);
+        if cleaned.as_ref().is_some_and(|a| a.chars().count() > 40) {
+            api_bail!(InvalidInput, "Höchstens 40 Zeichen");
+        }
+        if !self.db.set_drop_contact_alias(key, cleaned.as_deref())? {
+            api_bail!(NotFound, "Kein solcher Kontakt");
+        }
+        self.invalidate_cards();
+        match self.contact_by_key(key)? {
+            Some(c) => Ok(contact_info(c)),
+            None => api_bail!(NotFound, "Kein solcher Kontakt"),
+        }
     }
 
     pub fn remove_contact(&self, key: &str) -> Result<bool> {
@@ -967,7 +1015,7 @@ impl DropService {
             name: None,
         };
         let req = super::wire::HotspotRequest {
-            name: super::wire::display_name(&self.opts.name),
+            name: self.my_name(),
             files: paths.len() as u32,
             total,
             ssid: ssid.into(),
@@ -1044,7 +1092,7 @@ impl DropService {
                 let contact = match proof {
                     Some(p) => {
                         let key = p.verify(session)?;
-                        self.contact_by_key(&hex(key.as_bytes()))?.map(|c| c.name)
+                        self.contact_by_key(&hex(key.as_bytes()))?.map(|c| label(&c))
                     }
                     None => None,
                 };
@@ -1055,10 +1103,15 @@ impl DropService {
 
     /// Sendet Dateien an ein Gerät aus der Nähe-Liste (oder per Code). Wartet bis zum Ende.
     pub async fn send(&self, peer: &str, paths: Vec<PathBuf>) -> Result<SendResult> {
+        self.send_with_text(peer, paths, None).await
+    }
+
+    /// Wie [`Self::send`], zusätzlich (oder nur) mit Text bzw. Link.
+    pub async fn send_with_text(&self, peer: &str, paths: Vec<PathBuf>, text: Option<String>) -> Result<SendResult> {
         let target = self.target_of(peer)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let peer_name = self.peer_label(&target);
-        let r = self.send_to(id, &target, paths).await;
+        let r = self.send_to(id, &target, paths, text).await;
         let (ok, error, code, can_save) = match r {
             Ok((code, can_save)) => (true, None, Some(code), can_save),
             Err(e) => (false, Some(format!("{e:#}")), None, false),
@@ -1071,6 +1124,8 @@ impl DropService {
             files: vec![],
             error: error.clone(),
             can_save_contact: can_save,
+            text: None,
+            link: None,
         });
         Ok(SendResult { id, ok, error, code })
     }
@@ -1100,23 +1155,34 @@ impl DropService {
             .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "Gerät ist nicht mehr in der Nähe").into())
     }
 
-    async fn send_to(&self, id: u64, target: &Target, paths: Vec<PathBuf>) -> Result<(String, bool)> {
-        let files = prepare_files(paths).await?;
+    async fn send_to(
+        &self,
+        id: u64,
+        target: &Target,
+        paths: Vec<PathBuf>,
+        text: Option<String>,
+    ) -> Result<(String, bool)> {
+        let text = text.filter(|t| !t.trim().is_empty());
+        if text.as_ref().is_some_and(|t| t.len() > super::wire::MAX_TEXT) {
+            api_bail!(InvalidInput, "Text ist zu lang (höchstens 64 KB)");
+        }
+        let files = if paths.is_empty() && text.is_some() { Vec::new() } else { prepare_files(paths).await? };
         let conn = self.connect(target).await?;
         let session = identity::session_value(&conn)?;
         let code = identity::check_code(&session);
         let (mut send, mut recv) = tokio::time::timeout(IO_TIMEOUT, conn.open_bi()).await??;
         write_frame_max(&mut send, &self.probe_for(&session)?, MAX_FRAME).await?;
         let card: Card = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME)).await??;
-        let Some((name, _, contact)) = self.card_view(card, &session)? else {
+        let Some((name, _, _)) = self.card_view(card, &session)? else {
             api_bail!(PermissionDenied, "Das Gerät empfängt gerade nur von Kontakten");
         };
         let offer = Offer {
-            name: super::wire::display_name(&self.opts.name),
+            name: self.my_name(),
             kind: self.opts.kind,
             proof: Proof::new(&self.identity.public(), &self.identity.sign_session(&session)),
             files: files.iter().map(|f| f.offer.clone()).collect(),
             preview: files.iter().find_map(|f| f.preview.clone()),
+            text,
         };
         write_frame_max(&mut send, &offer, MAX_FRAME).await?;
         let reply: Reply =
@@ -1145,7 +1211,7 @@ impl DropService {
         }
         // Empfänger zeigt seinen Schlüssel erst nach dem Annehmen.
         let can_save = match fin.proof.map(|p| p.verify(&session)).transpose()? {
-            Some(key) => self.remember_exchange(id, key, contact.as_deref().unwrap_or(&name), &session)?,
+            Some(key) => self.remember_exchange(id, key, &name, &session)?,
             None => false,
         };
         Ok((code, can_save))
@@ -1354,6 +1420,22 @@ impl DropService {
     }
 }
 
+fn contact_info(c: DropContactRow) -> ContactInfo {
+    ContactInfo {
+        fingerprint: super::wire::hex_array::<32>(&c.key)
+            .ok()
+            .and_then(|k| PublicKey::from_bytes(&k).ok())
+            .map(|k| identity::fingerprint(&k))
+            .unwrap_or_default(),
+        name: label(&c),
+        renamed: c.alias.is_some(),
+        device_name: c.name,
+        key: c.key,
+        added_at: c.added_at,
+        last_seen: c.last_seen,
+    }
+}
+
 #[derive(Clone, Debug)]
 struct DropReceiver {
     svc: Weak<DropService>,
@@ -1428,11 +1510,16 @@ fn incoming_view(id: u64, o: &ValidOffer, contact: Option<String>, code: String)
         total: o.total,
         preview: o.preview_png.is_some(),
         expires_at: DropService::now() + OFFER_TIMEOUT.as_secs() as i64,
+        text: o.text.clone(),
+        link: o.link.clone(),
     }
 }
 
 fn kinds_of(o: &ValidOffer) -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
+    if o.text.is_some() {
+        v.push(if o.link.is_some() { "link".into() } else { "text".into() });
+    }
     for f in &o.files {
         let k = match f.mime.split('/').next().unwrap_or("") {
             "image" => "image",

@@ -439,7 +439,11 @@ pub enum Request {
     /// Dateien senden (antwortet nach dem Ende der Übertragung).
     DropSend {
         peer: String,
+        #[serde(default)]
         paths: Vec<PathBuf>,
+        /// Geteilter Text oder Link (statt oder zusätzlich zu Dateien).
+        #[serde(default)]
+        text: Option<String>,
     },
     DropOffers,
     DropRespond {
@@ -458,6 +462,15 @@ pub enum Request {
     },
     DropRemoveContact {
         key: String,
+    },
+    /// Kontakt lokal umbenennen (`None` = Name des Geräts).
+    DropRenameContact {
+        key: String,
+        alias: Option<String>,
+    },
+    /// Eigenen Anzeigenamen setzen (`None` = Gerätename).
+    DropSetName {
+        name: Option<String>,
     },
     DropBlocked,
     DropUnblock {

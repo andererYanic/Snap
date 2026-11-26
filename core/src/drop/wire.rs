@@ -114,6 +114,9 @@ pub struct Offer {
     pub files: Vec<OfferFile>,
     /// Kleines JPEG (Base64), wird beim Empfänger nur unscharf gezeigt.
     pub preview: Option<String>,
+    /// Geteilter Text oder Link (statt oder zusätzlich zu Dateien), höchstens [`MAX_TEXT`] Byte.
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 /// Geprüfte Fassung eines Angebots.
@@ -126,6 +129,10 @@ pub struct ValidOffer {
     pub total: u64,
     /// Vorschaubild, geprüft und neu als PNG codiert (nie die Originalbytes).
     pub preview_png: Option<Vec<u8>>,
+    /// Bereinigter Text (ohne Steuerzeichen außer Zeilenumbruch und Tabulator).
+    pub text: Option<String>,
+    /// Ist der Text genau ein Link (nur `http`/`https`), steht er hier normalisiert.
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,12 +148,28 @@ impl Offer {
     /// Prüft alle Felder gegen die Grenzen. `session` bindet den Beweis an die Verbindung.
     pub fn validate(&self, session: &[u8; 32]) -> Result<ValidOffer> {
         let sender = self.proof.verify(session)?;
-        let (files, total) = validate_files(&self.files)?;
+        let text = match &self.text {
+            Some(t) if t.len() > MAX_TEXT => api_bail!(InvalidInput, "Text ist zu lang"),
+            Some(t) => Some(clean_text(t)).filter(|t| !t.trim().is_empty()),
+            None => None,
+        };
+        let (files, total) =
+            if self.files.is_empty() && text.is_some() { (Vec::new(), 0) } else { validate_files(&self.files)? };
         let preview_png = match &self.preview {
             Some(b64) => Some(decode_preview(b64)?),
             None => None,
         };
-        Ok(ValidOffer { sender, name: display_name(&self.name), kind: self.kind, files, total, preview_png })
+        let link = text.as_deref().and_then(as_link);
+        Ok(ValidOffer {
+            sender,
+            name: display_name(&self.name),
+            kind: self.kind,
+            files,
+            total,
+            preview_png,
+            text,
+            link,
+        })
     }
 }
 
@@ -189,6 +212,33 @@ pub struct Reply {
 pub struct Received {
     pub ok: bool,
     pub proof: Option<Proof>,
+}
+
+/// Größter geteilter Text (Byte).
+pub const MAX_TEXT: usize = 64 * 1024;
+
+/// Text bereinigen: Steuer- und unsichtbare Formatzeichen entfernen (außer Zeilenumbruch und
+/// Tabulator), Zeilenenden vereinheitlichen.
+pub fn clean_text(s: &str) -> String {
+    s.replace("\r\n", "\n")
+        .chars()
+        .filter(|c| *c == '\n' || *c == '\t' || (!c.is_control() && !is_format_char(*c)))
+        .collect()
+}
+
+/// Genau ein Link mit `http`/`https` (ohne Zugangsdaten, mit Rechnername) → normalisierte Adresse.
+/// Alles andere (`javascript:`, `intent:`, `file:`, Text mit Leerzeichen …) ist kein Link.
+pub fn as_link(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() || t.len() > 4096 || t.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let url = reqwest::Url::parse(t).ok()?;
+    let ok = matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some_and(|h| !h.is_empty())
+        && url.username().is_empty()
+        && url.password().is_none();
+    ok.then(|| url.to_string())
 }
 
 /// Anzeigename bereinigen: Steuer- und Formatzeichen weg, Länge begrenzt, nie leer.
@@ -549,6 +599,25 @@ mod tests {
     }
 
     #[test]
+    fn text_und_links() {
+        assert_eq!(clean_text("a\r\nb\u{0}\u{202E}c\td"), "a\nbc\td");
+        assert_eq!(as_link(" https://example.org/x?y=1 ").as_deref(), Some("https://example.org/x?y=1"));
+        assert_eq!(as_link("http://Example.ORG").as_deref(), Some("http://example.org/"));
+        for bad in [
+            "javascript:alert(1)",
+            "intent://x#Intent;end",
+            "file:///etc/passwd",
+            "https://user:pw@example.org",
+            "siehe https://example.org",
+            "ftp://example.org",
+            "https://",
+            "",
+        ] {
+            assert_eq!(as_link(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn anzeigenamen() {
         assert_eq!(display_name("  Annas\n  Telefon "), "Annas Telefon");
         assert_eq!(display_name("\u{202E}\u{200B}"), "Unbenannt");
@@ -631,6 +700,7 @@ mod tests {
             proof: Proof::new(&id.public(), &id.sign_session(&session)),
             files: vec![file.clone()],
             preview: None,
+            text: None,
         };
         let v = offer.validate(&session).unwrap();
         assert_eq!(v.sender, id.public());
@@ -645,7 +715,15 @@ mod tests {
         // Zu viele Dateien / keine Dateien.
         let o = Offer { files: vec![file; MAX_FILES + 1], ..offer.clone() };
         assert!(o.validate(&session).is_err());
-        let o = Offer { files: vec![], ..offer };
+        let o = Offer { files: vec![], ..offer.clone() };
         assert!(o.validate(&session).is_err());
+        // Nur Text: erlaubt, Link erkannt; zu langer Text abgewiesen
+        let o = Offer { files: vec![], text: Some("https://example.org".into()), ..offer.clone() };
+        let v = o.validate(&session).unwrap();
+        assert_eq!((v.files.len(), v.link.as_deref()), (0, Some("https://example.org/")));
+        let o = Offer { files: vec![], text: Some("x".repeat(MAX_TEXT + 1)), ..offer.clone() };
+        assert!(o.validate(&session).is_err());
+        let o = Offer { files: vec![], text: Some(" \n ".into()), ..offer };
+        assert!(o.validate(&session).is_err(), "leerer Text zählt nicht");
     }
 }

@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">SnapMobile</string>
+    <string name="app_name">Snap</string>
+    <!-- Eintrag im „Teilen“-Menü anderer Apps -->
+    <string name="drop_share">Snap Drop</string>
 </resources>

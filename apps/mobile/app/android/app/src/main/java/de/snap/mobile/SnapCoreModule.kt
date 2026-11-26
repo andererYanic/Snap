@@ -182,6 +182,49 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /**
+   * Aus dem „Teilen“-Menü empfangene Inhalte abholen (einmalig): `{ files, text }` oder null.
+   * Neu Geteiltes meldet das Ereignis `snap-share`.
+   */
+  @ReactMethod
+  fun takeShare(promise: Promise) {
+    ShareInbox.listener = {
+      try {
+        if (ctx.hasActiveReactInstance()) ctx.emitDeviceEvent("snap-share", "1")
+      } catch (_: Throwable) {}
+    }
+    scope.launch {
+      try {
+        val r = ShareInbox.take(ctx.applicationContext) ?: return@launch promise.resolve(null)
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        val arr = com.facebook.react.bridge.Arguments.createArray()
+        r.first.forEach { arr.pushString(it) }
+        map.putArray("files", arr)
+        if (r.second != null) map.putString("text", r.second) else map.putNull("text")
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** Link mit der Standard-App öffnen – nur http/https (nie intent:, file:, javascript: …). */
+  @ReactMethod
+  fun openLink(url: String, promise: Promise) {
+    val u = try { Uri.parse(url) } catch (e: Throwable) { null }
+    if (u == null || (u.scheme != "https" && u.scheme != "http") || u.host.isNullOrEmpty() || url.length > 4096) {
+      return promise.reject("link", "Nur Web-Links lassen sich öffnen.")
+    }
+    try {
+      ctx.startActivity(Intent(Intent.ACTION_VIEW, u).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      promise.resolve(null)
+    } catch (e: android.content.ActivityNotFoundException) {
+      promise.reject("noapp", "Keine App für diesen Link installiert.")
+    } catch (e: Throwable) {
+      promise.reject("link", e.message ?: e.toString())
+    }
+  }
+
   /** PDF: Textschicht vorhanden (Android 15, oder 11–14 mit Systemupdate)? */
   @ReactMethod(isBlockingSynchronousMethod = true)
   fun pdfTextSupported(): Boolean = PdfPages.textSupported()

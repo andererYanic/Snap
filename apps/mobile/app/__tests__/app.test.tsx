@@ -1146,3 +1146,50 @@ test('PDF-Text: markieren rastet an Zeilen ein, Auswahl mit langem Drücken kopi
     delete NativeModules.SnapCore.pdfTextSupported;
   }
 });
+
+test('Geteilter Link landet in der Zwischenablage und lässt sich öffnen; Ordner für Geräte freigeben', async () => {
+  const { DeviceEventEmitter } = require('react-native');
+  NativeModules.SnapCore.copyText = jest.fn(async () => null);
+  NativeModules.SnapCore.openLink = jest.fn(async () => null);
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'ShareList') return JSON.stringify({ Shares: { shares: [] } });
+    if (req.ShareAdd) {
+      calls.push(req);
+      return JSON.stringify({ ShareAdded: { share: { id: 1, name: 'DCIM', root: req.ShareAdd.path, auto_grant: true, created_at: 0 }, granted: [] } });
+    }
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    await act(async () => {
+      DeviceEventEmitter.emit('snap-event', JSON.stringify({ type: 'DropFinished', id: 3, incoming: true, ok: true, peer: 'Anna', files: [], error: null, can_save_contact: false, text: 'https://example.org/rezept', link: 'https://example.org/rezept' }));
+    });
+    await flush();
+    expect(NativeModules.SnapCore.copyText).toHaveBeenCalledWith('https://example.org/rezept');
+    expect(allText(r)).toContain('Link von Anna');
+    await act(async () => { pressable(r, 'Öffnen').props.onPress(); });
+    expect(NativeModules.SnapCore.openLink).toHaveBeenCalledWith('https://example.org/rezept');
+
+    // Ordner „DCIM“ (erste Zeile) lange drücken → „Für Geräte freigeben“
+    await act(async () => { byLabel(r, 'Interner Speicher').props.onPress(); });
+    await flush();
+    await act(async () => {
+      fireGestureHandler(getByGestureTestId('files-select'), [
+        { state: State.BEGAN, x: 100, y: 20, absoluteX: 100, absoluteY: 200 },
+        { state: State.ACTIVE, x: 100, y: 20, absoluteX: 100, absoluteY: 200 },
+        { state: State.END, x: 100, y: 20, absoluteX: 100, absoluteY: 200 },
+      ]);
+    });
+    await flush();
+    await act(async () => { pressable(r, 'Für Geräte freigeben').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ ShareAdd: { path: '/storage/emulated/0/DCIM', name: null, devices: null } });
+    expect(allText(r)).toContain('ist jetzt für deine gekoppelten Geräte sichtbar');
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

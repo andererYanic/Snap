@@ -56,6 +56,23 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+      <!-- Snap Drop im „Teilen“-Menü aller Apps (eigener Name und Eintrag, gleiche Aktivität) -->
+      <activity-alias
+        android:name=".ShareToDrop"
+        android:targetActivity=".MainActivity"
+        android:label="@string/drop_share"
+        android:exported="true">
+        <intent-filter>
+          <action android:name="android.intent.action.SEND" />
+          <category android:name="android.intent.category.DEFAULT" />
+          <data android:mimeType="*/*" />
+        </intent-filter>
+        <intent-filter>
+          <action android:name="android.intent.action.SEND_MULTIPLE" />
+          <category android:name="android.intent.category.DEFAULT" />
+          <data android:mimeType="*/*" />
+        </intent-filter>
+      </activity-alias>
     </application>
     <!-- Welche Apps Dateien öffnen bzw. empfangen können (Paketsichtbarkeit ab Android 11) -->
     <queries>

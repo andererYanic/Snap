@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 pub fn now_unix() -> i64 {
     jiff::Timestamp::now().as_second()
@@ -50,7 +50,10 @@ pub struct BackupJobRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropContactRow {
     pub key: String,
+    /// Name, den sich das Gerät selbst gibt (wird bei jedem Tausch aktualisiert).
     pub name: String,
+    /// Eigener, nur lokal sichtbarer Name (hat Vorrang in der Anzeige).
+    pub alias: Option<String>,
     pub secret: Vec<u8>,
     pub added_at: i64,
     pub last_seen: i64,
@@ -663,6 +666,25 @@ impl DatabaseManager {
                 );
                 ",
             )?;
+        }
+        if version < 13 {
+            // Migration -> 13: Snap Drop – eigener Anzeigename, lokale Namen für Kontakte.
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS drop_meta (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                ",
+            )?;
+            let has_alias: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('drop_contacts') WHERE name = 'alias')",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has_alias {
+                conn.execute_batch("ALTER TABLE drop_contacts ADD COLUMN alias TEXT;")?;
+            }
         }
         if version > 0 && version < 3 {
             // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
@@ -1907,8 +1929,9 @@ impl DatabaseManager {
 
     pub fn drop_contacts(&self) -> Result<Vec<DropContactRow>> {
         let conn = self.read();
-        let mut stmt =
-            conn.prepare_cached("SELECT key, name, secret, added_at, last_seen FROM drop_contacts ORDER BY name")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT key, name, secret, added_at, last_seen, alias FROM drop_contacts ORDER BY COALESCE(alias, name)",
+        )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(DropContactRow {
@@ -1917,6 +1940,7 @@ impl DatabaseManager {
                     secret: r.get(2)?,
                     added_at: r.get(3)?,
                     last_seen: r.get(4)?,
+                    alias: r.get(5)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1930,6 +1954,29 @@ impl DatabaseManager {
              ON CONFLICT(key) DO UPDATE SET name = excluded.name, secret = excluded.secret, last_seen = excluded.last_seen",
             params![c.key, c.name, c.secret, c.added_at, c.last_seen],
         )?;
+        Ok(())
+    }
+
+    /// Lokalen Namen setzen (`None` = wieder den Namen des Geräts zeigen). `false`, wenn unbekannt.
+    pub fn set_drop_contact_alias(&self, key: &str, alias: Option<&str>) -> Result<bool> {
+        Ok(self.conn().execute("UPDATE drop_contacts SET alias = ?2 WHERE key = ?1", params![key, alias])? > 0)
+    }
+
+    pub fn drop_meta(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .read()
+            .query_row("SELECT value FROM drop_meta WHERE key = ?1", params![key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn set_drop_meta(&self, key: &str, value: Option<&str>) -> Result<()> {
+        match value {
+            Some(v) => self.conn().execute(
+                "INSERT INTO drop_meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, v],
+            )?,
+            None => self.conn().execute("DELETE FROM drop_meta WHERE key = ?1", params![key])?,
+        };
         Ok(())
     }
 

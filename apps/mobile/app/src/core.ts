@@ -43,6 +43,15 @@ export function onEvent(cb: (ev: { type: string; [k: string]: any }) => void) {
 }
 
 export const lastCrash = (): Promise<string | null> => native().lastCrash();
+/** Aus dem „Teilen“-Menü anderer Apps empfangene Dateien bzw. Text (einmalig abholen). */
+export const takeShare = (): Promise<{ files: string[]; text: string | null } | null> => native().takeShare?.() ?? Promise.resolve(null);
+/** Neu Geteiltes, während die App läuft. */
+export function onShare(cb: () => void) {
+  const sub = new NativeEventEmitter(native()).addListener('snap-share', () => cb());
+  return () => sub.remove();
+}
+/** Web-Link mit der Standard-App öffnen (nur http/https). */
+export const openLink = (url: string): Promise<void> => native().openLink(url);
 export const openFile = (path: string): Promise<void> => native().openFile(path);
 export const shareFiles = (paths: string[]): Promise<void> => native().shareFiles(paths);
 export const storageInfo = (): Promise<{ total: number; free: number }> => native().storageInfo();

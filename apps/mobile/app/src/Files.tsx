@@ -549,6 +549,39 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     .onFinalize(() => runOnJS(dragEnd)());
 
   // Zeilen sind memoisiert: Beim Markieren wird nur die geänderte Zeile neu gezeichnet.
+  // Freigegebene Ordner (für gekoppelte Geräte sichtbar)
+  const [shared, setShared] = useState<Map<string, string>>(new Map());
+  const loadShares = useCallback(() => {
+    request<{ shares: { name: string; root: string }[] }>('ShareList')
+      .then((r) => setShared(new Map((r.shares ?? []).map((x) => [x.root, x.name]))))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadShares();
+  }, [loadShares]);
+  const shareFolder = (e: Item) => {
+    setSel(new Set());
+    request({ ShareAdd: { path: e.path, name: null, devices: null } })
+      .then(() => {
+        notify(t('„{name}“ ist jetzt für deine gekoppelten Geräte sichtbar.', { name: e.name }));
+        loadShares();
+      })
+      .catch(fail);
+  };
+  const unshareFolder = (e: Item) => {
+    const name = shared.get(e.path);
+    setSel(new Set());
+    if (!name) {
+      return;
+    }
+    request({ ShareRemove: { name } })
+      .then(() => {
+        notify(t('„{name}“ ist nicht mehr freigegeben.', { name: e.name }));
+        loadShares();
+      })
+      .catch(fail);
+  };
+
   const openRef = useRef(open);
   openRef.current = open;
   const onOpen = useCallback((e: Item) => openRef.current(e), []);
@@ -558,6 +591,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       <FileRow
         e={item}
         on={sel.has(item.path)}
+        shared={item.kind === 'Dir' && shared.has(item.path)}
         grid={grid}
         tile={tile}
         tileH={tileH}
@@ -567,7 +601,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         onOpen={onOpen}
       />
     ),
-    [sel, grid, tile, tileH, theme, hits, selecting, onOpen],
+    [sel, shared, grid, tile, tileH, theme, hits, selecting, onOpen],
   );
 
   // ------------------------------------------------------------ Startseite
@@ -650,6 +684,11 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const menuActions: MenuAction[] = [
     // Je nach Dateiformat
     ...(single && single.kind === 'File' ? formatActions(single) : []),
+    ...(single && single.kind === 'Dir' && !hits
+      ? [shared.has(single.path)
+        ? { icon: 'close' as const, label: t('Freigabe beenden'), onPress: () => unshareFolder(single) }
+        : { icon: 'devices' as const, label: t('Für Geräte freigeben'), onPress: () => shareFolder(single) }]
+      : []),
     { icon: 'share', label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
     ...(onDrop ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }] : []),
     { icon: 'copy', label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
@@ -1044,6 +1083,8 @@ function SearchField({ theme, value, onChange, autoFocus }: { theme: Theme; valu
 interface RowProps {
   e: Item;
   on: boolean;
+  /** Ordner ist für gekoppelte Geräte freigegeben. */
+  shared?: boolean;
   grid: boolean;
   tile: number;
   tileH: number;
@@ -1055,7 +1096,7 @@ interface RowProps {
 
 const noop = () => {};
 
-const FileRow = memo(function FileRow({ e, on, grid, tile, tileH, theme, inSearch, selecting, onOpen }: RowProps) {
+const FileRow = memo(function FileRow({ e, on, shared, grid, tile, tileH, theme, inSearch, selecting, onOpen }: RowProps) {
   const s = styles(theme);
   const press = () => onOpen(e);
   if (grid) {
@@ -1093,6 +1134,7 @@ const FileRow = memo(function FileRow({ e, on, grid, tile, tileH, theme, inSearc
           <Text style={[s.name, e.hidden && s.dim]} numberOfLines={1}>{e.name}</Text>
           <Text style={s.meta} numberOfLines={1} ellipsizeMode={inSearch ? 'head' : 'tail'}>
             {e.fuzzy ? `${t('ähnlich')} · ` : ''}
+            {shared ? `${t('Freigegeben')} · ` : ''}
             {inSearch ? parentPath(e.path) : relativeDate(e.mtime, loc, t('gestern'))}
           </Text>
         </View>

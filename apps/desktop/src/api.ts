@@ -277,10 +277,10 @@ export async function applyFont(): Promise<void> {
 // ---------------------------------------------------------------- Snap Drop
 
 export type DropMode = "off" | "contacts" | "everyone";
-export interface DropStatus { mode: DropMode; until: number | null; name: string; fingerprint: string; dir: string; code: string | null }
+export interface DropStatus { mode: DropMode; until: number | null; name: string; default_name: string; custom_name: boolean; fingerprint: string; dir: string; code: string | null }
 export interface NearbyPeer { id: string; name: string | null; kind: "phone" | "tablet" | "laptop" | "desktop" | null; contact: string | null; via: string; offline: boolean }
-export interface IncomingOffer { id: number; name: string; contact: string | null; code: string; files: { name: string; size: number; mime: string }[]; total: number; preview: boolean; expires_at: number }
-export interface DropContact { key: string; name: string; fingerprint: string; added_at: number; last_seen: number }
+export interface IncomingOffer { id: number; name: string; contact: string | null; code: string; files: { name: string; size: number; mime: string }[]; total: number; preview: boolean; expires_at: number; text?: string | null; link?: string | null }
+export interface DropContact { key: string; name: string; device_name: string; renamed: boolean; fingerprint: string; added_at: number; last_seen: number }
 export interface DropBlocked { key: string; name: string; blocked_at: number }
 export interface DropSent { id: number; ok: boolean; error: string | null; code: string | null }
 
@@ -299,4 +299,7 @@ export const drop = {
   removeContact: (key: string) => invoke<unknown>("drop_remove_contact", { key }),
   blocked: () => invoke<{ blocked: DropBlocked[] }>("drop_blocked").then((r) => r.blocked),
   unblock: (key: string) => invoke<unknown>("drop_unblock", { key }),
+  setName: (name: string | null) => invoke<DropStatus>("drop_set_name", { name }),
+  renameContact: (key: string, alias: string | null) => invoke<DropContact>("drop_rename_contact", { key, alias }),
+  openLink: (url: string) => invoke<void>("open_link", { url }),
 };
