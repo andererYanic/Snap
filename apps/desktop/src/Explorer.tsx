@@ -21,7 +21,7 @@ interface Item {
   trash?: TrashEntry;
 }
 
-type SortKey = "name" | "mtime" | "size";
+type SortKey = "name" | "mtime" | "size" | "type";
 
 interface Props {
   tab: Tab;
@@ -47,7 +47,21 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [view, setView] = useState<"details" | "grid">(() => (localStorage.getItem("view") as "grid") ?? "details");
-  const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({ key: "name", asc: true });
+  const [sort, setSortState] = useState<{ key: SortKey; asc: boolean }>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem("sort") ?? "");
+      if (["name", "mtime", "size", "type"].includes(v?.key)) return { key: v.key, asc: !!v.asc };
+    } catch {
+      // ungültig → Standard
+    }
+    return { key: "name", asc: true };
+  });
+  const setSort = (f: (s: { key: SortKey; asc: boolean }) => { key: SortKey; asc: boolean }) =>
+    setSortState((s) => {
+      const n = f(s);
+      localStorage.setItem("sort", JSON.stringify(n));
+      return n;
+    });
   const [showHidden, setShowHidden] = useState(() => localStorage.getItem("hidden") === "1");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState<string | null>(null);
@@ -136,8 +150,22 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
   const sorted = useMemo(() => {
     const coll = new Intl.Collator(locale, { numeric: true, sensitivity: "base" });
     const v = [...items];
+    const ext = (n: string) => {
+      const i = n.lastIndexOf(".");
+      return i > 0 && i < n.length - 1 ? n.slice(i + 1).toLowerCase() : "";
+    };
     v.sort((a, b) => {
       if (a.dir !== b.dir) return a.dir ? -1 : 1;
+      if (sort.key === "type") {
+        // Nach Dateiformat gruppiert (ohne Endung zuletzt), innerhalb neueste zuerst
+        const ea = a.dir ? "" : ext(a.name);
+        const eb = b.dir ? "" : ext(b.name);
+        if (ea !== eb) {
+          if (!ea || !eb) return ea ? -1 : 1;
+          return sort.asc ? coll.compare(ea, eb) : coll.compare(eb, ea);
+        }
+        return b.mtime - a.mtime || coll.compare(a.name, b.name);
+      }
       const d = sort.key === "name" ? coll.compare(a.name, b.name) : sort.key === "size" ? a.size - b.size : a.mtime - b.mtime;
       return sort.asc ? d : -d;
     });
@@ -451,7 +479,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
           <table className="details">
             <colgroup><col style={{ width: "52%" }} /><col style={{ width: "22%" }} /><col style={{ width: "13%" }} /><col style={{ width: "13%" }} /></colgroup>
             <thead>
-              <tr>{header("name", t("Name"))}{header("mtime", isTrash ? t("Gelöscht am") : t("Geändert"))}<th>{t("Art")}</th>{header("size", t("Größe"))}</tr>
+              <tr>{header("name", t("Name"))}{header("mtime", isTrash ? t("Gelöscht am") : t("Geändert"))}{header("type", t("Art"))}{header("size", t("Größe"))}</tr>
             </thead>
             <tbody>
               {sorted.map((it) => (

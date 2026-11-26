@@ -1,15 +1,16 @@
 // Eingebaute PDF-Anzeige (wie bei Google Drive, aber lokal): Android zeichnet die Seiten selbst
-// (`PdfRenderer`, Teil des Systems). Seiten erscheinen beim Scrollen. Zoomen mit zwei Fingern um
-// den Punkt zwischen ihnen (live per Transformation, danach werden die Seiten in der neuen Größe
-// scharf neu gezeichnet), Doppeltippen wechselt zwischen 100 % und 250 %. Gezoomt lässt sich in
-// beide Richtungen scrollen. Dazu: Textmarker in Standardfarben und Signieren (sichtbare
+// (`PdfRenderer`, Teil des Systems). Eigenes Scrollen und Zoomen auf dem UI-Thread (`zoom.ts`):
+// zwei Finger zoomen live um den Punkt zwischen ihnen und verschieben gleichzeitig, Gummiband an
+// den Grenzen, Doppeltippen zoomt auf die Stelle, Wischen läuft mit Schwung aus. Nach dem Loslassen
+// werden die sichtbaren Seiten in der neuen Größe scharf nachgezeichnet. Dazu: Textmarker in Standardfarben und Signieren (sichtbare
 // Unterschrift + kryptografische PAdES-Signatur, im Kern); beides wird Seiteninhalt und ist daher
 // überall sichtbar, auch gedruckt. Beim Öffnen werden vorhandene Signaturen geprüft.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Image, Modal, PixelRatio, Pressable, StatusBar, StyleSheet, View } from 'react-native';
 import { Text } from './text';
-import { FlatList, Gesture, GestureDetector, GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { cancelAnimation, runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDecay } from 'react-native-reanimated';
+import { pageAt, range, rubber, rubberScale, settle, settleTarget } from './zoom';
 import * as core from './core';
 import { request } from './core';
 import { t } from './i18n';
@@ -18,11 +19,11 @@ import { Icon } from './Icon';
 import { DrawArea, INK_WIDTH, MARKER_COLORS, MARKER_WIDTH, type Stroke, Strokes } from './Ink';
 import { AskPassword, CreateId, groupFingerprint, idInfo } from './SignId';
 import SignaturePad, { PAD_RATIO } from './SignaturePad';
+import { rectsToMarks, SelectionRects, TextLayer, type Rect, type TextSelection } from './PdfText';
 
 const { width: W } = Dimensions.get('window');
 const GAP = 8;
 const PAD = 8;
-const VIEWABILITY = { itemVisiblePercentThreshold: 40 };
 const PAGE_W = W - 2 * PAD;
 export const MIN_ZOOM = 1;
 export const MAX_ZOOM = 5;
@@ -38,15 +39,19 @@ export function renderStep(scale: number): number {
   return [1, 1.5, 2, 3, 4, 5].find((st) => st >= scale - 0.01) ?? 5;
 }
 
-/**
- * Neue Scrollposition, damit der Punkt unter den Fingern (`focal`, im Ausschnitt) beim Zoomen um
- * den Faktor `k` an derselben Stelle bleibt.
- */
-export function keepFocal(offset: number, focal: number, k: number): number {
-  return Math.max(0, (offset + focal) * k - focal);
+/** Obere Kanten der Seiten (Inhaltskoordinaten bei Zoom 1) und Gesamthöhe. */
+export function layoutPages(ratios: number[]): { offsets: number[]; height: number } {
+  const offsets: number[] = [];
+  let y = PAD;
+  for (const r of ratios) {
+    offsets.push(y);
+    y += PAGE_W * r + GAP;
+  }
+  return { offsets, height: y - GAP + PAD };
 }
 
 const PdfPage = memo(function PdfPage({ path, rev, index, ratio, scale }: { path: string; rev: number; index: number; ratio: number; scale: number }) {
+  // Größe immer in Inhaltskoordinaten (Zoom 1); der Zoom ist eine Transformation darüber.
   const [uri, setUri] = useState<string | null>(null);
   const step = renderStep(scale);
   useEffect(() => {
@@ -58,7 +63,7 @@ const PdfPage = memo(function PdfPage({ path, rev, index, ratio, scale }: { path
       alive = false;
     };
   }, [path, rev, index, step]);
-  const w = PAGE_W * scale;
+  const w = PAGE_W;
   return (
     <View style={[styles.page, { width: w, height: w * ratio }]} accessibilityLabel={t('Seite {n}', { n: index + 1 })}>
       {uri ? <Image source={{ uri }} style={styles.fill} fadeDuration={0} /> : <ActivityIndicator style={styles.fill} color="#8a8f9c" />}
@@ -98,7 +103,8 @@ export function signatureSummary(items: SignatureReport[]): { kind: 'ok' | 'warn
   return { kind: last.self_signed && !last.own ? 'warn' : 'ok', text: t('Signiert von {name} – unverändert', { name: names }) };
 }
 
-type Mark = { page: number; color: string; stroke: Stroke };
+/** Markierung: Freihand-Strich oder (Text) Strich über einer Textzeile; `group` fasst einen Zug zusammen. */
+type Mark = { page: number; color: string; stroke: Stroke; width?: number; group: number };
 type Place = { page: number; x: number; y: number; w: number };
 type Flow = null | 'createId' | 'pad' | 'saveMark' | 'saveSign' | 'password' | 'busy';
 
@@ -158,31 +164,34 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
   const [rev, setRev] = useState(0);
   const [info, setInfo] = useState<{ pages: number; ratios: number[] } | null | 'error'>(null);
   const [page, setPage] = useState(0);
+  // Zoom, für den die Seiten scharf gezeichnet sind (nach dem Loslassen übernommen)
   const [scale, setScale] = useState(1);
-  const [scrolling, setScrolling] = useState(true);
+  const [shown, setShown] = useState<[number, number]>([0, 2]);
   const [mode, setMode] = useState<'view' | 'mark' | 'place'>('view');
   const [color, setColor] = useState(MARKER_COLORS[0][0]);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [hand, setHand] = useState(false);
+  const textOK = useMemo(() => core.pdfTextSupported(), []);
+  const [tool, setTool] = useState<'text' | 'free'>(textOK ? 'text' : 'free');
+  const [selection, setSelection] = useState<TextSelection | null>(null);
+  const group = useRef(0);
+  const noTextShown = useRef(false);
   const [sigs, setSigs] = useState<SignatureReport[]>([]);
   const [flow, setFlow] = useState<Flow>(null);
   const [sigStrokes, setSigStrokes] = useState<Stroke[]>([]);
   const [place, setPlace] = useState<Place | null>(null);
   const [saveMode, setSaveMode] = useState<'copy' | 'replace'>('copy');
   const [wrongPw, setWrongPw] = useState(false);
-  const hScroll = useRef<any>(null);
-  const vList = useRef<any>(null);
-  const pos = useRef({ x: 0, y: 0 });
-  // Muss über die ganze Lebensdauer dieselbe Funktion bleiben (FlatList-Vorgabe)
-  const onViewable = useRef(({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
-    if (viewableItems[0]) {
-      setPage(viewableItems[0].index ?? 0);
-    }
-  });
-  // Live-Zoom während der Geste (Transformation um den Fingerpunkt), danach übernommen
-  const live = useSharedValue(1);
-  const ox = useSharedValue(0);
-  const oy = useSharedValue(0);
+  // Zoom und Verschiebung des Inhalts (UI-Thread)
+  const zs = useSharedValue(1);
+  const tx = useSharedValue(0);
+  const ty = useSharedValue(0);
+  const vw = useSharedValue(W);
+  const vh = useSharedValue(600);
+  const contentH = useSharedValue(1);
+  const offsetsSV = useSharedValue<number[]>([PAD]);
+  const start0 = useSharedValue({ s: 1, x: 0, y: 0, px: 0, py: 0 });
+  const lastShown = useSharedValue([0, 2, 0]);
 
   useEffect(() => {
     setInfo(null);
@@ -190,54 +199,131 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
     request<{ items: SignatureReport[] }>({ PdfVerify: { path: doc } }).then((r) => setSigs(r.items ?? [])).catch(() => setSigs([]));
   }, [doc, rev]);
 
-  /** Zoom übernehmen: neue Größe, Scrollposition so, dass der Fingerpunkt bleibt. */
-  const commit = useCallback(
-    (target: number, fx: number, fy: number) => {
-      const next = clamp(target, MIN_ZOOM, MAX_ZOOM);
-      const k = next / scale;
-      const x = next === 1 ? 0 : keepFocal(pos.current.x, fx, k);
-      const y = keepFocal(pos.current.y, fy, k);
-      setScale(next);
-      setScrolling(true);
-      requestAnimationFrame(() => {
-        hScroll.current?.scrollTo?.({ x, animated: false });
-        vList.current?.scrollToOffset?.({ offset: y, animated: false });
-        pos.current = { x, y };
-        live.value = 1;
-      });
+  const ok = info && info !== 'error' ? info : null;
+  const lay = useMemo(() => (ok ? layoutPages(ok.ratios) : { offsets: [PAD], height: 1 }), [ok]);
+  useEffect(() => {
+    offsetsSV.value = lay.offsets;
+    contentH.value = lay.height;
+  }, [lay, offsetsSV, contentH]);
+  // Neues Dokument: oben, ohne Zoom
+  useEffect(() => {
+    zs.value = 1;
+    tx.value = 0;
+    ty.value = 0;
+    setScale(1);
+  }, [doc, zs, tx, ty]);
+
+  const drawing = mode === 'mark' && !hand;
+  const listScroll = !drawing && mode !== 'place';
+
+  const showRange = useCallback((a: number, b: number, center: number) => {
+    setShown([a, b]);
+    setPage(center);
+  }, []);
+  // Sichtbare Seiten aus Verschiebung und Zoom (nur bei Änderung an die Oberfläche melden)
+  useAnimatedReaction(
+    () => [ty.value, zs.value, vh.value] as const,
+    ([y, sc, h]) => {
+      const top = -y / sc;
+      const bot = (h - y) / sc;
+      const a = pageAt(offsetsSV.value, top);
+      const b = pageAt(offsetsSV.value, bot);
+      const c = pageAt(offsetsSV.value, (top + bot) / 2);
+      const l = lastShown.value;
+      if (l[0] !== a || l[1] !== b || l[2] !== c) {
+        lastShown.value = [a, b, c];
+        runOnJS(showRange)(a, b, c);
+      }
     },
-    [scale, live],
   );
 
   const pinch = Gesture.Pinch()
+    .withTestId('pdf-pinch')
     .onStart((e) => {
-      ox.value = e.focalX;
-      oy.value = e.focalY;
-      runOnJS(setScrolling)(false);
+      cancelAnimation(tx);
+      cancelAnimation(ty);
+      const s0 = zs.value;
+      start0.value = { s: s0, x: tx.value, y: ty.value, px: (e.focalX - tx.value) / s0, py: (e.focalY - ty.value) / s0 };
     })
     .onUpdate((e) => {
-      live.value = clamp(e.scale, MIN_ZOOM / scale, MAX_ZOOM / scale);
+      const st = start0.value;
+      const ns = rubberScale(st.s * e.scale, MIN_ZOOM, MAX_ZOOM);
+      zs.value = ns;
+      tx.value = e.focalX - st.px * ns;
+      ty.value = e.focalY - st.py * ns;
     })
-    .onEnd(() => {
-      runOnJS(commit)(scale * live.value, ox.value, oy.value);
+    .onEnd((e) => {
+      const to = settleTarget(zs.value, tx.value, ty.value, e.focalX, e.focalY, MIN_ZOOM, MAX_ZOOM, vw.value, vh.value, 0, 0, W, contentH.value, true);
+      zs.value = settle(to.s);
+      tx.value = settle(to.x);
+      ty.value = settle(to.y);
+      runOnJS(setScale)(to.s);
+    });
+  const pan = Gesture.Pan()
+    .withTestId('pdf-pan')
+    .enabled(listScroll)
+    .maxPointers(1)
+    .onBegin(() => {
+      // Antippen hält auslaufendes Scrollen an
+      cancelAnimation(tx);
+      cancelAnimation(ty);
+      start0.value = { s: zs.value, x: tx.value, y: ty.value, px: 0, py: 0 };
+    })
+    .onUpdate((e) => {
+      const sc = zs.value;
+      const [x0, x1] = range(sc, vw.value, 0, W);
+      const [y0, y1] = range(sc, vh.value, 0, contentH.value, true);
+      tx.value = rubber(start0.value.x + e.translationX, x0, x1);
+      ty.value = rubber(start0.value.y + e.translationY, y0, y1);
+    })
+    .onEnd((e) => {
+      const sc = zs.value;
+      const [x0, x1] = range(sc, vw.value, 0, W);
+      const [y0, y1] = range(sc, vh.value, 0, contentH.value, true);
+      tx.value = withDecay({ velocity: e.velocityX, clamp: [x0, x1], rubberBandEffect: true });
+      ty.value = withDecay({ velocity: e.velocityY, clamp: [y0, y1], rubberBandEffect: true });
     });
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .enabled(mode === 'view')
     .onEnd((e) => {
-      runOnJS(commit)(scale > 1.2 ? 1 : 2.5, e.x, e.y);
+      const sc = zs.value;
+      const target = sc > 1.2 ? 1 : 2.5;
+      const px = (e.x - tx.value) / sc;
+      const py = (e.y - ty.value) / sc;
+      const to = settleTarget(target, e.x - px * target, e.y - py * target, e.x, e.y, MIN_ZOOM, MAX_ZOOM, vw.value, vh.value, 0, 0, W, contentH.value, true);
+      zs.value = settle(to.s);
+      tx.value = settle(to.x);
+      ty.value = settle(to.y);
+      runOnJS(setScale)(to.s);
     });
-  const gestures = Gesture.Simultaneous(pinch, doubleTap);
-  const liveStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: ox.value }, { translateY: oy.value }, { scale: live.value }, { translateX: -ox.value }, { translateY: -oy.value }],
+  const gestures = Gesture.Simultaneous(pinch, pan, doubleTap);
+  const contentStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: zs.value }],
   }));
 
-  const ok = info && info !== 'error' ? info : null;
-  const pageW = PAGE_W * scale;
-  const offsets = ok ? ok.ratios.reduce<number[]>((acc, r, i) => (acc.push(i === 0 ? 0 : acc[i - 1] + pageW * ok.ratios[i - 1] + GAP), acc), []) : [];
+  const pageW = PAGE_W;
   const summary = useMemo(() => signatureSummary(sigs), [sigs]);
-  const drawing = mode === 'mark' && !hand;
-  const listScroll = scrolling && !drawing && mode !== 'place';
+
+  /** Markierte Textzeilen (Rechtecke) als Marker-Striche übernehmen. */
+  const addTextMarks = useCallback((pg: number, rects: Rect[], c: string) => {
+    if (!ok) {
+      return;
+    }
+    const g = ++group.current;
+    const add = rectsToMarks(rects, ok.ratios[pg]).map((x) => ({ page: pg, color: c, stroke: x.stroke, width: x.width, group: g }));
+    setMarks((m0) => [...m0, ...add]);
+  }, [ok]);
+  const noText = useCallback(() => {
+    if (!noTextShown.current) {
+      noTextShown.current = true;
+      notify?.(t('Auf dieser Seite gibt es keinen auswählbaren Text (z. B. eingescannt). Nutze den Freihand-Marker.'));
+    }
+  }, [notify]);
+  const undoMark = () => setMarks((x) => {
+    const last = x[x.length - 1];
+    return last ? x.filter((mk) => mk.group !== last.group) : x;
+  });
 
   // ------------------------------------------------------------ Speichern (Kopie oder ersetzen)
   const finishSave = async (out: string, replace: boolean, what: string) => {
@@ -261,14 +347,15 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
 
   const saveMarks = async (m2: 'copy' | 'replace') => {
     setFlow('busy');
-    const byKey = new Map<string, { page: number; color: string; strokes: Stroke[] }>();
+    const byKey = new Map<string, { page: number; color: string; width: number; strokes: Stroke[] }>();
     for (const mk of marks) {
-      const k = `${mk.page}|${mk.color}`;
-      const e = byKey.get(k) ?? { page: mk.page, color: mk.color, strokes: [] };
+      const w = mk.width ?? MARKER_WIDTH;
+      const k = `${mk.page}|${mk.color}|${w}`;
+      const e = byKey.get(k) ?? { page: mk.page, color: mk.color, width: w, strokes: [] };
       e.strokes.push(mk.stroke);
       byKey.set(k, e);
     }
-    const layers = Array.from(byKey.values()).map((l) => ({ ...l, width: MARKER_WIDTH }));
+    const layers = Array.from(byKey.values());
     try {
       const r = await request<{ path: string }>({ PdfMark: { path: doc, layers, mode: m2 === 'replace' ? 'temp' : 'copy' } });
       await finishSave(r.path, m2 === 'replace', t('Markierungen gespeichert.'));
@@ -353,7 +440,9 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
   };
 
   const closeOrBack = () => {
-    if (flow && flow !== 'busy') {
+    if (selection) {
+      setSelection(null);
+    } else if (flow && flow !== 'busy') {
       setFlow(null);
     } else if (mode !== 'view') {
       setMode('view');
@@ -400,68 +489,118 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
           </Animated.View>
         ) : (
           <GestureDetector gesture={gestures}>
-            <Animated.View style={[styles.fill, styles.clip]} accessibilityHint={t('Mit zwei Fingern zoomen, doppelt tippen für 250 %')}>
-              <Animated.View style={[styles.fill, liveStyle]}>
-                <ScrollView
-                  ref={hScroll}
-                  horizontal
-                  scrollEnabled={listScroll && scale > 1.01}
-                  showsHorizontalScrollIndicator={false}
-                  onScroll={(e) => (pos.current.x = e.nativeEvent.contentOffset.x)}
-                  scrollEventThrottle={32}
-                  contentContainerStyle={{ width: pageW + 2 * PAD }}
-                >
-                  <FlatList
-                    ref={vList}
-                    style={{ width: pageW + 2 * PAD }}
-                    data={Array.from({ length: info.pages }, (_, i) => i)}
-                    keyExtractor={(i) => `${doc}|${i}`}
-                    extraData={[scale, marks, mode, hand, place, color, rev]}
-                    scrollEnabled={listScroll}
-                    contentContainerStyle={styles.list}
-                    getItemLayout={(_, i) => ({ length: pageW * info.ratios[i] + GAP, offset: offsets[i], index: i })}
-                    initialNumToRender={3}
-                    maxToRenderPerBatch={3}
-                    windowSize={5}
-                    onScroll={(e) => (pos.current.y = e.nativeEvent.contentOffset.y)}
-                    scrollEventThrottle={32}
-                    onViewableItemsChanged={onViewable.current}
-                    viewabilityConfig={VIEWABILITY}
-                    renderItem={({ item: i }) => {
-                      const h = pageW * info.ratios[i];
-                      const pageMarks = marks.filter((mk) => mk.page === i);
-                      const colors = Array.from(new Set(pageMarks.map((mk) => mk.color)));
-                      return (
-                        <View style={{ width: pageW, height: h, marginBottom: GAP }}>
-                          <PdfPage path={doc} rev={rev} index={i} ratio={info.ratios[i]} scale={scale} />
-                          {colors.map((c) => (
-                            <Strokes key={c} strokes={pageMarks.filter((mk) => mk.color === c).map((mk) => mk.stroke)} width={pageW} height={h} color={c} strokeWidth={MARKER_WIDTH * pageW} opacity={0.45} />
-                          ))}
-                          {drawing && (
-                            <DrawArea
-                              width={pageW}
-                              height={h}
-                              color={color}
-                              strokeWidth={MARKER_WIDTH * pageW}
-                              opacity={0.45}
-                              testID={`mark-page-${i}`}
-                              onStroke={(stroke) => setMarks((x) => [...x, { page: i, color, stroke }])}
-                            />
-                          )}
-                          {mode === 'place' && place && place.page === i && (
-                            <SignatureBox place={place} strokes={sigStrokes} pageW={pageW} pageH={h} onChange={setPlace} />
-                          )}
-                        </View>
-                      );
-                    }}
-                  />
-                </ScrollView>
+            <Animated.View
+              style={[styles.fill, styles.clip]}
+              collapsable={false}
+              onLayout={(e) => {
+                vw.value = e.nativeEvent.layout.width;
+                vh.value = e.nativeEvent.layout.height;
+              }}
+              accessibilityHint={t('Mit zwei Fingern zoomen, doppelt tippen für 250 %')}
+            >
+              <Animated.View style={[styles.content, { height: lay.height }, contentStyle]}>
+                {Array.from({ length: info.pages }, (_, i) => i)
+                  .filter((i) => i >= shown[0] - 1 && i <= shown[1] + 1)
+                  .map((i) => {
+                    const h = pageW * info.ratios[i];
+                    const pageMarks = marks.filter((mk) => mk.page === i);
+                    const groups = Array.from(new Set(pageMarks.map((mk) => `${mk.color}|${mk.width ?? MARKER_WIDTH}`)));
+                    return (
+                      <View key={`${doc}|${i}`} style={[styles.pageSlot, { top: lay.offsets[i], width: pageW, height: h }]}>
+                        <PdfPage path={doc} rev={rev} index={i} ratio={info.ratios[i]} scale={scale} />
+                        {groups.map((gk) => {
+                          const [c, w] = gk.split('|');
+                          return (
+                            <Strokes key={gk} strokes={pageMarks.filter((mk) => `${mk.color}|${mk.width ?? MARKER_WIDTH}` === gk).map((mk) => mk.stroke)} width={pageW} height={h} color={c} strokeWidth={Number(w) * pageW} opacity={0.45} />
+                          );
+                        })}
+                        {selection && selection.page === i && <SelectionRects rects={selection.rects} width={pageW} height={h} />}
+                        {mode === 'view' && textOK && (
+                          <TextLayer
+                            path={doc}
+                            page={i}
+                            width={pageW}
+                            height={h}
+                            mode="select"
+                            color={color}
+                            testID={`select-page-${i}`}
+                            onSelect={setSelection}
+                          />
+                        )}
+                        {drawing && tool === 'text' && (
+                          <TextLayer
+                            path={doc}
+                            page={i}
+                            width={pageW}
+                            height={h}
+                            mode="mark"
+                            color={color}
+                            testID={`textmark-page-${i}`}
+                            onMark={(rects) => addTextMarks(i, rects, color)}
+                            onNoText={noText}
+                          />
+                        )}
+                        {drawing && tool === 'free' && (
+                          <DrawArea
+                            width={pageW}
+                            height={h}
+                            color={color}
+                            strokeWidth={MARKER_WIDTH * pageW}
+                            opacity={0.45}
+                            testID={`mark-page-${i}`}
+                            onStroke={(stroke) => setMarks((x) => [...x, { page: i, color, stroke, group: ++group.current }])}
+                          />
+                        )}
+                        {mode === 'place' && place && place.page === i && (
+                          <SignatureBox place={place} strokes={sigStrokes} pageW={pageW} pageH={h} onChange={setPlace} />
+                        )}
+                      </View>
+                    );
+                  })}
               </Animated.View>
             </Animated.View>
           </GestureDetector>
         )}
 
-        {ok && mode === 'view' && (
+        {ok && mode === 'view' && selection && (
+          <Animated.View entering={m(popIn)} style={styles.bar}>
+            <Pressable
+              onPress={() => {
+                core.copyText(selection.text).then(() => notify?.(t('Text kopiert.'))).catch(() => {});
+                setSelection(null);
+              }}
+              style={styles.barBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('Kopieren')}
+            >
+              <Icon name="copy" size={22} color="#EDEBE6" />
+              <Text style={styles.barText}>{t('Kopieren')}</Text>
+            </Pressable>
+            <View style={styles.grow} />
+            {MARKER_COLORS.map(([c, label]) => (
+              <Pressable
+                key={c}
+                onPress={() => {
+                  addTextMarks(selection.page, selection.rects, c);
+                  setColor(c);
+                  setTool('text');
+                  setHand(false);
+                  setSelection(null);
+                  setMode('mark');
+                }}
+                style={styles.colorBtn}
+                accessibilityRole="button"
+                accessibilityLabel={t('Markieren: {color}', { color: t(label) })}
+              >
+                <View style={[styles.colorDot, { backgroundColor: c }]} />
+              </Pressable>
+            ))}
+            <Pressable onPress={() => setSelection(null)} style={styles.colorBtn} accessibilityLabel={t('Auswahl aufheben')}>
+              <Icon name="close" size={22} color="#EDEBE6" />
+            </Pressable>
+          </Animated.View>
+        )}
+        {ok && mode === 'view' && !selection && (
           <View style={styles.bar}>
             <Pressable onPress={() => setMode('mark')} style={styles.barBtn} accessibilityRole="button" accessibilityLabel={t('Markieren')}>
               <Icon name="highlight" size={22} color="#EDEBE6" />
@@ -475,6 +614,16 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
         )}
         {mode === 'mark' && (
           <Animated.View entering={m(popIn)} style={styles.bar}>
+            {textOK && (
+              <View style={styles.tools} accessibilityRole="radiogroup">
+                <Pressable onPress={() => { setTool('text'); setHand(false); }} style={[styles.toolBtn, tool === 'text' && !hand && styles.toolOn]} accessibilityRole="radio" accessibilityState={{ selected: tool === 'text' && !hand }} accessibilityLabel={t('Text markieren')}>
+                  <Icon name="font" size={20} color={tool === 'text' && !hand ? '#0B1F1A' : '#EDEBE6'} />
+                </Pressable>
+                <Pressable onPress={() => { setTool('free'); setHand(false); }} style={[styles.toolBtn, tool === 'free' && !hand && styles.toolOn]} accessibilityRole="radio" accessibilityState={{ selected: tool === 'free' && !hand }} accessibilityLabel={t('Freihand markieren')}>
+                  <Icon name="highlight" size={20} color={tool === 'free' && !hand ? '#0B1F1A' : '#EDEBE6'} />
+                </Pressable>
+              </View>
+            )}
             {MARKER_COLORS.map(([c, label]) => (
               <Pressable key={c} onPress={() => { setColor(c); setHand(false); }} style={styles.colorBtn} accessibilityRole="radio" accessibilityState={{ selected: color === c && !hand }} accessibilityLabel={t(label)}>
                 <View style={[styles.colorDot, { backgroundColor: c }, color === c && !hand && styles.colorOn]} />
@@ -483,7 +632,7 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
             <Pressable onPress={() => setHand((x) => !x)} style={styles.colorBtn} accessibilityRole="switch" accessibilityState={{ checked: hand }} accessibilityLabel={t('Verschieben')}>
               <Icon name="hand" size={22} color={hand ? '#72C7B2' : '#EDEBE6'} />
             </Pressable>
-            <Pressable onPress={() => setMarks((x) => x.slice(0, -1))} disabled={marks.length === 0} style={styles.colorBtn} accessibilityLabel={t('Rückgängig')}>
+            <Pressable onPress={undoMark} disabled={marks.length === 0} style={styles.colorBtn} accessibilityLabel={t('Rückgängig')}>
               <View style={marks.length === 0 && styles.dim}>
                 <Icon name="undo" size={22} color="#EDEBE6" />
               </View>
@@ -564,8 +713,9 @@ const styles = StyleSheet.create({
   titleBox: { flex: 1, marginHorizontal: 4 },
   title: { color: '#fff', fontSize: 15, fontWeight: '600' },
   counter: { color: '#bbb', fontSize: 12 },
-  list: { padding: PAD },
   clip: { overflow: 'hidden' },
+  content: { position: 'absolute', left: 0, top: 0, width: W, transformOrigin: 'left top' },
+  pageSlot: { position: 'absolute', left: PAD },
   page: { backgroundColor: '#fff', borderRadius: 2, overflow: 'hidden' },
   error: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   errorText: { color: '#eee', fontSize: 15, textAlign: 'center', marginBottom: 12 },
@@ -582,6 +732,9 @@ const styles = StyleSheet.create({
   barIcon: { color: '#fff', fontSize: 20 },
   barText: { color: '#f1f1f4', fontSize: 15 },
   colorBtn: { width: 44, height: 52, justifyContent: 'center', alignItems: 'center' },
+  tools: { flexDirection: 'row', padding: 3, borderRadius: 22, backgroundColor: '#2B2B28', marginRight: 4 },
+  toolBtn: { width: 40, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  toolOn: { backgroundColor: '#72C7B2' },
   colorDot: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: 'transparent' },
   colorOn: { borderColor: '#fff', transform: [{ scale: 1.15 }] },
   handOn: { color: '#9fbcff' },

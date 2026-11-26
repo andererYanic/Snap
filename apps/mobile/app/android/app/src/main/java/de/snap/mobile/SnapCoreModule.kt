@@ -182,6 +182,57 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /** PDF: Textschicht vorhanden (Android 15, oder 11–14 mit Systemupdate)? */
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun pdfTextSupported(): Boolean = PdfPages.textSupported()
+
+  /** PDF: Hat Seite `index` eine Textschicht (eingescannte Seiten nicht)? */
+  @ReactMethod
+  fun pdfHasText(path: String, index: Double, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(PdfPages.hasText(path, index.toInt()))
+      } catch (e: Throwable) {
+        promise.resolve(false)
+      }
+    }
+  }
+
+  /** PDF: Text zwischen zwei normierten Punkten (gleiche Punkte = Wort). `{ text, rects }` oder null. */
+  @ReactMethod
+  fun pdfSelect(path: String, index: Double, x1: Double, y1: Double, x2: Double, y2: Double, promise: Promise) {
+    scope.launch {
+      try {
+        val r = PdfPages.select(path, index.toInt(), x1, y1, x2, y2) ?: return@launch promise.resolve(null)
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        map.putString("text", r.first)
+        val arr = com.facebook.react.bridge.Arguments.createArray()
+        r.second.forEach { q ->
+          val a = com.facebook.react.bridge.Arguments.createArray()
+          q.forEach { a.pushDouble(it) }
+          arr.pushArray(a)
+        }
+        map.putArray("rects", arr)
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** Text in die Zwischenablage (höchstens 100 000 Zeichen). */
+  @ReactMethod
+  fun copyText(text: String, promise: Promise) {
+    try {
+      val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+      val clip = android.content.ClipData.newPlainText("Snap", text.take(100_000))
+      cm.setPrimaryClip(clip)
+      promise.resolve(null)
+    } catch (e: Throwable) {
+      promise.reject("copy", e.message ?: e.toString())
+    }
+  }
+
   /**
    * Liest eine Textdatei für die Anzeige (höchstens `maxBytes`, UTF-8; ungültige Bytes werden
    * ersetzt). Ergebnis: `{ text, truncated }`.

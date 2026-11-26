@@ -1,28 +1,26 @@
 // Eingebaute Anzeige für Bilder und Videos.
-// - Bilder: Zoomen mit zwei Fingern, Doppeltippen, im Zoom verschieben.
-// - Wischen nach links/rechts: nächste/vorige Datei im Ordner bzw. in der Zeitachse. Andere
-//   Dateien (PDF, Text …) erscheinen als Karte mit „Öffnen mit …“.
+// - Bilder: Zoomen mit zwei Fingern live um den Punkt zwischen den Fingern (gleichzeitig
+//   verschieben), Gummiband an den Grenzen, Doppeltippen zoomt auf die Stelle, Verschieben mit
+//   Schwung. Rechnung: `zoom.ts`.
+// - Wischen nach links/rechts: nächste/vorige Datei (eigenes Blättern auf dem UI-Thread, damit
+//   Zoom und Blättern sich nicht gegenseitig die Finger wegnehmen). Andere Dateien (PDF, Text …)
+//   erscheinen als Karte mit „Öffnen mit …“.
 // - Nach unten wischen schließt; Videos laufen über Media3/ExoPlayer (lokal, ohne Google-Dienste).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Dimensions, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, View } from 'react-native';
+import { Dimensions, Image, Modal, Pressable, StatusBar, StyleSheet, View } from 'react-native';
 import { Text } from './text';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
-  FadeIn, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withTiming,
+  cancelAnimation, FadeIn, FadeOut, runOnJS, useAnimatedStyle, useSharedValue, withDecay, withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import Video from 'react-native-video';
 import * as core from './core';
 import { t } from './i18n';
 import { isMedia, isVideo, useThumb } from './thumbs';
-import { EASE_OUT } from './motion';
-
-/** Weiche, klare Bewegung ohne Nachfedern (statt Feder). */
-const ease = (v: number) => {
-  'worklet';
-  return withTiming(v, { duration: 220, easing: EASE_OUT });
-};
 import { m } from './motion';
 import { Icon } from './Icon';
+import { clampV, range, rubber, rubberScale, settle, settleTarget } from './zoom';
 
 export interface MediaItem {
   path: string;
@@ -32,68 +30,234 @@ export interface MediaItem {
 }
 
 const { width: W, height: H } = Dimensions.get('window');
+export const IMAGE_MAX_ZOOM = 6;
+export const DOUBLE_TAP_ZOOM = 2.5;
+/** Ab hier gilt ein Bild als gezoomt (Blättern aus, Verschieben an). */
+const ZOOMED = 1.01;
+
+type Box = { x: number; y: number; w: number; h: number };
+const FULL: Box = { x: 0, y: 0, w: W, h: H };
+
+/** Fläche, die ein Bild mit `contain` auf dem Bildschirm einnimmt. */
+export function containBox(iw: number, ih: number): Box {
+  if (!(iw > 0 && ih > 0)) {
+    return FULL;
+  }
+  const k = Math.min(W / iw, H / ih);
+  const w = iw * k;
+  const h = ih * k;
+  return { x: (W - w) / 2, y: (H - h) / 2, w, h };
+}
 
 export default function Viewer({ items, start, onClose, onEdit }: {
   items: MediaItem[]; start: number; onClose: () => void;
   /** Bild bearbeiten (eingebauter Editor); fehlt er, gibt es keinen Knopf. */
   onEdit?: (item: MediaItem) => void;
 }) {
-  const [index, setIndex] = useState(start);
+  const [index, setIndexState] = useState(start);
   const [chrome, setChrome] = useState(true);
-  const [zoomed, setZoomed] = useState(false);
-  const list = useRef<FlatList<MediaItem>>(null);
   const item = items[index];
+  const image = !!item && isMedia(item.name) && !isVideo(item.name);
+  const boxes = useRef(new Map<string, Box>());
 
-  // Nach unten wischen zum Schließen (nur ohne Zoom)
+  // Zoom des aktuellen Bilds
+  const s = useSharedValue(1);
+  const tx = useSharedValue(0);
+  const ty = useSharedValue(0);
+  const box = useSharedValue<Box>(FULL);
+  // Blättern und Schließen
+  const base = useSharedValue(-start * W);
+  const drag = useSharedValue(0);
   const dragY = useSharedValue(0);
-  const dismiss = Gesture.Pan()
-    .enabled(!zoomed)
-    .activeOffsetY([-20, 20])
-    .failOffsetX([-20, 20])
+  const idx = useSharedValue(start);
+  const count = useSharedValue(items.length);
+  // Geste: 0 offen, 1 blättern, 2 schließen, 3 Bild verschieben, 4 nichts
+  const mode = useSharedValue(0);
+  const start0 = useSharedValue({ s: 1, x: 0, y: 0, px: 0, py: 0 });
+
+  useEffect(() => {
+    count.value = items.length;
+  }, [items.length, count]);
+
+  const setIndex = useCallback((n: number) => {
+    setIndexState(n);
+    const it = items[n];
+    box.value = (it && boxes.current.get(it.path)) ?? FULL;
+  }, [items, box]);
+
+  const onBox = useCallback((path: string, b: Box) => {
+    boxes.current.set(path, b);
+    if (items[index]?.path === path) {
+      box.value = b;
+    }
+  }, [items, index, box]);
+
+  const toggleChrome = useCallback(() => setChrome((c) => !c), []);
+
+  const resetZoom = () => {
+    'worklet';
+    s.value = settle(1);
+    tx.value = settle(0);
+    ty.value = settle(0);
+  };
+
+  const pinch = Gesture.Pinch()
+    .withTestId('viewer-pinch')
+    .enabled(image)
+    .onStart((e) => {
+      cancelAnimation(tx);
+      cancelAnimation(ty);
+      const s0 = s.value;
+      start0.value = { s: s0, x: tx.value, y: ty.value, px: (e.focalX - tx.value) / s0, py: (e.focalY - ty.value) / s0 };
+      mode.value = 4;
+      drag.value = settle(0);
+    })
     .onUpdate((e) => {
-      dragY.value = Math.max(0, e.translationY);
+      const st = start0.value;
+      const ns = rubberScale(st.s * e.scale, 1, IMAGE_MAX_ZOOM);
+      s.value = ns;
+      tx.value = e.focalX - st.px * ns;
+      ty.value = e.focalY - st.py * ns;
     })
     .onEnd((e) => {
-      if (e.translationY > 140 || e.velocityY > 1200) {
-        dragY.value = withTiming(H, { duration: 180 }, () => runOnJS(onClose)());
-      } else {
-        dragY.value = ease(0);
+      const b = box.value;
+      const to = settleTarget(s.value, tx.value, ty.value, e.focalX, e.focalY, 1, IMAGE_MAX_ZOOM, W, H, b.x, b.y, b.w, b.h);
+      s.value = settle(to.s);
+      tx.value = settle(to.x);
+      ty.value = settle(to.y);
+    });
+
+  const pan = Gesture.Pan()
+    .withTestId('viewer-pan')
+    .maxPointers(1)
+    .onBegin(() => {
+      cancelAnimation(tx);
+      cancelAnimation(ty);
+      start0.value = { s: s.value, x: tx.value, y: ty.value, px: 0, py: 0 };
+      mode.value = s.value > ZOOMED ? 3 : 0;
+    })
+    .onUpdate((e) => {
+      if (mode.value === 0) {
+        if (Math.abs(e.translationX) < 10 && Math.abs(e.translationY) < 10) {
+          return;
+        }
+        mode.value = Math.abs(e.translationX) > Math.abs(e.translationY) ? 1 : e.translationY > 0 ? 2 : 4;
+      }
+      if (mode.value === 3) {
+        const b = box.value;
+        const sc = s.value;
+        const [x0, x1] = range(sc, W, b.x, b.w);
+        const [y0, y1] = range(sc, H, b.y, b.h);
+        tx.value = rubber(start0.value.x + e.translationX, x0, x1);
+        ty.value = rubber(start0.value.y + e.translationY, y0, y1);
+      } else if (mode.value === 1) {
+        const atStart = idx.value === 0 && e.translationX > 0;
+        const atEnd = idx.value === count.value - 1 && e.translationX < 0;
+        drag.value = atStart || atEnd ? e.translationX * 0.3 : e.translationX;
+      } else if (mode.value === 2) {
+        dragY.value = Math.max(0, e.translationY);
+      }
+    })
+    .onEnd((e) => {
+      if (mode.value === 3) {
+        const b = box.value;
+        const sc = s.value;
+        const [x0, x1] = range(sc, W, b.x, b.w);
+        const [y0, y1] = range(sc, H, b.y, b.h);
+        tx.value = withDecay({ velocity: e.velocityX, clamp: [x0, x1], rubberBandEffect: true });
+        ty.value = withDecay({ velocity: e.velocityY, clamp: [y0, y1], rubberBandEffect: true });
+      } else if (mode.value === 1) {
+        let n = idx.value;
+        if ((e.translationX < -W * 0.22 || e.velocityX < -700) && n < count.value - 1) {
+          n += 1;
+        } else if ((e.translationX > W * 0.22 || e.velocityX > 700) && n > 0) {
+          n -= 1;
+        }
+        base.value = base.value + drag.value;
+        drag.value = 0;
+        if (n !== idx.value) {
+          idx.value = n;
+          s.value = 1;
+          tx.value = 0;
+          ty.value = 0;
+          runOnJS(setIndex)(n);
+        }
+        base.value = withTiming(-n * W, { duration: 240 });
+      } else if (mode.value === 2) {
+        if (e.translationY > 140 || e.velocityY > 1200) {
+          dragY.value = withTiming(H, { duration: 180 }, () => runOnJS(onClose)());
+        } else {
+          dragY.value = settle(0);
+        }
+      }
+    })
+    .onFinalize((_, ok) => {
+      // Abgebrochen (z. B. zweiter Finger): Blättern und Schließen zurücksetzen
+      if (!ok) {
+        if (mode.value === 1) {
+          base.value = withTiming(-idx.value * W, { duration: 200 });
+          drag.value = 0;
+        }
+        if (mode.value === 2) {
+          dragY.value = settle(0);
+        }
       }
     });
+
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .enabled(image)
+    .onEnd((e) => {
+      if (s.value > ZOOMED) {
+        resetZoom();
+        return;
+      }
+      const b = box.value;
+      const ns = DOUBLE_TAP_ZOOM;
+      const [x0, x1] = range(ns, W, b.x, b.w);
+      const [y0, y1] = range(ns, H, b.y, b.h);
+      s.value = settle(ns);
+      tx.value = settle(clampV(e.x - e.x * ns, x0, x1));
+      ty.value = settle(clampV(e.y - e.y * ns, y0, y1));
+    });
+  const singleTap = Gesture.Tap()
+    .enabled(image)
+    .requireExternalGestureToFail(doubleTap)
+    .onEnd(() => runOnJS(toggleChrome)());
+  const gesture = Gesture.Simultaneous(pinch, pan, Gesture.Exclusive(doubleTap, singleTap));
+
+  const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: base.value + drag.value }] }));
   const pageStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: dragY.value }, { scale: 1 - Math.min(dragY.value / H, 0.3) * 0.4 }],
   }));
   const backdrop = useAnimatedStyle(() => ({ opacity: 1 - Math.min(dragY.value / (H * 0.6), 1) }));
+
+  // Nur die aktuelle und die Nachbarseiten zeichnen
+  const window = [index - 1, index, index + 1].filter((i) => i >= 0 && i < items.length);
 
   return (
     <Modal visible transparent statusBarTranslucent animationType="fade" onRequestClose={onClose}>
       <GestureHandlerRootView style={styles.fill}>
         <StatusBar hidden={!chrome} barStyle="light-content" />
         <Animated.View style={[StyleSheet.absoluteFill, styles.black, backdrop]} />
-        <GestureDetector gesture={dismiss}>
-          <Animated.View style={[styles.fill, pageStyle]}>
-            <FlatList
-              ref={list}
-              data={items}
-              horizontal
-              pagingEnabled
-              scrollEnabled={!zoomed}
-              initialScrollIndex={start}
-              getItemLayout={(_, i) => ({ length: W, offset: W * i, index: i })}
-              keyExtractor={(m) => m.path}
-              showsHorizontalScrollIndicator={false}
-              windowSize={3}
-              onMomentumScrollEnd={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / W))}
-              renderItem={({ item: m, index: i }) =>
-                !isMedia(m.name) ? (
-                  <FilePage item={m} />
-                ) : isVideo(m.name) ? (
-                  <VideoPage item={m} active={i === index} />
-                ) : (
-                  <ZoomImage item={m} onZoom={setZoomed} onTap={() => setChrome((c) => !c)} />
-                )
-              }
-            />
+        <GestureDetector gesture={gesture}>
+          <Animated.View style={[styles.fill, pageStyle]} collapsable={false}>
+            <Animated.View style={[styles.row, { width: Math.max(1, items.length) * W }, rowStyle]}>
+              {window.map((i) => {
+                const it = items[i];
+                return (
+                  <View key={it.path} style={[styles.slot, { left: i * W }]}>
+                    {!isMedia(it.name) ? (
+                      <FilePage item={it} />
+                    ) : isVideo(it.name) ? (
+                      <VideoPage item={it} active={i === index} />
+                    ) : (
+                      <ZoomImage item={it} active={i === index} s={s} tx={tx} ty={ty} onBox={onBox} />
+                    )}
+                  </View>
+                );
+              })}
+            </Animated.View>
           </Animated.View>
         </GestureDetector>
         {chrome && item && (
@@ -125,93 +289,35 @@ export default function Viewer({ items, start, onClose, onEdit }: {
   );
 }
 
-/** Bild mit Zoom (zwei Finger, Doppeltippen) und Verschieben im Zoom. */
-function ZoomImage({ item, onZoom, onTap }: { item: MediaItem; onZoom: (z: boolean) => void; onTap: () => void }) {
+/** Bild; das aktuelle folgt dem Zoom (gemeinsame Werte der Anzeige), die Nachbarn stehen still. */
+function ZoomImage({ item, active, s, tx, ty, onBox }: {
+  item: MediaItem; active: boolean; s: SharedValue<number>; tx: SharedValue<number>; ty: SharedValue<number>;
+  onBox: (path: string, b: Box) => void;
+}) {
   const preview = useThumb(item.path, 1024);
   const [loaded, setLoaded] = useState(false);
-  const scale = useSharedValue(1);
-  const saved = useSharedValue(1);
-  const tx = useSharedValue(0);
-  const ty = useSharedValue(0);
-  const sx = useSharedValue(0);
-  const sy = useSharedValue(0);
-
-  const [isZoomed, setIsZoomed] = useState(false);
-  const report = useCallback(
-    (z: boolean) => {
-      setIsZoomed(z);
-      onZoom(z);
-    },
-    [onZoom],
+  const style = useAnimatedStyle(() =>
+    active
+      ? { transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: s.value }] }
+      : { transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 1 }] },
   );
-
-  const pinch = Gesture.Pinch()
-    .onUpdate((e) => {
-      scale.value = Math.min(6, Math.max(1, saved.value * e.scale));
-    })
-    .onEnd(() => {
-      saved.value = scale.value;
-      if (scale.value <= 1.01) {
-        tx.value = ease(0);
-        ty.value = ease(0);
-        sx.value = 0;
-        sy.value = 0;
-      }
-      runOnJS(report)(scale.value > 1.01);
-    });
-  // Verschieben nur im Zoom: Ohne Zoom würde die Geste das Wischen zur nächsten Datei schlucken.
-  const pan = Gesture.Pan()
-    .withTestId('viewer-pan')
-    .enabled(isZoomed)
-    .averageTouches(true)
-    .onUpdate((e) => {
-      if (scale.value > 1.01) {
-        const maxX = (W * (scale.value - 1)) / 2;
-        const maxY = (H * (scale.value - 1)) / 2;
-        tx.value = Math.min(maxX, Math.max(-maxX, sx.value + e.translationX));
-        ty.value = Math.min(maxY, Math.max(-maxY, sy.value + e.translationY));
-      }
-    })
-    .onEnd(() => {
-      sx.value = tx.value;
-      sy.value = ty.value;
-    });
-  const doubleTap = Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd((e) => {
-      const zoomIn = scale.value <= 1.01;
-      const target = zoomIn ? 2.5 : 1;
-      scale.value = ease(target);
-      saved.value = target;
-      // Auf die getippte Stelle zoomen
-      const nx = zoomIn ? (W / 2 - e.x) * (target - 1) : 0;
-      const ny = zoomIn ? (H / 2 - e.y) * (target - 1) : 0;
-      tx.value = ease(nx);
-      ty.value = ease(ny);
-      sx.value = nx;
-      sy.value = ny;
-      runOnJS(report)(zoomIn);
-    });
-  const singleTap = Gesture.Tap().requireExternalGestureToFail(doubleTap).onEnd(() => runOnJS(onTap)());
-  const gesture = Gesture.Simultaneous(pinch, pan, Gesture.Exclusive(doubleTap, singleTap));
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: scale.value }],
-  }));
-
   return (
-    <GestureDetector gesture={gesture}>
-      <Animated.View style={[styles.page, style]}>
-        {preview && !loaded && <Image source={{ uri: preview }} style={styles.media} resizeMode="contain" fadeDuration={0} />}
-        <Image
-          source={{ uri: `file://${item.path}` }}
-          style={[styles.media, !loaded && styles.hidden]}
-          resizeMode="contain"
-          onLoad={() => setLoaded(true)}
-          fadeDuration={150}
-        />
-      </Animated.View>
-    </GestureDetector>
+    <Animated.View style={[styles.page, styles.origin, style]}>
+      {preview && !loaded && <Image source={{ uri: preview }} style={styles.media} resizeMode="contain" fadeDuration={0} />}
+      <Image
+        source={{ uri: `file://${item.path}` }}
+        style={[styles.media, !loaded && styles.hidden]}
+        resizeMode="contain"
+        onLoad={(e: any) => {
+          setLoaded(true);
+          const src = e?.nativeEvent?.source;
+          if (src?.width && src?.height) {
+            onBox(item.path, containBox(src.width, src.height));
+          }
+        }}
+        fadeDuration={150}
+      />
+    </Animated.View>
   );
 }
 
@@ -261,6 +367,9 @@ function VideoPage({ item, active }: { item: MediaItem; active: boolean }) {
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   black: { backgroundColor: '#000' },
+  row: { width: W, height: H },
+  slot: { position: 'absolute', top: 0, width: W, height: H },
+  origin: { transformOrigin: 'left top' },
   page: { width: W, height: H, justifyContent: 'center', alignItems: 'center' },
   media: { width: W, height: H, position: 'absolute' },
   hidden: { opacity: 0 },

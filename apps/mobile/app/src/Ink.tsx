@@ -82,8 +82,9 @@ export function DrawArea({ width, height, color, strokeWidth, opacity = 1, onStr
       setLive(next);
     }
   }, [width, height]);
-  const end = useCallback(() => {
-    if (cur.current.length > 0) {
+  // `keep = false`: abgebrochen (z. B. zweiter Finger zum Zoomen) – kein Strich übernehmen
+  const end = useCallback((keep: boolean) => {
+    if (keep && cur.current.length > 0) {
       onStroke(cur.current);
     }
     cur.current = [];
@@ -95,7 +96,7 @@ export function DrawArea({ width, height, color, strokeWidth, opacity = 1, onStr
     .maxPointers(1)
     .onBegin((e) => runOnJS(begin)(e.x, e.y))
     .onUpdate((e) => runOnJS(move)(e.x, e.y))
-    .onFinalize(() => runOnJS(end)());
+    .onFinalize((_e, ok) => runOnJS(end)(ok));
   if (testID) {
     pan.withTestId(testID);
   }

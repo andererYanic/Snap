@@ -53,6 +53,14 @@ export const thumbnail = (path: string, edge: number): Promise<string | null> =>
 export const pdfInfo = (path: string): Promise<{ pages: number; ratios: number[] } | null> => native().pdfInfo(path);
 /** PDF-Seite als PNG-Datei in der gewünschten Breite (Pixel). */
 export const pdfPage = (path: string, index: number, width: number): Promise<string | null> => native().pdfPage(path, index, width);
+/** PDF-Textschicht über Android (ab 15, oder 11–14 mit Systemupdate). */
+export const pdfTextSupported = (): boolean => !!native().pdfTextSupported?.();
+/** Hat die Seite Text (eingescannte Seiten nicht)? */
+export const pdfHasText = (path: string, index: number): Promise<boolean> => native().pdfHasText?.(path, index) ?? Promise.resolve(false);
+/** Text zwischen zwei Punkten (normiert, 0..1) auswählen; gleiche Punkte = Wort. */
+export const pdfSelect = (path: string, index: number, x1: number, y1: number, x2: number, y2: number): Promise<{ text: string; rects: number[][] } | null> =>
+  native().pdfSelect?.(path, index, x1, y1, x2, y2) ?? Promise.resolve(null);
+export const copyText = (text: string): Promise<void> => native().copyText(text);
 /** Druckdialog des Systems (PDF unverändert, Bilder auf eine Seite eingepasst). */
 export const printFile = (path: string): Promise<void> => native().printFile(path);
 /** Textdatei für die Anzeige lesen (begrenzt; `truncated`, wenn die Datei länger ist). */
