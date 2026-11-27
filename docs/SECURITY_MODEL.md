@@ -39,6 +39,10 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Ledger:** jeder Eintrag vom Ursprungsgerät signiert; strenge Prüfung relativer Pfade;
   ungültige Einträge werden einzeln verworfen.
 - **Freigaben:** Symlinks werden nie verfolgt; keine absoluten Pfade im Ledger.
+- **Texterkennung (OCR):** läuft vollständig auf dem Gerät (Tesseract, keine Netzverbindung, keine
+  Google-Dienste). Android dekodiert das Bild (höchstens 3000 px Kantenlänge), an Tesseract gehen nur
+  Pixel – Tesseract/Leptonica lesen selbst keine Dateien von außen. Die Sprachdaten kommen aus der
+  App (beim Bau per Prüfsumme gesichert). Der erkannte Text wird nicht gespeichert.
 - **Bildformate von außen:** RAW-Fotos werden nicht entwickelt; ein eigener Parser sucht nur die
   eingebettete JPEG-Vorschau (jeder Versatz gegen die Dateigröße geprüft, höchstens 64 IFDs, 1024
   Einträge je IFD, Verschachtelung 4, Schleifen erkannt, Vorschau ≤ 64 MB) und gibt sie an den

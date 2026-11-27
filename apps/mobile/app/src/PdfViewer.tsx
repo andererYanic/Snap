@@ -17,6 +17,7 @@ import { t } from './i18n';
 import { fadeIn, m, popIn } from './motion';
 import { Icon } from './Icon';
 import { DrawArea, INK_WIDTH, MARKER_COLORS, MARKER_WIDTH, type Stroke, Strokes } from './Ink';
+import { useOcr } from './Ocr';
 import { AskPassword, CreateId, groupFingerprint, idInfo } from './SignId';
 import SignaturePad, { PAD_RATIO } from './SignaturePad';
 import { rectsToMarks, SelectionRects, TextLayer, type Rect, type TextSelection } from './PdfText';
@@ -164,6 +165,7 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
   const [rev, setRev] = useState(0);
   const [info, setInfo] = useState<{ pages: number; ratios: number[] } | null | 'error'>(null);
   const [page, setPage] = useState(0);
+  const ocr = useOcr(notify);
   // Zoom, für den die Seiten scharf gezeichnet sind (nach dem Loslassen übernommen)
   const [scale, setScale] = useState(1);
   const [shown, setShown] = useState<[number, number]>([0, 2]);
@@ -481,6 +483,9 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
             <Text style={styles.title} numberOfLines={1}>{docName}</Text>
             {ok && <Text style={styles.counter}>{t('Seite {n} von {total}', { n: page + 1, total: ok.pages })}{scale > 1.01 ? `  ·  ${Math.round(scale * 100)} %` : ''}</Text>}
           </View>
+          <Pressable onPress={() => ocr.run({ pdf: doc, page })} style={styles.btn} accessibilityLabel={t('Text erkennen')}>
+            <Icon name="scanText" size={22} color="#fff" />
+          </Pressable>
           <Pressable onPress={() => core.printFile(doc).catch(() => {})} style={styles.btn} accessibilityLabel={t('Drucken')}>
             <Icon name="print" size={22} color="#fff" />
           </Pressable>
@@ -716,6 +721,7 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
         {flow === 'createId' && <CreateId onDone={() => continueSign(false).catch(() => setFlow(null))} onCancel={() => setFlow(null)} />}
         {flow === 'pad' && <SignaturePad onDone={beginPlace} onCancel={() => setFlow(null)} />}
       </GestureHandlerRootView>
+      {ocr.sheet}
     </Modal>
   );
 }

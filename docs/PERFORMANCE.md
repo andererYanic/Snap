@@ -854,6 +854,22 @@ Gemessen (Release, `core/tests/perf.rs` › `content_index`, 2000 Textdateien à
 - Massen-Umbenennen: zwei `renameat2`-Aufrufe je Datei (über Zwischennamen), keine Kopien.
 - Favoriten/Zuletzt: kleine JSON-Listen in den App-Einstellungen (≤ 50/20 Einträge).
 
+## Review 47 – Texterkennung (OCR) (2026-11-27)
+
+Gemessen mit denselben Commits von Tesseract/Leptonica, für den Linux-Host gebaut (4 Kerne, ein
+Thread), Deutsch + Englisch, LSTM (`tessdata_fast`):
+
+| Eingabe | Zeit | Ergebnis |
+|---|---|---|
+| A4-Seite, 300 dpi (2480 × 3508), 30 Textzeilen | 1,25 s | alle Zeilen korrekt, inkl. ä/ö/ü/ß und € |
+
+- Auf Handys ist mit etwa dem 2- bis 3-Fachen zu rechnen. Die Erkennung läuft nur auf Knopfdruck,
+  in `Dispatchers.Default` (nie im UI-Thread), höchstens eine gleichzeitig; die Oberfläche zeigt
+  einen Fortschritt und bleibt bedienbar.
+- Bilder werden vor der Erkennung auf höchstens 3000 px verkleinert (begrenzt Zeit und Speicher);
+  PDF-Seiten werden mit 2400 px Breite gezeichnet.
+- Größe: `libsnap_ocr.so` 2,5 MB je Architektur (gestrippt), Sprachdaten 5,4 MB (einmal in der APK).
+
 ## Review 48 – Tresor (2026-11-27)
 
 Gemessen (Release, Host, `core/tests/perf.rs` › `vault_crypto`):
