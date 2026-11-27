@@ -722,7 +722,12 @@ pub async fn drop_send(app: AppHandle, d: State<'_, Daemon>, peer: String, paths
 /// An einen gespeicherten Kontakt senden, egal wo er ist – ebenfalls nur nach Bestätigung im
 /// nativen Dialog.
 #[tauri::command]
-pub async fn drop_send_contact(app: AppHandle, d: State<'_, Daemon>, contact: String, paths: Vec<String>) -> UiResult<Value> {
+pub async fn drop_send_contact(
+    app: AppHandle,
+    d: State<'_, Daemon>,
+    contact: String,
+    paths: Vec<String>,
+) -> UiResult<Value> {
     if !(contact.len() == 64 && contact.bytes().all(|b| b.is_ascii_hexdigit())) {
         return Err(UiError::new("InvalidInput", "Ungültiger Kontakt."));
     }
