@@ -275,7 +275,7 @@ pub fn clean_text(s: &str) -> String {
 /// Alles andere (`javascript:`, `intent:`, `file:`, Text mit Leerzeichen …) ist kein Link.
 pub fn as_link(text: &str) -> Option<String> {
     let t = text.trim();
-    if t.is_empty() || t.len() > 4096 || t.chars().any(char::is_whitespace) {
+    if t.is_empty() || t.len() > MAX_LINK || t.chars().any(char::is_whitespace) {
         return None;
     }
     let url = reqwest::Url::parse(t).ok()?;
@@ -283,8 +283,14 @@ pub fn as_link(text: &str) -> Option<String> {
         && url.host_str().is_some_and(|h| !h.is_empty())
         && url.username().is_empty()
         && url.password().is_none();
-    ok.then(|| url.to_string())
+    // Die Normalform kann länger werden (Prozent-Kodierung) – auch sie muss die Grenze einhalten,
+    // sonst wäre die Erkennung nicht stabil.
+    let link = url.to_string();
+    (ok && link.len() <= MAX_LINK).then_some(link)
 }
+
+/// Längster erkannter Link (Byte, auch nach der Normalisierung).
+pub const MAX_LINK: usize = 4096;
 
 /// Anzeigename bereinigen: Steuer- und Formatzeichen weg, Länge begrenzt, nie leer.
 pub fn display_name(s: &str) -> String {
@@ -660,6 +666,13 @@ mod tests {
         ] {
             assert_eq!(as_link(bad), None, "{bad}");
         }
+        // Normalform länger als die Grenze (Fuzz-Fund): nicht erkannt, und damit stabil
+        let long = format!("http://example.org/{}", "\u{FFFD}".repeat(1300));
+        assert!(long.len() <= MAX_LINK);
+        assert_eq!(as_link(&long), None);
+        let ok = format!("http://example.org/{}", "ä".repeat(600));
+        let l = as_link(&ok).unwrap();
+        assert_eq!(as_link(&l).as_deref(), Some(l.as_str()));
     }
 
     #[test]
