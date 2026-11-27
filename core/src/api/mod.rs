@@ -128,6 +128,7 @@ pub(crate) async fn handle_request(
         Request::RemoteOp { device, op } => crate::remote_ops::send(inner, &device, op).await,
         Request::ClipboardSend { device, text } => crate::clipboard::send(inner, &device, text).await,
         Request::Ring { device, stop } => crate::ring::send(inner, &device, stop).await,
+        Request::SecurityOverview => security_overview(inner).await,
         Request::VaultStatus
         | Request::VaultCreate { .. }
         | Request::VaultUnlock { .. }
@@ -408,6 +409,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::RingStop => "device.ring_stop",
         Request::ContentSearch { .. } => "content.search",
         Request::VaultStatus => "vault.status",
+        Request::SecurityOverview => "security.overview",
         Request::VaultCreate { .. } => "vault.create",
         Request::VaultUnlock { .. } => "vault.unlock",
         Request::VaultRecover { .. } => "vault.recover",
@@ -536,4 +538,9 @@ async fn vault(inner: &std::sync::Arc<DaemonInner>, req: Request) -> Result<Resp
     })
     .await?;
     res
+}
+
+async fn security_overview(inner: &std::sync::Arc<DaemonInner>) -> Result<Response> {
+    let inner2 = inner.clone();
+    tokio::task::spawn_blocking(move || crate::security::report(&inner2)).await?.map(Response::SecurityOverview)
 }

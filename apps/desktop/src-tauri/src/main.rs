@@ -151,6 +151,7 @@ fn main() {
             commands::clipboard_pending,
             commands::ring,
             commands::pin_list,
+            commands::security_overview,
             commands::vault_status,
             commands::vault_create,
             commands::vault_unlock,

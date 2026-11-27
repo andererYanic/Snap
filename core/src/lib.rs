@@ -32,6 +32,7 @@ pub mod remote_ops;
 pub mod remote_thumbs;
 pub mod ring;
 pub mod secure_fs;
+pub mod security;
 pub mod settings;
 pub mod shares;
 pub mod stream;

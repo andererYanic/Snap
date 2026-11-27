@@ -356,3 +356,18 @@ export const vault = {
   export: (id: string) => invoke<{ path: string }>("vault_export", { id }),
   remove: (id: string, name: string) => invoke<unknown>("vault_remove", { id, name }),
 };
+
+// ---------------------------------------------------------------- Sicherheit
+export interface SecurityReport {
+  devices: { node_id: string; name: string; rights: string[]; strong: boolean; online: boolean }[];
+  shares: { name: string; root: string; all_devices: boolean }[];
+  all_files: boolean;
+  links_active: number;
+  drop_mode: string;
+  vault_exists: boolean;
+  vault_unlocked: boolean;
+  denied_7d: number;
+  relay_public: boolean;
+  hints: { level: string; code: string; text: string; name?: string; count?: number }[];
+}
+export const securityOverview = () => invoke<SecurityReport>("security_overview");
