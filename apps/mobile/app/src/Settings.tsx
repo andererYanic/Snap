@@ -15,13 +15,14 @@ import type { Theme } from './theme';
 import { themed } from './ui';
 import { Icon, type IconName } from './Icon';
 import { handoff, VaultPage } from './Vault';
+import { SecurityPage } from './Security';
 import Viewer from './Viewer';
 import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
 import { isAudio, isMedia } from './thumbs';
 import * as core from './core';
 
-type Sub = 'general' | 'devices' | 'drop' | 'sign' | 'vault' | 'trash' | 'about';
+type Sub = 'general' | 'devices' | 'drop' | 'sign' | 'vault' | 'security' | 'trash' | 'about';
 
 interface Props {
   theme: Theme;
@@ -66,7 +67,7 @@ export default function Settings(p: Props) {
     setDir('forward');
     setSub(x);
   };
-  const title = { general: t('Allgemein'), devices: t('Geräte'), drop: t('Snap Drop'), sign: t('Digitale ID'), vault: t('Tresor'), trash: t('Papierkorb'), about: t('Über Snap') };
+  const title = { general: t('Allgemein'), devices: t('Geräte'), drop: t('Snap Drop'), sign: t('Digitale ID'), vault: t('Tresor'), security: t('Sicherheit'), trash: t('Papierkorb'), about: t('Über Snap') };
   // Geöffnete Tresor-Datei (entschlüsselt im privaten Ordner, beim Sperren gelöscht)
   const [vaultFile, setVaultFile] = useState<{ path: string; name: string } | null>(null);
   const openVaultFile = (path: string, name: string) => {
@@ -98,6 +99,7 @@ export default function Settings(p: Props) {
         {sub === 'devices' && <Devices theme={p.theme} notify={p.notify} />}
         {sub === 'drop' && <DropPage theme={p.theme} notify={p.notify} />}
         {sub === 'sign' && <SignIdPage theme={p.theme} notify={p.notify} downloads={async () => `${await storageRoot()}/Download`} />}
+        {sub === 'security' && <SecurityPage theme={p.theme} />}
         {sub === 'vault' && <VaultPage theme={p.theme} notify={p.notify} onOpen={openVaultFile} />}
         {vaultFile && (isMedia(vaultFile.name) || isAudio(vaultFile.name)) && (
           <Viewer items={[vaultFile]} start={0} onClose={() => setVaultFile(null)} />
@@ -155,6 +157,8 @@ export default function Settings(p: Props) {
           <Row k="sign" icon="sign" label={t('Digitale ID')} meta={t('PDFs signieren, Unterschrift')} />
           <View style={s.sep} />
           <Row k="vault" icon="shield" label={t('Tresor')} meta={t('Dateien mit Passwort verschlüsselt')} />
+          <View style={s.sep} />
+          <Row k="security" icon="shieldCheck" label={t('Sicherheit')} meta={t('Wer darf was, was ist sichtbar')} />
         </View>
         <View style={s.card}>
           <Row k="trash" icon="trash" label={t('Papierkorb')} meta={t('Gelöschte Dateien wiederherstellen')} />

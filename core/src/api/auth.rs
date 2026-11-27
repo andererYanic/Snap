@@ -206,6 +206,7 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::Ring { .. }
         | Request::RingStop
         | Request::VaultStatus
+        | Request::SecurityOverview
         | Request::VaultCreate { .. }
         | Request::VaultUnlock { .. }
         | Request::VaultRecover { .. }
