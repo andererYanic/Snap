@@ -113,8 +113,8 @@ async fn serve(inner: &Arc<DaemonInner>, peer: &str, conn: &Connection) -> Resul
         write_frame_max(&mut send, &reply(false, Some("busy")), MAX_FRAME).await?;
         return Ok(());
     }
-    let req: RingRequest = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME)).await??;
-    let Some(stop) = accept(&req) else {
+    let req: serde_json::Value = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME)).await??;
+    let Some(stop) = accept(req) else {
         write_frame_max(&mut send, &reply(false, Some("invalid")), MAX_FRAME).await?;
         return Ok(());
     };
@@ -134,14 +134,20 @@ async fn serve(inner: &Arc<DaemonInner>, peer: &str, conn: &Connection) -> Resul
 }
 
 /// Prüft eine Anfrage: richtige Version. `Some(stop)` oder `None` (abweisen).
-fn accept(req: &RingRequest) -> Option<bool> {
+/// Nur ein JSON-Objekt mit genau diesen Feldern (serde nähme Strukturen sonst auch als Liste an,
+/// gefunden per Fuzzing: `[1,true]`).
+fn accept(v: serde_json::Value) -> Option<bool> {
+    if !v.is_object() {
+        return None;
+    }
+    let req: RingRequest = serde_json::from_value(v).ok()?;
     (req.v == VERSION).then_some(req.stop)
 }
 
 /// Eine rohe Nachricht wie der Empfänger prüfen (für Fuzzing und Tests): `Some(stop)` oder
 /// `None`, wenn sie abgewiesen würde.
 pub fn decode(bytes: &[u8]) -> Option<bool> {
-    serde_json::from_slice::<RingRequest>(bytes).ok().as_ref().and_then(accept)
+    serde_json::from_slice::<serde_json::Value>(bytes).ok().and_then(accept)
 }
 
 /// Ein eigenes Gerät klingeln lassen (`stop = false`) oder das Klingeln beenden.
@@ -206,6 +212,7 @@ mod tests {
         assert_eq!(decode(br#"{"v":1,"stop":true}"#), Some(true));
         assert_eq!(decode(br#"{"v":2,"stop":false}"#), None);
         assert_eq!(decode(br#"{"v":1}"#), None);
+        assert_eq!(decode(b"[1,true]"), None, "nur Objekte (Fuzzing-Fund)");
         assert_eq!(decode(br#"{"v":1,"stop":false,"secs":3600}"#), None, "Dauer bestimmt nur der Empfänger");
     }
 
