@@ -153,6 +153,9 @@ pub enum Event {
         /// Grobe Arten (z. B. `image`, `video`, `pdf`), ohne Doppelungen.
         kinds: Vec<String>,
         preview: bool,
+        /// Vorschlag des Senders: nach so vielen Sekunden in den Papierkorb.
+        #[serde(default)]
+        expire: Option<u32>,
     },
     /// Ein Angebot ist ohne Antwort weggefallen (`cancelled`, `timeout`).
     DropOfferClosed {

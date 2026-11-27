@@ -67,6 +67,14 @@ type SendState = { peer: string; phase: 'waiting' | 'sending' | 'done' | 'failed
 export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
   paths: string[]; text?: string | null; theme: Theme; onClose: () => void; notify: (text: string) => void;
 }) {
+  // Frist für diese Sendung (beginnt immer mit „nie“)
+  const [expire, setExpire] = useState<number | null>(null);
+  useEffect(() => {
+    drop.sendOptions.expire = null;
+    return () => {
+      drop.sendOptions.expire = null;
+    };
+  }, []);
   const s = styles(theme);
   const [peers, setPeers] = useState<drop.NearbyPeer[]>([]);
   const [state, setState] = useState<SendState | null>(null);
@@ -262,6 +270,22 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
           ) : null}
         </View>
         <Text style={s.meta} numberOfLines={1}>{subtitle}</Text>
+        {!textOnly && (
+          <View style={s.rowInline} accessibilityRole="radiogroup" accessibilityLabel={t('Beim Empfänger löschen nach')}>
+            <Text style={s.meta}>{t('Löschen nach')}</Text>
+            {([[null, t('nie')], [3600, t('1 Std.')], [86400, t('1 Tag')], [604800, t('7 Tagen')]] as [number | null, string][]).map(([v, label]) => (
+              <Pressable
+                key={String(v)}
+                onPress={() => { drop.sendOptions.expire = v; setExpire(v); }}
+                style={[s.chip, expire === v && s.chipOn]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: expire === v }}
+              >
+                <Text style={[s.meta, expire === v && s.chipOnText]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
       </View>
       {multi && chosen.size > 0 ? (
         <Pressable onPress={sendGroup} disabled={!!group} style={[s.primaryBtn, !!group && s.dim]} accessibilityRole="button">
@@ -521,6 +545,15 @@ export function OfferSheet({ offer, theme, onDone }: { offer: drop.IncomingOffer
         </View>
         )}
         {offer.text ? <Text style={s.meta}>{t('Wird nach dem Annehmen in die Zwischenablage kopiert.')}</Text> : null}
+        {offer.expire && offer.files.length > 0 ? (
+          <Text style={s.meta}>
+            {offer.expire <= 3600
+              ? t('Der Absender bittet: nach 1 Stunde löschen (in den Papierkorb).')
+              : offer.expire <= 86400
+                ? t('Der Absender bittet: nach 1 Tag löschen (in den Papierkorb).')
+                : t('Der Absender bittet: nach 7 Tagen löschen (in den Papierkorb).')}
+          </Text>
+        ) : null}
         <Text style={s.code} accessibilityLabel={t('Prüfcode {code}', { code: offer.code })}>
           {t('Prüfcode')}  <Text style={s.codeNum}>{offer.code}</Text>
         </Text>
@@ -583,6 +616,21 @@ export function HotspotSheet({ offer, theme, onAnswer }: {
 // ------------------------------------------------------------------ Einstellungen
 
 export function DropPage({ theme, notify }: { theme: Theme; notify: (text: string) => void }) {
+  // Eigene Frist für Empfangenes (Tage, 0 = behalten); Einstellung des Kerns `drop_expire_days`
+  const [expireDays, setExpireDays] = useState(0);
+  useEffect(() => {
+    core
+      .request<{ items: { key: string; value: number }[] }>('Settings')
+      .then((r) => setExpireDays(r.items.find((x) => x.key === 'drop_expire_days')?.value ?? 0))
+      .catch(() => {});
+  }, []);
+  const chooseExpire = () =>
+    Alert.alert(t('Empfangenes löschen'), t('Empfangene Dateien nach dieser Zeit in den Papierkorb legen. Bittet der Absender um eine kürzere Frist, gilt diese.'), [
+      ...([[0, t('Behalten')], [1, t('Nach 1 Tag')], [7, t('Nach 7 Tagen')], [30, t('Nach 30 Tagen')]] as [number, string][]).map(([d, label]) => ({
+        text: label,
+        onPress: () => core.request({ SettingSet: { key: 'drop_expire_days', value: d } }).then(() => setExpireDays(d)).catch((e) => notify(String(e?.message ?? e))),
+      })),
+    ]);
   const s = styles(theme);
   const [st, setSt] = useState<drop.DropStatus | null>(null);
   const [people, setPeople] = useState<drop.Contact[]>([]);
@@ -790,6 +838,17 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
         </>
       ) : null}
 
+      <SectionLabel theme={theme} style={s.section}>{t('Empfangenes')}</SectionLabel>
+      <View style={s.card}>
+        <Pressable onPress={chooseExpire} style={s.row} accessibilityRole="button" android_ripple={{ color: theme.accentSoft as string }}>
+          <Icon name="trash" size={22} color={theme.text2 as string} />
+          <View style={s.grow}>
+            <Text style={s.label}>{t('Empfangenes löschen')}</Text>
+            <Text style={s.meta}>{expireDays === 0 ? t('Behalten') : expireDays === 1 ? t('Nach 1 Tag') : t('Nach {n} Tagen', { n: expireDays })}</Text>
+          </View>
+          <Icon name="chevron" size={20} color={theme.text3 as string} />
+        </Pressable>
+      </View>
       {bg?.supported ? (
         <>
           <SectionLabel theme={theme} style={s.section}>{t('Wenn Snap geschlossen ist')}</SectionLabel>
@@ -1021,6 +1080,9 @@ const styles = themed((th: Theme) =>
     subRow: { paddingLeft: 56, paddingRight: 20, paddingVertical: 8 },
     rxBar: { position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, backgroundColor: th.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: th.line, elevation: 6 },
     rowInline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    chip: { borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: th.surface2 },
+    chipOn: { backgroundColor: th.accent, borderColor: th.accent },
+    chipOnText: { color: '#0B1F1A', fontWeight: '700' },
     label: { color: th.text, fontSize: 16, lineHeight: 22 },
     meta: { color: th.text2, fontSize: 13, lineHeight: 18 },
     accentText: { color: th.accent },

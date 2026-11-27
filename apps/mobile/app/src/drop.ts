@@ -38,6 +38,8 @@ export interface IncomingOffer {
   total: number;
   preview: boolean;
   expires_at: number;
+  /** Vorschlag des Absenders: nach so vielen Sekunden in den Papierkorb. */
+  expire?: number | null;
   text?: string | null;
   link?: string | null;
 }
@@ -111,8 +113,12 @@ export const clearHistory = () => request('DropHistoryClear');
 export const setRemote = (enabled: boolean) => request<DropStatus>({ DropSetRemote: { enabled } });
 export const setContactRemote = (key: string, ok: boolean) => request<Contact>({ DropContactRemote: { key, ok } });
 /** An einen gespeicherten Kontakt senden, egal wo er ist (Ende-zu-Ende verschlüsselt, ggf. über ein Relais). */
+/** Frist für die nächsten Sendungen (Sekunden: 3600, 86400, 604800; null = behalten). Gilt nur
+ *  für Dateien und ist eine Abmachung – der Empfänger kann vorher kopieren. */
+export const sendOptions: { expire: number | null } = { expire: null };
+
 export const sendToContact = (key: string, paths: string[], text: string | null = null) =>
-  request<SendResult>({ DropSendContact: { contact: key, paths, text } });
+  request<SendResult>({ DropSendContact: { contact: key, paths, text, expire: sendOptions.expire } });
 export const setName = (name: string | null) => request<DropStatus>({ DropSetName: { name } });
 export const blocked = () => request<{ blocked: Blocked[] }>('DropBlocked').then((r) => r.blocked);
 export const unblock = (key: string) => request({ DropUnblock: { key } });
@@ -378,7 +384,7 @@ export interface SendResult {
 /** Sendet an ein Gerät aus der Liste; offline erreichbare Geräte über einen kurzen Hotspot. */
 export async function send(peer: NearbyPeer, paths: string[], text: string | null = null): Promise<SendResult> {
   if (!peer.offline) {
-    return request<SendResult>({ DropSend: { peer: peer.id, paths, text } });
+    return request<SendResult>({ DropSend: { peer: peer.id, paths, text, expire: sendOptions.expire } });
   }
   if (paths.length === 0) {
     throw new Error('Text lässt sich nur über ein gemeinsames Netz senden.');
@@ -409,7 +415,7 @@ export async function send(peer: NearbyPeer, paths: string[], text: string | nul
     if (!id) {
       throw new Error('Ungültige Antwort vom anderen Gerät.');
     }
-    return await request<SendResult>({ DropSend: { peer: id, paths, text } });
+    return await request<SendResult>({ DropSend: { peer: id, paths, text, expire: sendOptions.expire } });
   } finally {
     n.closeLink(device);
     n.stopHotspot();
