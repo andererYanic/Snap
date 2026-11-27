@@ -965,3 +965,35 @@ fn walkdir_names(root: &Path) -> Vec<String> {
     }
     out
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sender_sieht_den_pruefcode_vor_dem_annehmen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let peer = a.svc.add_code(&code_of(&b)).await.unwrap();
+    let f = write(&tmp.path().join("src"), "x.txt", b"x");
+    let send = {
+        let svc = a.svc.clone();
+        tokio::spawn(async move { svc.send(&peer.id, vec![f]).await.unwrap() })
+    };
+    // Der Sender bekommt den Code, bevor der Empfänger antwortet – und es ist derselbe
+    let Event::DropSending { code: sender_code, .. } =
+        next_event(&mut a.events, |e| matches!(e, Event::DropSending { .. })).await
+    else {
+        unreachable!()
+    };
+    let Event::DropOffer { id, code: receiver_code, .. } =
+        next_event(&mut b.events, |e| matches!(e, Event::DropOffer { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(sender_code, receiver_code);
+    b.svc.respond(id, true, false).unwrap();
+    let r = send.await.unwrap();
+    assert!(r.ok);
+    assert_eq!(r.code.as_deref(), Some(sender_code.as_str()));
+    a.svc.shutdown().await;
+    b.svc.shutdown().await;
+}

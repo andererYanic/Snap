@@ -81,6 +81,15 @@ JSON-Rahmen mit Längenpräfix und Größengrenze (wie die übrigen Protokolle).
 Der Desktop kann einem Android-Hotspot beitreten (NetworkManager über D-Bus, nie per
 Kommandozeile mit Passwort). Desktop ↔ Desktop offline gibt es in Version 1 nicht.
 
+## Prüfcode beim ersten Tausch
+
+Namen in der Nähe wählt jedes Gerät selbst – ein Angreifer im selben Netz könnte sich „Ben“ nennen
+und sich zwischen zwei Unbekannte schalten. Der Prüfcode stammt aus der TLS-Sitzung: Ein
+Mittelsmann hätte zwei verschiedene Sitzungen und damit zwei verschiedene Codes. Seit 2026-11-27
+sieht der **Sender den Code schon beim Warten auf die Annahme** (`DropSending`), der Empfänger im
+Angebot; stimmen sie überein, ist niemand dazwischen. Bei gespeicherten Kontakten prüft Snap das
+selbst (Beweis mit dem Drop-Schlüssel), auch von überall.
+
 ## Im Hintergrund (Android)
 
 Entscheidung des Nutzers (2026-11-26): Standard ist **Bluetooth-Wecken**, zuschaltbar ein

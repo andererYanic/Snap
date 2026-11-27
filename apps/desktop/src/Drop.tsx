@@ -224,6 +224,7 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [sendId, setSendId] = useState<number | null>(null);
+  const [checkCode, setCheckCode] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [people, setPeople] = useState<DropContact[]>([]);
 
@@ -239,6 +240,7 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
     const timer = window.setInterval(refresh, 1500);
     const sub = onDaemonEvent((ev) => {
       if (ev.type === "DropNearbyChanged") refresh();
+      if (ev.type === "DropSending") setCheckCode(String(ev.code));
       if (ev.type === "DropProgress" && !ev.incoming) {
         setSendId(Number(ev.id));
         setProgress({ done: Number(ev.done_bytes), total: Number(ev.total_bytes) });
@@ -312,6 +314,8 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
                       {mine
                         ? progress && progress.total > 0
                           ? `${humanSize(progress.done)} / ${humanSize(progress.total)}`
+                          : checkCode
+                          ? t("Wartet auf Annahme … Prüfcode {code} – beim Empfänger muss derselbe stehen.", { code: checkCode })
                           : t("Wartet auf Annahme …")
                         : p.contact
                           ? t("Kontakt")

@@ -136,6 +136,12 @@ pub enum Event {
         id: u64,
         reason: String,
     },
+    /// Prüfcode einer ausgehenden Sendung, sobald die Verbindung steht – vor dem Annehmen. Der
+    /// Empfänger sieht denselben Code; weicht er ab, sitzt jemand dazwischen.
+    DropSending {
+        id: u64,
+        code: String,
+    },
     /// Fortschritt einer Drop-Übertragung (höchstens 4× pro Sekunde).
     DropProgress {
         id: u64,
