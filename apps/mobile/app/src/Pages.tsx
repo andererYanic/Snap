@@ -32,6 +32,9 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
   const [afterPair, setAfterPair] = useState<string | null>(null);
   // Aufgeklapptes Gerät (Zwischenablage) und Geräte mit automatischem Senden
   const [open, setOpen] = useState<string | null>(null);
+  // Beim Koppeln mit einem Code: Prüfcode, der auf dem anderen Gerät zu bestätigen ist
+  const [joinCode, setJoinCode] = useState<string | null>(null);
+  useEffect(() => core.onEvent((ev) => ev.type === 'PairCode' && setJoinCode(ev.code)), []);
   const [auto, setAuto] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
@@ -82,12 +85,15 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
 
   const join = async () => {
     try {
+      setJoinCode(null);
       const r = await request<{ device: Device }>({ PairJoin: { code: code.trim() } });
+      setJoinCode(null);
       setCode('');
       notify(t('Mit „{name}“ gekoppelt.', { name: r.device.name }));
       setAfterPair(r.device.name);
       load();
     } catch (e: any) {
+      setJoinCode(null);
       notify(e.message);
     }
   };
@@ -232,6 +238,11 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
               <Text style={s.btnText}>{t('Koppeln')}</Text>
             </Pressable>
           </View>
+          {joinCode ? (
+            <Text style={s.muted} accessibilityLiveRegion="polite">
+              {t('Prüfcode {code} – auf dem anderen Gerät vergleichen und bestätigen.', { code: joinCode })}
+            </Text>
+          ) : null}
         </View>
       </View>
       <Text style={s.foot}>{t('Gekoppelte Geräte sehen nur Ordner, die du freigibst – sonst nichts.')}</Text>

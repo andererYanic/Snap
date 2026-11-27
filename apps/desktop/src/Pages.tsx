@@ -1,7 +1,7 @@
 // Geräte, Sicherungen und Einstellungen (Phase 3b).
 import { LANGUAGES, lang, locale, setLanguage, t } from "./i18n";
 import { useCallback, useEffect, useState } from "react";
-import { api, api3, api5, applyFont, errorText, formatDate, humanSize, isCancelled, type Approval, type BackupJob, type Device, type Peer, type Setting, type Snapshot } from "./api";
+import { api, api3, api5, applyFont, errorText, onDaemonEvent, formatDate, humanSize, isCancelled, type Approval, type BackupJob, type Device, type Peer, type Setting, type Snapshot } from "./api";
 import type { Toast } from "./App";
 import { Icon } from "./icons";
 
@@ -57,6 +57,16 @@ export function Devices({ notify }: { notify: Notify }) {
   const [invite, setInvite] = useState<{ code: string; expires_at: number } | null>(null);
   const [code, setCode] = useState("");
   const [grantFor, setGrantFor] = useState<Device | null>(null);
+  // Beim Koppeln mit einem Code: Prüfcode, der auf dem anderen Gerät zu bestätigen ist
+  const [joinCode, setJoinCode] = useState<string | null>(null);
+  useEffect(() => {
+    const sub = onDaemonEvent((ev) => {
+      if (ev.type === "PairCode") setJoinCode(String((ev as Record<string, unknown>).code));
+    });
+    return () => {
+      sub.then((f) => f());
+    };
+  }, []);
   const status = (id: string) => (peers ?? []).find((p: Peer) => p.node_id === id)?.status ?? "offline";
 
   const startInvite = async () => {
@@ -168,6 +178,7 @@ export function Devices({ notify }: { notify: Notify }) {
           </div>
           <div>
             <p className="muted">{t("Oder den Code eines anderen Geräts hier eingeben.")}</p>
+            {joinCode && <p className="muted small">{t("Prüfcode {code} – auf dem anderen Gerät vergleichen und bestätigen.", { code: joinCode })}</p>}
             <div className="line">
               <input className="field grow" value={code} onChange={(e) => setCode(e.target.value)} placeholder={t("Einladungscode")} spellCheck={false} />
               <button className="btn primary" disabled={!code.trim()} onClick={join}>{t("Koppeln")}</button>

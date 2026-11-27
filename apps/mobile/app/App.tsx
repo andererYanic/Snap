@@ -1,7 +1,7 @@
 // Snap für Android: Start (Berechtigung, Kern), untere Navigation, Rückgängig-Leiste.
 // Gestaltung: docs/MOBILE_UX.md (Snap-Optik, Android-Bedienung, Material You wahlweise).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Pressable, ScrollView, StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+import { Alert, AppState, Pressable, ScrollView, StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
 import { FontContext, Text } from './src/text';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { FadeIn } from 'react-native-reanimated';
@@ -199,6 +199,17 @@ export default function App() {
         }
       } else if (ev.type === 'DropVisibilityChanged') {
         drop.syncRadio(ev.mode).catch(() => {});
+      } else if (ev.type === 'PairConfirm') {
+        // Kopplung erst nach Vergleich des Prüfcodes (ein weitergegebener Code allein reicht nicht)
+        Alert.alert(
+          t('Gerät koppeln?'),
+          t('„{name}“ möchte sich koppeln.\n\nPrüfcode: {code}\n\nNur bestätigen, wenn auf dem anderen Gerät derselbe Code steht.', { name: ev.name, code: ev.code }),
+          [
+            { text: t('Ablehnen'), style: 'cancel', onPress: () => core.request({ PairConfirm: { accept: false } }).catch(() => {}) },
+            { text: t('Bestätigen'), onPress: () => core.request({ PairConfirm: { accept: true } }).catch(() => {}) },
+          ],
+          { cancelable: false },
+        );
       } else if (ev.type === 'ClipboardReceived') {
         // Android hat den Text schon übernommen (DropNotify); hier nur merken und melden
         clip.remember(ev.text);

@@ -64,6 +64,7 @@ async fn stream_ranges_from_another_device() {
         Response::PairInvite { code, .. } => code,
         other => panic!("{other:?}"),
     };
+    a.confirm_next_pairing();
     assert!(matches!(b.request(Request::PairJoin { code }).await, Response::Paired { .. }));
     a.request(Request::ShareAdd { path: share.clone(), name: Some("Filme".into()), devices: None }).await;
     // Warten, bis der Katalog bei B ist
@@ -171,6 +172,7 @@ async fn thumbnails_of_remote_shares_need_files_read() {
         Response::PairInvite { code, .. } => code,
         other => panic!("{other:?}"),
     };
+    a.confirm_next_pairing();
     assert!(matches!(b.request(Request::PairJoin { code }).await, Response::Paired { .. }));
     a.request(Request::ShareAdd { path: share.clone(), name: Some("Fotos".into()), devices: None }).await;
     let req = |path: &str| Request::RemoteThumbnail {

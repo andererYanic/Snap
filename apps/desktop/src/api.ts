@@ -104,6 +104,7 @@ export const api = {
   trashEmpty: () => invoke<unknown>("trash_empty"),
   open: (path: string) => invoke<void>("open_path", { path }),
   clipboardSend: (device: string, text: string) => invoke<unknown>("clipboard_send", { device, text }),
+  pairConfirmPrompt: (name: string, code: string) => invoke<unknown>("pair_confirm_prompt", { name, code }),
   clipboardPending: () => invoke<{ name: string | null; text: string | null }>("clipboard_pending"),
   startDaemon: () => invoke<void>("start_daemon"),
   streamUrl: (path: string) => invoke<{ url: string }>("stream_url", { path }),

@@ -486,6 +486,10 @@ pub enum Request {
     DropUnblock {
         key: String,
     },
+    /// Wartende Kopplung bestätigen oder ablehnen (nach Vergleich des Prüfcodes).
+    PairConfirm {
+        accept: bool,
+    },
     /// Text in die Zwischenablage eines eigenen Geräts legen (braucht dort `clipboard.write`).
     ClipboardSend {
         device: String,

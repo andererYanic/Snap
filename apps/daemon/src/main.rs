@@ -633,6 +633,10 @@ enum PairAction {
     Invite,
     /// Koppelt dieses Gerät mit einem Einladungscode
     Join { code: String },
+    /// Wartende Kopplung bestätigen (nach Vergleich des Prüfcodes; z. B. ohne Terminal im Container)
+    Confirm,
+    /// Wartende Kopplung ablehnen
+    Reject,
     /// Zeigt gekoppelte Geräte
     List,
     /// Entkoppelt ein Gerät (Name oder Node-ID-Präfix)
@@ -695,6 +699,11 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Request::Sync
         }
         Commands::Pair { action: PairAction::Invite } => return pair_invite(&config.socket_path).await,
+        Commands::Pair { action: PairAction::Confirm } => Request::PairConfirm { accept: true },
+        Commands::Pair { action: PairAction::Reject } => Request::PairConfirm { accept: false },
+        Commands::Pair { action: PairAction::Join { code } } if std::io::IsTerminal::is_terminal(&std::io::stdout()) => {
+            return pair_join(&config.socket_path, code).await
+        }
         Commands::Pair { action: PairAction::Join { code } } => {
             eprintln!("🔗 Verbinde …");
             Request::PairJoin { code }
@@ -1028,6 +1037,9 @@ fn describe_event(e: &Event) -> String {
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
         Event::ClipboardReceived { name, .. } => format!("📋 Zwischenablage von '{name}' empfangen"),
         Event::DropSending { code, .. } => format!("🔐 Prüfcode der Sendung: {code}"),
+        Event::PairConfirm { code, name } => format!("🔐 '{name}' möchte sich koppeln – Prüfcode {code}"),
+        Event::PairConfirmClosed => "🔐 Kopplung nicht bestätigt".to_string(),
+        Event::PairCode { code } => format!("🔐 Prüfcode {code} – auf dem anderen Gerät bestätigen"),
         Event::DeviceUnpairedByPeer { name, .. } => format!("✂️  '{name}' hat die Kopplung aufgehoben"),
         Event::ShareScanned { name, changed, deleted, total } => {
             format!("📂 Freigabe '{name}': {changed} neu/geändert, {deleted} gelöscht, {total} insgesamt")
@@ -1104,7 +1116,60 @@ async fn pair_invite(socket: &Path) -> Result<ExitCode> {
     println!("   space-daemon pair join {code}\n");
     println!("⚠️  Den Code nur über einen sicheren Weg übertragen – wer ihn hat, kann sich koppeln.");
     println!("⏳ Warte auf das neue Gerät … (STRG+C bricht das Warten ab, der Code bleibt bis zum Ablauf gültig)");
+    // Kopplungsanfrage: Prüfcode zeigen und nachfragen (ohne Terminal: `pair confirm`/`pair reject`)
+    let watcher = {
+        let socket = socket.to_path_buf();
+        tokio::spawn(async move {
+            let Ok(mut stream) = connect(&socket).await else { return };
+            if write_frame(&mut stream, &Envelope::new(Request::Subscribe)).await.is_err() {
+                return;
+            }
+            while let Ok(frame) = read_frame::<_, Response>(&mut stream).await {
+                let Response::Event(Event::PairConfirm { code, name }) = frame else { continue };
+                println!("\n🔐 „{name}“ möchte sich koppeln. Prüfcode: {code}");
+                if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                    println!("   Bestätigen mit: space-daemon pair confirm  (ablehnen: pair reject)");
+                    continue;
+                }
+                print!("   Steht auf dem anderen Gerät derselbe Code? [j/N] ");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let answer = tokio::task::spawn_blocking(|| {
+                    let mut line = String::new();
+                    let _ = std::io::stdin().read_line(&mut line);
+                    line
+                })
+                .await
+                .unwrap_or_default();
+                let accept = matches!(answer.trim().to_lowercase().as_str(), "j" | "ja" | "y" | "yes");
+                let _ = send_request(&socket, &Request::PairConfirm { accept }).await;
+            }
+        })
+    };
     let res = send_request(socket, &Request::PairInviteWait).await?;
+    watcher.abort();
+    Ok(print_response(res))
+}
+
+/// Koppelt mit einem Code und zeigt dabei den Prüfcode, der auf dem anderen Gerät zu bestätigen ist.
+async fn pair_join(socket: &Path, code: String) -> Result<ExitCode> {
+    let watcher = {
+        let socket = socket.to_path_buf();
+        tokio::spawn(async move {
+            let Ok(mut stream) = connect(&socket).await else { return };
+            if write_frame(&mut stream, &Envelope::new(Request::Subscribe)).await.is_err() {
+                return;
+            }
+            while let Ok(frame) = read_frame::<_, Response>(&mut stream).await {
+                if let Response::Event(Event::PairCode { code }) = frame {
+                    println!("🔐 Prüfcode: {code} – auf dem anderen Gerät vergleichen und bestätigen …");
+                }
+            }
+        })
+    };
+    // Kurz warten, damit das Abo steht, bevor der Prüfcode kommt
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let res = send_request(socket, &Request::PairJoin { code }).await?;
+    watcher.abort();
     Ok(print_response(res))
 }
 

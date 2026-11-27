@@ -46,6 +46,17 @@ pub enum Event {
     DeviceRemoved {
         node_id: String,
     },
+    /// Ein Gerät will sich mit dem Einladungscode koppeln: Prüfcode vergleichen und bestätigen.
+    PairConfirm {
+        code: String,
+        name: String,
+    },
+    /// Die wartende Bestätigung ist erledigt (abgelehnt oder abgelaufen).
+    PairConfirmClosed,
+    /// Dieses Gerät koppelt sich gerade: Prüfcode, der auf dem anderen Gerät zu bestätigen ist.
+    PairCode {
+        code: String,
+    },
     /// Ein eigenes Gerät hat etwas in die Zwischenablage gelegt (nur an lokale Oberflächen).
     ClipboardReceived {
         node_id: String,

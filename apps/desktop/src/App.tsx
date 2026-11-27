@@ -99,6 +99,8 @@ export default function App() {
       if (ev.incoming && !ev.ok) notify({ text: t("Empfang fehlgeschlagen: {error}", { error: ev.error ?? "" }), error: true });
       else if (ev.incoming) notify({ text: t("{files} von {name} gespeichert.", { files: n === 1 ? t("1 Datei") : t("{n} Dateien", { n }), name: ev.peer }), action: save });
       else if (ev.ok) notify({ text: t("An {name} gesendet.", { name: ev.peer }), action: save });
+    } else if (ev.type === "PairConfirm") {
+      api.pairConfirmPrompt(String(ev.name), String(ev.code)).catch(() => {});
     } else if (ev.type === "ClipboardReceived") {
       lastClip.current = String(ev.text);
       navigator.clipboard.writeText(String(ev.text)).catch(() => {});

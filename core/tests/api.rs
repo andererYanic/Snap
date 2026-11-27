@@ -95,6 +95,7 @@ async fn subscribe_streams_live_events_across_devices() {
         Response::PairInvite { code, .. } => code,
         other => panic!("{other:?}"),
     };
+    a.confirm_next_pairing();
     assert!(matches!(call(&b, Request::PairJoin { code }).await, Response::Paired { .. }));
     let paired = wait_event(&mut sub, |e| matches!(e, Event::DevicePaired { .. })).await;
     assert_eq!(paired, Event::DevicePaired { node_id: a.node_id(), name: "A".into() });
@@ -222,6 +223,7 @@ mod permissions {
             Response::PairInvite { code, .. } => code,
             other => panic!("{other:?}"),
         };
+        a.confirm_next_pairing();
         assert!(matches!(b.request(Request::PairJoin { code }).await, Response::Paired { .. }));
         let b_id = b.node_id();
         let paired = Caller::Device(b_id.clone());
@@ -282,6 +284,7 @@ mod permissions {
             Response::PairInvite { code, .. } => code,
             other => panic!("{other:?}"),
         };
+        a.confirm_next_pairing();
         assert!(matches!(b.request(Request::PairJoin { code }).await, Response::Paired { .. }));
         let shared = tmp.path().join("geteilt");
         std::fs::create_dir_all(&shared).unwrap();

@@ -6,7 +6,10 @@
 //! 2. Gerät B verbindet sich mit dem Code (`pair join`). TLS beweist B, dass es mit
 //!    der Node-ID aus dem Code spricht (kein Mittelsmann möglich). A vertraut B,
 //!    weil B das Token kennt. A erfährt B's Node-ID authentisch aus TLS.
-//! 3. Beide tragen sich gegenseitig in `devices` ein.
+//! 3. Beide berechnen aus der TLS-Sitzung einen sechsstelligen Prüfcode und zeigen ihn an.
+//!    A koppelt erst, wenn der Nutzer dort bestätigt (ein abgefangener oder weitergegebener
+//!    Einladungscode allein reicht so nicht – ein fremdes Gerät hätte einen anderen Code).
+//! 4. Beide tragen sich gegenseitig in `devices` ein.
 
 use crate::api::error::{ApiError, ErrorCode};
 use crate::api_bail;
@@ -31,6 +34,18 @@ const CODE_VERSION: u8 = 1;
 const MAX_FRAME: u32 = 64 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_ADDRS: usize = 16;
+/// So lange wartet das einladende Gerät auf die Bestätigung des Nutzers.
+pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Sechsstelliger Prüfcode aus der TLS-Sitzung (auf beiden Geräten gleich, je Verbindung neu).
+pub fn pair_code(conn: &Connection) -> Result<String> {
+    let mut out = [0u8; 32];
+    conn.export_keying_material(&mut out, b"EXPORTER-snap-pair-v1", b"sas")
+        .map_err(|_| anyhow::anyhow!("Sitzungsschlüssel nicht ableitbar"))?;
+    let k = blake3::derive_key("snap pair check code v1", &out);
+    let n = u32::from_be_bytes([k[0], k[1], k[2], k[3]]) % 1_000_000;
+    Ok(format!("{:03} {:03}", n / 1000, n % 1000))
+}
 
 /// Inhalt eines Einladungscodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +147,8 @@ struct ActiveInvite {
 #[derive(Default)]
 pub struct PairingState {
     invite: Mutex<Option<ActiveInvite>>,
+    /// Wartende Bestätigung (Prüfcode, Antwort des Nutzers).
+    confirm: Mutex<Option<oneshot::Sender<bool>>>,
     waiter: tokio::sync::Mutex<Option<(i64, oneshot::Receiver<DeviceInfo>)>>,
 }
 
@@ -164,6 +181,14 @@ impl PairingState {
 
     pub fn cancel(&self) {
         *self.invite.lock().unwrap() = None;
+    }
+
+    /// Antwort des Nutzers auf eine wartende Kopplung. `false`, wenn keine wartet.
+    pub fn answer(&self, accept: bool) -> bool {
+        match self.confirm.lock().unwrap().take() {
+            Some(tx) => tx.send(accept).is_ok(),
+            None => false,
+        }
     }
 
     /// Prüft ein Token. Bei Erfolg wird die Einladung verbraucht.
@@ -227,6 +252,8 @@ pub async fn join(ctx: &PairingCtx, code: &str, connect_timeout: Duration) -> Re
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "Gerät nicht erreichbar (Zeitüberschreitung)"))?
         .map_err(|e| ApiError::new(ErrorCode::Unavailable, format!("Gerät nicht erreichbar: {e}")))?;
 
+    let code = pair_code(&conn)?;
+    ctx.db.events().emit(crate::events::Event::PairCode { code });
     let result = async {
         let (mut send, mut recv) = conn.open_bi().await?;
         let req = PairRequest {
@@ -237,9 +264,11 @@ pub async fn join(ctx: &PairingCtx, code: &str, connect_timeout: Duration) -> Re
         };
         write_frame_max(&mut send, &req, MAX_FRAME).await?;
         send.finish()?;
-        let resp: PairResponse = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME))
-            .await
-            .context("Zeitüberschreitung beim Koppeln")??;
+        // Das andere Gerät wartet auf die Bestätigung des Nutzers
+        let resp: PairResponse =
+            tokio::time::timeout(CONFIRM_TIMEOUT + IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME))
+                .await
+                .context("Keine Bestätigung auf dem anderen Gerät")??;
         anyhow::Ok(resp)
     }
     .await;
@@ -305,6 +334,21 @@ impl PairingProtocol {
                 Ok(done) => {
                     let node_id = remote.to_string();
                     let name = sanitize_device_name(&req.name, &node_id);
+                    // Erst nach Bestätigung durch den Nutzer koppeln (Prüfcode vergleichen)
+                    let code = pair_code(conn)?;
+                    let (tx, rx) = oneshot::channel();
+                    *ctx.state.confirm.lock().unwrap() = Some(tx);
+                    ctx.db.events().emit(crate::events::Event::PairConfirm { code, name: name.clone() });
+                    let ok = matches!(tokio::time::timeout(CONFIRM_TIMEOUT, rx).await, Ok(Ok(true)));
+                    *ctx.state.confirm.lock().unwrap() = None;
+                    if !ok {
+                        tracing::warn!("Kopplung mit {} nicht bestätigt", remote.fmt_short());
+                        ctx.db.events().emit(crate::events::Event::PairConfirmClosed);
+                        let response = reject("Auf dem anderen Gerät nicht bestätigt");
+                        write_frame_max(&mut send, &response, MAX_FRAME).await?;
+                        send.finish()?;
+                        return Ok(());
+                    }
                     ctx.db.add_device(&node_id, &name)?;
                     ctx.db.set_addr_hints(&node_id, &req.addrs)?;
                     ctx.db.mark_peer_online(&node_id)?;

@@ -93,3 +93,24 @@ Leistungsgrenzen (relevant für DoS-Fragen): `core/tests/perf.rs`, Ergebnisse in
 Bitte Befunde mit Schweregrad (CVSS oder hoch/mittel/niedrig), betroffenem Commit und Schritten zum
 Nachstellen über die private Meldefunktion (siehe `SECURITY.md`) melden. Behobene Befunde werden mit
 Regressionstest (Angriffstest bzw. Fuzz-Korpus) geschlossen und in `SECURITY_MODEL.md` vermerkt.
+
+
+## Prüfung „Mittelsmann mit Kenntnis des Quellcodes“ (2026-11-27)
+
+Frage des Nutzers: Könnte jemand (auch eine KI), der den gesamten Quellcode kennt, ein Programm
+bauen, das Dateien ohne Zustimmung abfängt? Grundsatz: Die Sicherheit hängt an Schlüsseln auf den
+Geräten, nicht an geheimem Code (Kerckhoffs). Ergebnis je Weg:
+
+| Weg | Schutz | Ergebnis |
+|---|---|---|
+| Gekoppelte Geräte (Katalog, Dateien, Live, Fernzugriff, Zwischenablage) | QUIC/TLS 1.3, Gegenstelle an ihrem Ed25519-Schlüssel erkannt; Relais sieht nur Verschlüsseltes | kein Mittelsmann möglich |
+| Koppeln | Code mit 256-Bit-Token; **neu:** Prüfcode auf beiden Geräten + Bestätigung | weitergegebener Code allein reicht nicht mehr |
+| Snap Drop mit Kontakten (nah und von überall) | Beweis mit Drop-Schlüssel an die Sitzung gebunden, Sender prüft den erwarteten Kontakt | kein Mittelsmann möglich |
+| Snap Drop mit Unbekannten | Prüfcode aus der Sitzung; **neu:** auch der Sender sieht ihn vor dem Annehmen | sicher, wenn die Codes verglichen werden |
+| Weckwerbung (Bluetooth) | Tag nur mit Kontakt-Geheimnis berechenbar, wechselt alle 15 min | weckt höchstens, überträgt nichts |
+| Freigabelinks | Schlüssel nur im Link (Fragment), Ablauf und Download-Grenze | wer den Link hat, hat die Datei – so gewollt |
+| Lokal (Desktop-Socket, Streaming-Server, Android-Komponenten) | Socket 0600 + SO_PEERCRED, Streaming nur 127.0.0.1 mit 256-Bit-Token, Empfänger/Aktivitäten nicht exportiert | fremde Apps/Benutzer kommen nicht heran |
+
+Grenzen, gegen die keine App schützt: Schadsoftware mit denselben Rechten wie Snap auf dem eigenen
+Gerät (bzw. mit Root), ein entsperrtes Gerät in fremden Händen, und ein Mensch, der Prüfcodes nicht
+vergleicht.

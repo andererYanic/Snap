@@ -751,6 +751,19 @@ pub async fn drop_send_contact(
 
 /// Zwischenablage an ein eigenes Gerät (Text kommt aus der Web-Ansicht; das Zielgerät muss das
 /// Recht `clipboard.write` vergeben haben).
+/// Kopplungsanfrage im nativen Dialog bestätigen (Prüfcode vergleichen) – nicht aus der
+/// Web-Ansicht heraus, damit eine manipulierte Oberfläche nicht selbst bestätigen kann.
+#[tauri::command]
+pub async fn pair_confirm_prompt(app: AppHandle, d: State<'_, Daemon>, name: String, code: String) -> UiResult<Value> {
+    let code: String = code.chars().filter(|c| c.is_ascii_digit() || *c == ' ').take(7).collect();
+    let text = tr(
+        "„{name}“ möchte sich koppeln.\n\nPrüfcode: {code}\n\nNur bestätigen, wenn auf dem anderen Gerät derselbe Code steht.",
+        &[("name", &short_text(&name, 64)), ("code", &code)],
+    );
+    let accept = confirm(&app, tr("Gerät koppeln?", &[]), text, tr("Bestätigen", &[])).await;
+    d.request(Request::PairConfirm { accept }).await
+}
+
 #[tauri::command]
 pub async fn clipboard_send(d: State<'_, Daemon>, device: String, text: String) -> UiResult<Value> {
     if text.len() > 64 * 1024 {

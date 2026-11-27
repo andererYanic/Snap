@@ -197,6 +197,7 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropSetRemote { .. }
         | Request::DropCancel { .. }
         | Request::ClipboardSend { .. }
+        | Request::PairConfirm { .. }
         | Request::ClipboardPending
         | Request::DropHistory
         | Request::DropHistoryClear

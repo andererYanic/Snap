@@ -70,6 +70,7 @@ async fn upload_rights_limits_and_attacks() {
         Response::PairInvite { code, .. } => code,
         other => panic!("{other:?}"),
     };
+    a.confirm_next_pairing();
     assert!(matches!(b.request(Request::PairJoin { code: code_inv }).await, Response::Paired { .. }));
     a.request(Request::ShareAdd { path: share.clone(), name: Some("Fotos".into()), devices: None }).await;
     let share = std::fs::canonicalize(&share).unwrap();
@@ -180,6 +181,7 @@ async fn camera_rule_uploads_new_files_once() {
         Response::PairInvite { code, .. } => code,
         other => panic!("{other:?}"),
     };
+    a.confirm_next_pairing();
     assert!(matches!(b.request(Request::PairJoin { code: c }).await, Response::Paired { .. }));
     a.request(Request::ShareAdd { path: share.clone(), name: Some("Fotos".into()), devices: None }).await;
     let share = std::fs::canonicalize(&share).unwrap();

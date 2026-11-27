@@ -29,6 +29,10 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   immer aus TLS bestimmt, nie aus Nachrichteninhalten.
 - **Pairing:** Einmal-Code mit 256-Bit-Token (OS-Zufall), 10 min, einmalig, nur im Speicher,
   Vergleich in konstanter Zeit. TLS beweist dem Beitretenden die Identität des Gastgebers.
+  **Seit 2026-11-27 mit Bestätigung:** Beide Geräte zeigen einen sechsstelligen Prüfcode aus der
+  TLS-Sitzung (eigenes Exporter-Label); das einladende Gerät koppelt erst, wenn der Nutzer dort
+  bestätigt (höchstens 2 Minuten, sonst abgelehnt). Ein abgefangener oder weitergegebener Code
+  allein reicht damit nicht mehr; der Versuch verbraucht ihn. Tests: `core/tests/pairing.rs`.
 - **Rechte:** eine Prüfstelle (`api/auth.rs`) für alle Operationen und Blob-Anfragen;
   ordnergebundene Rechte mit kanonisierten Pfaden, Symlink-Auflösung, Verbot von `..`/`.`;
   Snap-Daten, Socket und Systempfade sind immer gesperrt; `admin` für Geräte gesperrt.

@@ -29,6 +29,7 @@ async fn invite(d: &Daemon) -> String {
 /// Koppelt `host` und `guest` über den echten Pairing-Ablauf.
 async fn pair(host: &Daemon, guest: &Daemon) {
     let code = invite(host).await;
+    host.confirm_next_pairing();
     let host2 = host.clone();
     let waiter = tokio::spawn(async move { host2.request(Request::PairInviteWait).await });
     match guest.request(Request::PairJoin { code }).await {
@@ -267,6 +268,7 @@ async fn security_invite_codes() {
     assert!(msg.contains("Ungültiger Einladungscode"), "manipulierter Code: {msg}");
 
     // Der echte Code funktioniert danach noch (falsche Versuche verbrauchen ihn nicht) …
+    host.confirm_next_pairing();
     assert!(matches!(g1.request(Request::PairJoin { code: code.clone() }).await, Response::Paired { .. }));
     // … aber nur einmal
     let msg = err(g2.request(Request::PairJoin { code: code.clone() }).await);
