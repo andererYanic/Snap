@@ -113,11 +113,8 @@
     "Der Link wurde kopiert. Wer ihn hat, kann die Datei herunterladen.": "The link has been copied. Anyone who has it can download the file.",
     "Der Papierkorb ist leer": "The trash is empty",
     "Der Snap-Dienst läuft nicht": "The Snap service is not running",
-<<<<<<< HEAD
     "Der Speicher wird noch erfasst – gleich noch einmal versuchen.": "Storage is still being scanned – try again shortly.",
-=======
     "Der Tresor ist entsperrt (sperrt sich nach 5 Minuten ohne Benutzung).": "The vault is unlocked (locks after 5 minutes of inactivity).",
->>>>>>> origin/main
     "Details": "Details",
     "Die Datei ist nicht mehr da.": "The file is no longer there.",
     "Die Dateien bleiben auf diesem Gerät, werden aber nicht mehr abgeglichen.": "The files stay on this device but are no longer synced.",
