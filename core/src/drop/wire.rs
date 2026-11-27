@@ -137,6 +137,10 @@ pub struct RemoteAddr {
 
 pub const MAX_REMOTE_ADDRS: usize = 8;
 
+/// Kennzeichen eines für die Übertragung gepackten Ordners (ZIP); der Empfänger entpackt ihn
+/// nach dem Annehmen mit dem gehärteten Entpacker.
+pub const FOLDER_MIME: &str = "application/x-snap-folder+zip";
+
 impl RemoteAddr {
     pub fn new(id: &PublicKey, addrs: &[std::net::SocketAddr]) -> Self {
         Self {

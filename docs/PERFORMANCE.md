@@ -761,3 +761,13 @@ Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
   Ohne Sitzungsbus endet die Aufgabe sofort.
 - **Android:** ein Ereignis-Empfänger je Prozess (`DropNotify`); Fortschritts-Mitteilungen höchstens
   einmal je Sekunde.
+
+## Review 41 – Snap Drop: Ordner, Gruppen, Fotoauswahl (2026-11-27)
+
+- **Ordner:** Packen (`compress_into`) und Entpacken (`extract` mit Grenzen) laufen in
+  `spawn_blocking`; Durchsatz wie in den bestehenden Archiv-Messungen (`archive_extract`). Bereits
+  komprimierte Formate (JPEG, MP4 …) werden nur gespeichert, nicht erneut komprimiert. Das
+  Arbeits-ZIP liegt im privaten Datenordner und wird nach dem Senden gelöscht (auch bei Fehlern).
+- **Gruppen:** Sendungen an mehrere Empfänger laufen gleichzeitig; jede hat ihre eigene Verbindung
+  und Kennung, die Dateien werden je Empfänger einmal gelesen (BLAKE3 beim Vorbereiten je Sendung).
+- **Fotoauswahl:** nur Zustand in der Oberfläche (Menge der Pfade), kein zusätzliches Laden.

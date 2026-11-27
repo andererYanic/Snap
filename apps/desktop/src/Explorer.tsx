@@ -535,7 +535,7 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
               <button onClick={() => setClip({ mode: "copy", paths: selected.map((i) => i.path) })}><Icon.copy /> {t("Kopieren")} <span className="key">{t("Strg+C")}</span></button>
               <button disabled={selected.length !== 1} onClick={() => setRenaming(menu.on!.path)}><Icon.rename /> {t("Umbenennen")} <span className="key">F2</span></button>
               <hr />
-              {!selected.some((i) => i.dir) && <button onClick={() => setDropping(selected.map((i) => i.path))}><Icon.nearby /> {t("In der Nähe senden …")}</button>}
+              <button onClick={() => setDropping(selected.map((i) => i.path))}><Icon.nearby /> {t("In der Nähe senden …")}</button>
               {!menu.on.dir && selected.length === 1 && <button onClick={() => setLinking(menu.on!.path)}><Icon.link /> {t("Link erstellen …")}</button>}
               {menu.on.dir && selected.length === 1 && <button onClick={() => openTab("storage", menu.on!.path)}><Icon.chart /> {t("Speicher analysieren")}</button>}
               <hr />
