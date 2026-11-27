@@ -13,6 +13,7 @@ use crate::database::{NewJob, PinRow, PinnedFile};
 use crate::events::Event;
 use crate::ledger::{validate_rel_path, validate_share_name};
 use crate::network::endpoint_addr;
+use crate::twoway::{Action, Wait};
 use anyhow::{bail, Result};
 use iroh_blobs::{ticket::BlobTicket, BlobFormat, Hash};
 use std::collections::HashSet;
@@ -29,6 +30,11 @@ pub struct ReconcileStats {
     pub conflicts: usize,
     pub quota_skipped: usize,
     pub unsafe_skipped: usize,
+    /// Zwei-Wege-Sync: zum Ursprung gesendete Änderungen bzw. angehaltene Löschungen.
+    pub pushed: usize,
+    pub held: usize,
+    /// Dateien, die gerade noch geschrieben werden: gleich noch einmal abgleichen.
+    pub retry_soon: usize,
 }
 
 fn mtime_of(meta: &std::fs::Metadata) -> i64 {
@@ -89,7 +95,17 @@ pub fn dir_name_for(name: Option<&str>, node_id: &str) -> String {
 /// Gleicht alle Pins mit den Ledger-Einträgen ab und stellt nötige Downloads in die Warteschlange.
 pub async fn reconcile(inner: &Arc<DaemonInner>) -> Result<ReconcileStats> {
     let inner2 = inner.clone();
-    let stats = tokio::task::spawn_blocking(move || reconcile_blocking(&inner2)).await??;
+    let (stats, actions) = tokio::task::spawn_blocking(move || reconcile_blocking(&inner2)).await??;
+    if !actions.is_empty() {
+        tokio::spawn(crate::twoway::run(inner.clone(), actions));
+    }
+    if stats.retry_soon > 0 {
+        let notify = inner.pin_notify.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            notify.notify_one();
+        });
+    }
     if stats.queued > 0 {
         inner.sync_notifier.notify_one();
     }
@@ -103,17 +119,19 @@ pub async fn reconcile(inner: &Arc<DaemonInner>) -> Result<ReconcileStats> {
     Ok(stats)
 }
 
-fn reconcile_blocking(inner: &DaemonInner) -> Result<ReconcileStats> {
+fn reconcile_blocking(inner: &DaemonInner) -> Result<(ReconcileStats, Vec<Action>)> {
     let db = &inner.db;
     let root = inner.config.pin_dir.clone();
     std::fs::create_dir_all(&root)?;
     let max = inner.settings.pin_max_bytes();
     let mut used = db.pinned_total_size()?;
     let mut stats = ReconcileStats::default();
+    let mut actions = Vec::new();
 
     for pin in db.list_pins()? {
         let targets = db.pin_targets(&pin)?;
         let mut wanted: HashSet<String> = HashSet::new();
+        let first_action = actions.len();
         for t in targets.iter().filter(|t| !t.deleted) {
             let path = match safe_target(&root, &pin.dir_name, &pin.share, &t.rel_path) {
                 Ok(p) => p,
@@ -125,8 +143,27 @@ fn reconcile_blocking(inner: &DaemonInner) -> Result<ReconcileStats> {
             };
             let path_str = path.to_string_lossy().into_owned();
             wanted.insert(path_str.clone());
-            let rec = db.pinned_by_path(&path_str)?;
-            let on_disk = std::fs::symlink_metadata(&path).is_ok();
+            let mut rec = db.pinned_by_path(&path_str)?;
+            let mut on_disk = std::fs::symlink_metadata(&path).is_ok();
+            if pin.two_way {
+                match two_way_file(inner, &pin, t, &path, &path_str, rec.as_ref(), on_disk, &mut actions)? {
+                    TwoWay::Done => continue,
+                    TwoWay::Settling => {
+                        stats.retry_soon += 1;
+                        continue;
+                    }
+                    TwoWay::Pushed => {
+                        stats.pushed += 1;
+                        continue;
+                    }
+                    // Lokale (ältere) Fassung liegt jetzt im Papierkorb → neu laden
+                    TwoWay::Download => {
+                        on_disk = false;
+                        rec = db.pinned_by_path(&path_str)?;
+                    }
+                    TwoWay::Normal => {}
+                }
+            }
             match &rec {
                 Some(r) if r.state == "ok" && r.hash == t.hash && unchanged_since_written(&path, r) => continue,
                 Some(r) if r.state == "pending" && r.hash == t.hash => continue, // läuft bereits
@@ -174,6 +211,11 @@ fn reconcile_blocking(inner: &DaemonInner) -> Result<ReconcileStats> {
             })?;
             stats.queued += 1;
         }
+        if pin.two_way {
+            guard_local_deletes(inner, &pin, &root, &mut actions, first_action, &mut stats);
+            stats.pushed += two_way_rest(inner, &pin, &root, &mut wanted, &mut actions, &mut stats)?;
+            continue;
+        }
         // Nicht mehr gewünscht (gelöscht oder außerhalb des Pins): nur entfernen, wenn unverändert.
         for rec in db.pinned_of_pin(pin.id)? {
             if wanted.contains(&rec.path) {
@@ -195,7 +237,237 @@ fn reconcile_blocking(inner: &DaemonInner) -> Result<ReconcileStats> {
             }
         }
     }
-    Ok(stats)
+    Ok((stats, actions))
+}
+
+enum TwoWay {
+    /// Erledigt oder wartet (nichts weiter tun).
+    Done,
+    /// Wird gerade noch geschrieben: gleich erneut prüfen.
+    Settling,
+    /// Lokale Änderung wird gesendet.
+    Pushed,
+    /// Lokale Fassung ist in den Papierkorb gewandert: Fassung des Ursprungs laden.
+    Download,
+    /// Wie bei einem einfachen Spiegel weiter (laden, falls nötig).
+    Normal,
+}
+
+/// Zwei-Wege-Sync für eine Datei, die der Ursprung kennt.
+#[allow(clippy::too_many_arguments)]
+fn two_way_file(
+    inner: &DaemonInner,
+    pin: &PinRow,
+    t: &crate::database::PinTarget,
+    path: &Path,
+    path_str: &str,
+    rec: Option<&PinnedFile>,
+    on_disk: bool,
+    actions: &mut Vec<Action>,
+) -> Result<TwoWay> {
+    let db = &inner.db;
+    match inner.sync.check(path_str, &t.hash) {
+        Wait::Pending => return Ok(TwoWay::Done),
+        Wait::Adopt => {
+            if let Ok(m) = std::fs::symlink_metadata(path) {
+                if rec.is_none() {
+                    db.pinned_set_pending(&pinned(pin, t, path_str))?;
+                }
+                db.pinned_mark_ok(path_str, &t.hash, m.len(), mtime_of(&m))?;
+            }
+            return Ok(TwoWay::Done);
+        }
+        Wait::No => {}
+    }
+    let push = |actions: &mut Vec<Action>, replace: bool| {
+        let action = Action::Push {
+            origin: pin.origin.clone(),
+            share: pin.share.clone(),
+            rel: t.rel_path.clone(),
+            path: path.to_path_buf(),
+            replace,
+            expect: t.hash.clone(),
+        };
+        crate::twoway::queue(inner, actions, action, &t.hash);
+    };
+    let meta = std::fs::symlink_metadata(path).ok();
+    if meta.as_ref().is_some_and(|m| !m.is_file()) {
+        return Ok(TwoWay::Normal); // Ordner o. Ä. am Zielort: wie bisher (Konflikt)
+    }
+    let changed_locally = |r: &PinnedFile| on_disk && !unchanged_since_written(path, r);
+    match rec {
+        // Lokal geändert (oder früher als Konflikt markiert): Neuestes gewinnt
+        Some(r) if (r.state == "ok" || r.state == "conflict") && changed_locally(r) => {
+            let m = meta.expect("on_disk");
+            if crate::twoway::settling(&m) {
+                return Ok(TwoWay::Settling);
+            }
+            if r.hash == t.hash || mtime_of(&m) >= t.created_at {
+                push(actions, true);
+                Ok(TwoWay::Pushed)
+            } else {
+                inner.files.trash.trash(path)?;
+                db.pinned_remove(path_str)?; // → wird unten wie eine neue Datei geladen
+                Ok(TwoWay::Download)
+            }
+        }
+        // Lokal gelöscht: beim Ursprung in den Papierkorb – außer, er hat sich inzwischen geändert
+        Some(r) if r.state == "ok" && !on_disk => {
+            if r.hash == t.hash {
+                let action = Action::Delete {
+                    origin: pin.origin.clone(),
+                    share: pin.share.clone(),
+                    rel: t.rel_path.clone(),
+                    path: path_str.to_string(),
+                    expect: t.hash.clone(),
+                };
+                crate::twoway::queue(inner, actions, action, &t.hash);
+                Ok(TwoWay::Pushed)
+            } else {
+                Ok(TwoWay::Normal)
+            }
+        }
+        // Datei liegt schon da, ohne dass wir sie geschrieben haben (z. B. gerade hochgeladen)
+        None if on_disk => {
+            let m = meta.expect("on_disk");
+            if crate::twoway::settling(&m) {
+                return Ok(TwoWay::Settling);
+            }
+            if crate::twoway::file_hash(path).as_deref() == Some(t.hash.as_str()) {
+                db.pinned_set_pending(&pinned(pin, t, path_str))?;
+                db.pinned_mark_ok(path_str, &t.hash, m.len(), mtime_of(&m))?;
+                Ok(TwoWay::Done)
+            } else if mtime_of(&m) >= t.created_at {
+                push(actions, true);
+                Ok(TwoWay::Pushed)
+            } else {
+                inner.files.trash.trash(path)?;
+                db.pinned_remove(path_str)?; // → wird unten wie eine neue Datei geladen
+                Ok(TwoWay::Download)
+            }
+        }
+        _ => Ok(TwoWay::Normal),
+    }
+}
+
+/// Viele lokale Löschungen auf einmal (oder ein verschwundener Spiegel-Ordner, z. B. ausgehängter
+/// Speicher) nie ungefragt zum Ursprung schicken.
+fn guard_local_deletes(
+    inner: &DaemonInner,
+    pin: &PinRow,
+    root: &Path,
+    actions: &mut Vec<Action>,
+    first: usize,
+    stats: &mut ReconcileStats,
+) {
+    let is_delete = |a: &Action| matches!(a, Action::Delete { .. });
+    let count = actions[first..].iter().filter(|a| is_delete(a)).count();
+    if count == 0 {
+        return;
+    }
+    let mirror_gone = !root.join(&pin.dir_name).join(&pin.share).is_dir();
+    if !mirror_gone && inner.sync.may_delete(-pin.id, count) {
+        return;
+    }
+    let mut kept = actions.split_off(first);
+    kept.retain(|a| {
+        if let Action::Delete { path, .. } = a {
+            inner.sync.forget(path);
+            false
+        } else {
+            true
+        }
+    });
+    actions.extend(kept);
+    stats.pushed = stats.pushed.saturating_sub(count);
+    if !mirror_gone {
+        stats.held += count;
+        crate::twoway::report_held(inner, pin, count);
+    }
+}
+
+/// Zwei-Wege-Sync für alles, was der Ursprung (nicht mehr) kennt: seine Löschungen hierher
+/// (in den Papierkorb, viele nur nach Bestätigung) und neue lokale Dateien zu ihm.
+fn two_way_rest(
+    inner: &DaemonInner,
+    pin: &PinRow,
+    root: &Path,
+    wanted: &mut HashSet<String>,
+    actions: &mut Vec<Action>,
+    stats: &mut ReconcileStats,
+) -> Result<usize> {
+    let db = &inner.db;
+    let mut pushed = 0;
+    let mut deletes = Vec::new();
+    for rec in db.pinned_of_pin(pin.id)? {
+        if wanted.contains(&rec.path) || inner.sync.is_pending(&rec.path) {
+            wanted.insert(rec.path.clone());
+            continue;
+        }
+        let path = PathBuf::from(&rec.path);
+        let meta = std::fs::symlink_metadata(&path).ok();
+        match meta {
+            None => {
+                db.cancel_stale_pin_jobs(&rec.path, "")?;
+                db.pinned_remove(&rec.path)?;
+            }
+            Some(_) if rec.state == "pending" => {
+                db.cancel_stale_pin_jobs(&rec.path, "")?;
+                db.pinned_remove(&rec.path)?;
+            }
+            // Beim Ursprung gelöscht, hier unverändert → hier in den Papierkorb
+            Some(_) if rec.state == "ok" && unchanged_since_written(&path, &rec) => deletes.push(rec),
+            // Hier inzwischen geändert → als neue Datei zurück zum Ursprung (Arbeit bleibt erhalten)
+            Some(_) => {
+                db.pinned_remove(&rec.path)?;
+            }
+        }
+    }
+    if !deletes.is_empty() {
+        if inner.sync.may_delete(pin.id, deletes.len()) {
+            let stop = root.join(&pin.dir_name);
+            for rec in &deletes {
+                let path = PathBuf::from(&rec.path);
+                if path.starts_with(&stop) {
+                    inner.files.trash.trash(&path)?;
+                    remove_empty_parents(&path, &stop);
+                }
+                db.pinned_remove(&rec.path)?;
+                stats.removed += 1;
+            }
+        } else {
+            stats.held += deletes.len();
+            for rec in &deletes {
+                wanted.insert(rec.path.clone());
+            }
+            crate::twoway::report_held(inner, pin, deletes.len());
+        }
+    }
+    // Neue lokale Dateien (noch nicht im Ursprung und ohne Eintrag)
+    let share_root = root.join(&pin.dir_name).join(&pin.share);
+    let known: HashSet<String> =
+        db.pinned_of_pin(pin.id)?.into_iter().map(|r| r.path).chain(wanted.iter().cloned()).collect();
+    let (new_files, busy) = crate::twoway::untracked(&share_root, &pin.prefix, &known);
+    if busy {
+        stats.retry_soon += 1;
+    }
+    for (rel, path) in new_files {
+        if inner.sync.is_pending(&path.to_string_lossy()) || safe_target(root, &pin.dir_name, &pin.share, &rel).is_err()
+        {
+            continue;
+        }
+        let action = Action::Push {
+            origin: pin.origin.clone(),
+            share: pin.share.clone(),
+            rel,
+            path,
+            replace: false,
+            expect: String::new(),
+        };
+        crate::twoway::queue(inner, actions, action, "");
+        pushed += 1;
+    }
+    Ok(pushed)
 }
 
 fn pinned(pin: &PinRow, t: &crate::database::PinTarget, path: &str) -> PinnedFile {
@@ -246,8 +518,18 @@ pub async fn run_pin_loop(inner: Arc<DaemonInner>) {
     if let Err(e) = reconcile(&inner).await {
         tracing::warn!("Pin-Abgleich fehlgeschlagen: {e:#}");
     }
+    // Zwei-Wege-Sync: lokale Änderungen im Pin-Ordner bemerken (nur, solange es solche Pins gibt)
+    let mut watcher: Option<notify::RecommendedWatcher> = None;
     loop {
+        let two_way = inner.db.list_pins().map(|p| p.iter().any(|p| p.two_way)).unwrap_or(false);
+        if two_way && watcher.is_none() {
+            watcher = watch_pin_dir(&inner);
+        } else if !two_way {
+            watcher = None;
+        }
         tokio::select! {
+            // Regelmäßig erneut versuchen (z. B. Ursprung war offline)
+            _ = tokio::time::sleep(Duration::from_secs(300)), if two_way => {}
             ev = sub.next() => match ev {
                 Some(Event::RemoteCatalogChanged { .. }) | Some(Event::Lagged { .. }) => {}
                 Some(Event::DeviceRemoved { node_id }) => {
@@ -272,6 +554,21 @@ pub async fn run_pin_loop(inner: Arc<DaemonInner>) {
             tracing::warn!("Pin-Abgleich fehlgeschlagen: {e:#}");
         }
     }
+}
+
+fn watch_pin_dir(inner: &Arc<DaemonInner>) -> Option<notify::RecommendedWatcher> {
+    use notify::Watcher;
+    let notify = inner.pin_notify.clone();
+    let mut w = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(ev) = res {
+            if !matches!(ev.kind, notify::EventKind::Access(_)) {
+                notify.notify_one();
+            }
+        }
+    })
+    .ok()?;
+    w.watch(&inner.config.pin_dir, notify::RecursiveMode::Recursive).ok()?;
+    Some(w)
 }
 
 /// Nach dem Entkoppeln: Offline-Kopien (Pins) und Vorschaubilder des Geräts entfernen.

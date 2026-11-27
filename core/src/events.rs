@@ -63,6 +63,12 @@ pub enum Event {
         name: String,
         text: String,
     },
+    /// Zwei-Wege-Sync: viele Löschungen auf einmal wurden angehalten und warten auf Bestätigung.
+    SyncHeld {
+        pin_id: i64,
+        share: String,
+        deletes: usize,
+    },
     /// Ein eigenes Gerät lässt dieses klingeln (Gerät finden); `secs == 0` heißt: aufhören.
     Ring {
         node_id: String,

@@ -794,6 +794,42 @@ pub async fn clipboard_send(d: State<'_, Daemon>, device: String, text: String) 
     d.request(Request::ClipboardSend { device, text }).await
 }
 
+/// Gespiegelte Ordner anderer Geräte (Pins).
+#[tauri::command]
+pub async fn pin_list(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::PinList).await
+}
+
+/// Zwei-Wege-Sync eines Pins umschalten.
+#[tauri::command]
+pub async fn pin_two_way(d: State<'_, Daemon>, id: i64, enabled: bool) -> UiResult<Value> {
+    d.request(Request::PinTwoWay { id, enabled }).await
+}
+
+/// Pin beenden (die Dateien bleiben liegen).
+#[tauri::command]
+pub async fn pin_remove(d: State<'_, Daemon>, id: i64) -> UiResult<Value> {
+    d.request(Request::PinRemove { id }).await
+}
+
+/// Angehaltene Löschungen ausführen oder Dateien behalten – nur nach Rückfrage im nativen Dialog.
+#[tauri::command]
+pub async fn pin_deletes_prompt(
+    app: AppHandle,
+    d: State<'_, Daemon>,
+    id: i64,
+    share: String,
+    count: u64,
+) -> UiResult<Value> {
+    let share: String = share.chars().filter(|c| !c.is_control()).take(80).collect();
+    let text = tr(
+        "In „{share}“ wurden {n} Dateien gelöscht. Auch auf diesem Gerät löschen (in den Papierkorb)?",
+        &[("share", &share), ("n", &count.to_string())],
+    );
+    let allow = confirm(&app, tr("Viele Dateien gelöscht", &[]), text, tr("Löschen", &[])).await;
+    d.request(Request::PinAllowDeletes { id, allow }).await
+}
+
 /// Gerät finden: ein eigenes Gerät klingeln lassen bzw. das Klingeln dort beenden.
 #[tauri::command]
 pub async fn ring(d: State<'_, Daemon>, device: String, stop: bool) -> UiResult<Value> {

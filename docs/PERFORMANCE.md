@@ -801,3 +801,37 @@ Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
   keine GUI-Abfrage blockiert.
 - Drosselung je Gerät: höchstens 6 Zeitpunkte im Speicher; abgelaufene Einträge werden bei jeder
   Anfrage entfernt (kein Wachstum durch viele Geräte).
+
+## Review 45 – Zwei-Wege-Sync (2026-11-27)
+
+Gemessen (Release, Loopback, `core/tests/perf.rs` › `pin_mirror`, 2000 Dateien in 20 Ordnern):
+
+| Vorgang | Zeit |
+|---|---|
+| Änderung am Handy → beim PC angekommen | 4,7 s (davon 3 s bewusstes Abwarten, ob die Datei noch geschrieben wird) |
+| Abgleich ohne Änderungen (inkl. Suche nach neuen Dateien) | 29 ms je Durchlauf |
+
+- Der Abgleich läuft in `spawn_blocking`, nie im GUI-Pfad; Oberflächen lesen nur `PinList`.
+- Ausgelöst wird er durch Dateisystem-Ereignisse im Pin-Ordner (gebündelt, 300 ms) und höchstens
+  alle 5 Minuten zum Nachholen; die Beobachtung läuft nur, solange es Zwei-Wege-Pins gibt.
+- Vor dem Senden wird einmal je Ursprung der Katalog aufgefrischt (eine Verbindung, nur neue
+  Einträge), dann werden die Änderungen nacheinander gesendet – nie zwei Läufe gleichzeitig.
+- Hochrechnung: bei 100 000 Dateien etwa 1,5 s je Abgleich im Hintergrund. Falls das stört, wäre der
+  nächste Schritt, nur die vom Dateisystem gemeldeten Pfade zu prüfen.
+
+## Review 46 – RAW, SVG, GIF, Untertitel (2026-11-27)
+
+Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP-JPEG-Vorschau):
+
+| Vorgang | Zeit |
+|---|---|
+| Eingebettete Vorschau finden | 9 µs |
+| RAW → Vorschaubild 256 px | 48 ms |
+| RAW → Anzeige 2560 px | 325 ms |
+
+- Das Finden liest nur die IFD-Einträge (wenige KB), nie die Rohdaten. Decodiert wird nur die
+  Vorschau, beim kleinen Vorschaubild mit DCT-Verkleinerung. Alles läuft in `spawn_blocking` mit
+  höchstens zwei gleichzeitigen Vorschauen und landet im Vorschau-Cache (danach ohne Decodierung).
+- SVG: Bereinigung per regulären Ausdrücken über höchstens 2 MB Text, einmal je Öffnen.
+- Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
+  Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.

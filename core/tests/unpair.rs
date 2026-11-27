@@ -24,7 +24,17 @@ fn config(root: &Path, name: &str, port: u16) -> Config {
 }
 
 async fn start(root: &Path, name: &str, port: u16) -> Daemon {
-    Daemon::start_loopback(config(root, name, port)).await.unwrap()
+    // Beim Neustart auf demselben Port kann der alte Socket kurz noch belegt sein.
+    for _ in 0..50 {
+        match Daemon::start_loopback(config(root, name, port)).await {
+            Ok(d) => return d,
+            Err(e) if format!("{e:#}").contains("bind") => {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await
+            }
+            Err(e) => panic!("{e:#}"),
+        }
+    }
+    panic!("Port {port} bleibt belegt");
 }
 
 async fn pair(host: &Daemon, guest: &Daemon) {

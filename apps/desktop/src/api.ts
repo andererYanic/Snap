@@ -107,6 +107,10 @@ export const api = {
   pairConfirmPrompt: (name: string, code: string) => invoke<unknown>("pair_confirm_prompt", { name, code }),
   shareList: () => invoke<{ shares: { name: string; root: string; file_count: number }[] }>("share_list").then((r) => r.shares ?? []),
   shareAll: (enabled: boolean) => invoke<unknown>("share_all", { enabled }),
+  pinList: () => invoke<{ pins: PinInfo[] }>("pin_list").then((r) => r.pins ?? []),
+  pinTwoWay: (id: number, enabled: boolean) => invoke<unknown>("pin_two_way", { id, enabled }),
+  pinRemove: (id: number) => invoke<unknown>("pin_remove", { id }),
+  pinDeletesPrompt: (id: number, share: string, count: number) => invoke<unknown>("pin_deletes_prompt", { id, share, count }),
   ring: (device: string, stop: boolean) => invoke<{ message: string }>("ring", { device, stop }),
   ringStop: () => invoke<unknown>("ring_stop"),
   clipboardPending: () => invoke<{ name: string | null; text: string | null }>("clipboard_pending"),
@@ -173,7 +177,9 @@ export function baseName(path: string): string {
   return p.slice(p.lastIndexOf("/") + 1) || "/";
 }
 
-const IMAGE = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff", "avif"];
+const IMAGE = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff", "avif",
+  // Kamera-Rohdaten: der Kern zeigt die eingebettete JPEG-Vorschau
+  "cr2", "nef", "nrw", "arw", "sr2", "srf", "dng", "orf", "rw2", "pef", "srw", "raf", "3fr", "erf", "kdc", "mos"];
 const VIDEO = ["mp4", "mkv", "mov", "webm", "avi", "m4v", "3gp"];
 export function extOf(name: string): string {
   const i = name.lastIndexOf(".");
@@ -317,3 +323,17 @@ export const drop = {
   renameContact: (key: string, alias: string | null) => invoke<DropContact>("drop_rename_contact", { key, alias }),
   openLink: (url: string) => invoke<void>("open_link", { url }),
 };
+
+/** Gespiegelter Ordner eines anderen Geräts (Pin), auf Wunsch in beide Richtungen. */
+export interface PinInfo {
+  id: number;
+  origin_name: string | null;
+  share: string;
+  prefix: string;
+  path: string;
+  files_ok: number;
+  files_pending: number;
+  conflicts: number;
+  two_way: boolean;
+  held_deletes: number;
+}

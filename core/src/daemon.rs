@@ -35,6 +35,9 @@ pub struct DaemonInner {
     /// Zwischenablage zwischen eigenen Geräten (Drosselung, Bereithalten für die App).
     pub(crate) clipboard: crate::clipboard::ClipState,
     pub(crate) ring: crate::ring::RingState,
+    pub(crate) sync: crate::twoway::SyncState,
+    /// Zwei-Wege-Sync: Änderungen nacheinander senden (nie zwei Läufe gleichzeitig).
+    pub(crate) sync_push: tokio::sync::Mutex<()>,
     /// Verbundene Oberflächen, die Ereignisse abonniert haben.
     pub(crate) ui_clients: std::sync::atomic::AtomicUsize,
     pub config: Config,
@@ -304,6 +307,8 @@ impl Daemon {
         let inner = Arc::new(DaemonInner {
             clipboard: crate::clipboard::ClipState::default(),
             ring: crate::ring::RingState::default(),
+            sync: crate::twoway::SyncState::default(),
+            sync_push: tokio::sync::Mutex::new(()),
             ui_clients: std::sync::atomic::AtomicUsize::new(0),
             config,
             network,

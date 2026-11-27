@@ -30,6 +30,8 @@ pub enum ThumbSize {
     Small,
     /// Längste Kante 1024 px (Vorschau, Galerie).
     Large,
+    /// Längste Kante 2560 px (Anzeige von Formaten, die das Gerät selbst nicht kann, z. B. RAW).
+    Full,
 }
 
 impl ThumbSize {
@@ -37,6 +39,7 @@ impl ThumbSize {
         match self {
             ThumbSize::Small => 256,
             ThumbSize::Large => 1024,
+            ThumbSize::Full => 2560,
         }
     }
 }
@@ -279,6 +282,18 @@ pub fn render_thumbnail_limited<R: std::io::BufRead + Seek>(
     Ok(img.to_rgb8())
 }
 
+/// RAW-Foto: eingebettete JPEG-Vorschau verkleinern und nach IFD0 ausrichten.
+pub fn render_raw<R: Read + Seek>(mut reader: R, size: u64, edge: u32) -> Result<image::RgbImage> {
+    let (bytes, orientation) =
+        crate::raw::read_preview(&mut reader, size).context("Keine eingebettete Vorschau im RAW-Foto")?;
+    let img = render_thumbnail(std::io::Cursor::new(bytes), edge)?;
+    let mut img = image::DynamicImage::ImageRgb8(img);
+    if let Some(o) = image::metadata::Orientation::from_exif(orientation as u8) {
+        img.apply_orientation(o);
+    }
+    Ok(img.to_rgb8())
+}
+
 fn decode_generic<R: std::io::BufRead + Seek>(
     reader: R,
     max_alloc: u64,
@@ -411,8 +426,13 @@ impl ThumbCache {
             if meta.len() > MAX_INPUT_BYTES {
                 api_bail!(InvalidInput, "Datei ist zu groß für ein Vorschaubild.");
             }
+            let raw = p.file_name().and_then(|n| n.to_str()).is_some_and(crate::raw::is_raw);
             let img = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                render_thumbnail(BufReader::new(file), size.edge())
+                if raw {
+                    render_raw(BufReader::new(file), meta.len(), size.edge())
+                } else {
+                    render_thumbnail(BufReader::new(file), size.edge())
+                }
             }))
             .map_err(|_| anyhow::anyhow!("Decoder abgestürzt"))?
             .map_err(|e| {

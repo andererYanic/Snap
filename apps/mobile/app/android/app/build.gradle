@@ -121,6 +121,8 @@ dependencies {
     // Videobearbeitung auf dem Gerät (gleiche Media3-Version wie react-native-video)
     implementation("androidx.media3:media3-transformer:1.8.0")
     implementation("androidx.media3:media3-effect:1.8.0")
+    // Animierte GIFs in der Bildanzeige (gleiche Fresco-Version wie React Native)
+    implementation("com.facebook.fresco:animated-gif:3.7.0")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

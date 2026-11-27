@@ -23,6 +23,7 @@ import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
 import { ApkSheet, isApk } from './Apk';
 import ArchiveViewer, { isArchiveListable } from './ArchiveViewer';
+import SvgViewer, { isSvg } from './SvgViewer';
 import Viewer, { type MediaItem } from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
@@ -137,6 +138,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [pdf, setPdf] = useState<{ path: string; name: string; mode?: 'view' | 'mark' | 'sign' } | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
+  const [svg, setSvg] = useState<{ path: string; name: string } | null>(null);
   const [viewer, setViewer] = useState<{ items: MediaItem[]; start: number } | null>(null);
   // Geöffnetes anderes Gerät (Startseite → Gerät antippen)
   const [remoteDev, setRemoteDev] = useState<RemoteDevice | null>(null);
@@ -313,6 +315,8 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     } else if (e.kind === 'Dir') {
       setQuery('');
       go(e.path, 'forward');
+    } else if (isSvg(e.name)) {
+      setSvg({ path: e.path, name: e.name });
     } else if (isText(e.name)) {
       // Text und Markdown zeigt die App selbst an
       setTextFile({ path: e.path, name: e.name });
@@ -334,7 +338,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
 
   /** Datei (z. B. von einem anderen Gerät heruntergeladen) mit den eingebauten Anzeigen öffnen. */
   const openPath = (path: string, name: string) => {
-    if (isText(name)) {
+    if (isSvg(name)) {
+      setSvg({ path, name });
+    } else if (isText(name)) {
       setTextFile({ path, name });
     } else if (/\.pdf$/i.test(name)) {
       setPdf({ path, name });
@@ -1029,6 +1035,15 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
             onStream={(uri, name) => setViewer({ items: [{ path: '', name, uri }], start: 0 })}
           />
         </View>
+      )}
+      {svg && (
+        <SvgViewer
+          path={svg.path}
+          name={svg.name}
+          theme={theme}
+          onClose={() => setSvg(null)}
+          onSource={() => { setSvg(null); setTextFile(svg); }}
+        />
       )}
       {textFile && <TextViewer path={textFile.path} name={textFile.name} theme={theme} onClose={() => setTextFile(null)} />}
       {apk && <ApkSheet path={apk.path} name={apk.name} size={apk.size} theme={theme} notify={notify} onClose={() => setApk(null)} />}

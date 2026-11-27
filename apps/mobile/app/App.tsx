@@ -210,6 +210,16 @@ export default function App() {
           ],
           { cancelable: false },
         );
+      } else if (ev.type === 'SyncHeld') {
+        // Zwei-Wege-Sync: viele Löschungen auf einmal nie ungefragt
+        Alert.alert(
+          t('Viele Dateien gelöscht'),
+          t('In „{share}“ wurden {n} Dateien gelöscht. Auch auf diesem Gerät löschen (in den Papierkorb)?', { share: ev.share, n: ev.deletes }),
+          [
+            { text: t('Behalten'), style: 'cancel', onPress: () => core.request({ PinAllowDeletes: { id: ev.pin_id, allow: false } }).catch(() => {}) },
+            { text: t('Löschen'), style: 'destructive', onPress: () => core.request({ PinAllowDeletes: { id: ev.pin_id, allow: true } }).catch(() => {}) },
+          ],
+        );
       } else if (ev.type === 'Ring' && ev.secs > 0) {
         // Den Ton spielt Android (RingAlarm); hier nur der Knopf zum Stoppen
         Alert.alert(t('Gerät finden'), t('„{name}“ lässt dieses Gerät klingeln.', { name: ev.name }), [

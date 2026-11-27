@@ -26,6 +26,7 @@ pub mod pairing;
 pub mod pdfsign;
 pub mod photos;
 pub mod pins;
+pub mod raw;
 pub mod remote_ops;
 pub mod remote_thumbs;
 pub mod ring;
@@ -34,6 +35,7 @@ pub mod settings;
 pub mod shares;
 pub mod stream;
 pub mod sync;
+pub mod twoway;
 pub mod upload;
 pub mod worker;
 

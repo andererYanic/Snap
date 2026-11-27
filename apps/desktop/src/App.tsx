@@ -105,6 +105,9 @@ export default function App() {
       else if (ev.ok) notify({ text: t("An {name} gesendet.", { name: ev.peer }), action: save });
     } else if (ev.type === "PairConfirm") {
       api.pairConfirmPrompt(String(ev.name), String(ev.code)).catch(() => {});
+    } else if (ev.type === "SyncHeld") {
+      // Zwei-Wege-Sync: viele Löschungen auf einmal nie ungefragt (Rückfrage im nativen Dialog)
+      api.pinDeletesPrompt(Number(ev.pin_id), String(ev.share), Number(ev.deletes)).catch(() => {});
     } else if (ev.type === "Ring") {
       stopAlarm.current?.();
       stopAlarm.current = null;

@@ -2,9 +2,12 @@
 // Speicher-Cache – beim Zurückscrollen sofort da. Bilder blenden weich ein.
 import { useEffect, useState } from 'react';
 import { Image, StyleSheet, type ImageStyle, type StyleProp } from 'react-native';
-import { thumbnail } from './core';
+import { request, thumbnail } from './core';
 
-const MEDIA = /\.(jpe?g|png|gif|webp|heic|heif|bmp|avif|mp4|mkv|mov|webm|3gp|m4v)$/i;
+/** Kamera-Rohdaten: Snap zeigt die eingebettete JPEG-Vorschau (der Kern liest sie aus). */
+const RAW = /\.(cr2|nef|nrw|arw|sr2|srf|dng|orf|rw2|pef|srw|raf|3fr|erf|kdc|mos)$/i;
+export const isRaw = (name: string) => RAW.test(name);
+const MEDIA = /\.(jpe?g|png|gif|webp|heic|heif|bmp|avif|mp4|mkv|mov|webm|3gp|m4v|cr2|nef|nrw|arw|sr2|srf|dng|orf|rw2|pef|srw|raf|3fr|erf|kdc|mos)$/i;
 const VIDEO = /\.(mp4|mkv|mov|webm|3gp|m4v)$/i;
 export const isMedia = (name: string) => MEDIA.test(name);
 export const isVideo = (name: string) => VIDEO.test(name);
@@ -22,7 +25,9 @@ export function loadThumb(path: string, edge = 256): Promise<string | null> {
   }
   let p = pending.get(key);
   if (!p) {
-    p = thumbnail(path, edge)
+    const size = edge > 1024 ? 'Full' : edge > 256 ? 'Large' : 'Small';
+    const make = isRaw(path) ? request<{ path: string }>({ Thumbnail: { path, size } }).then((r) => r.path) : thumbnail(path, edge);
+    p = make
       .catch(() => null)
       .then((file) => {
         const uri = file ? `file://${file}` : null;

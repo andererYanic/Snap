@@ -47,7 +47,7 @@ async fn eventually(what: &str, secs: u64, mut cond: impl FnMut() -> bool) {
 async fn pin(d: &Daemon, target: &str) -> Response {
     for _ in 0..100 {
         d.request(Request::Sync).await;
-        match d.request(Request::PinAdd { target: target.into() }).await {
+        match d.request(Request::PinAdd { target: target.into(), two_way: false }).await {
             Response::Error { message, .. } if message.contains("bekannt") || message.contains("bietet keine") => {
                 tokio::time::sleep(Duration::from_millis(200)).await
             }
@@ -99,7 +99,10 @@ async fn pinned_share_is_mirrored_and_kept_current() {
     assert!(!mirror.join("2024").exists(), "leere Ordner werden aufgeräumt");
 
     // Doppelter Pin wird erkannt
-    assert!(matches!(phone.request(Request::PinAdd { target: "Fotos".into() }).await, Response::Error { .. }));
+    assert!(matches!(
+        phone.request(Request::PinAdd { target: "Fotos".into(), two_way: false }).await,
+        Response::Error { .. }
+    ));
     pc.shutdown().await;
     phone.shutdown().await;
 }
