@@ -20,6 +20,9 @@ export interface Device {
   storage?: { total: number; free: number; updated_at: number };
 }
 
+/** Name der Freigabe für den ganzen Speicher (wie im Kern). */
+const ALL_FILES = 'Alle Dateien';
+
 export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) => void }) {
   // Geräte: Status, Speicher, Koppeln (Unterseite der Einstellungen)
   const s = styles(theme);
@@ -192,6 +195,31 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
 
       <SectionLabel theme={theme} style={s.label}>{t('Meine Freigaben')}</SectionLabel>
       <View style={s.group}>
+        <View style={s.row}>
+          <Icon name="drive" size={24} color={theme.text2 as string} />
+          <View style={s.grow}>
+            <Text style={s.strong}>{t('Alle Dateien sichtbar')}</Text>
+            <Text style={s.muted}>{t('Deine gekoppelten Geräte sehen den ganzen Speicher und öffnen Dateien bei Bedarf. Ausgenommen: App-Daten, versteckte Ordner und Snap-Ordner.')}</Text>
+          </View>
+          <Switch
+            value={shares.some((x) => x.name === ALL_FILES)}
+            onValueChange={(v) => {
+              const run = () => request({ ShareAll: { enabled: v } }).then(load).catch((e) => notify(e?.message ?? String(e)));
+              if (!v) {
+                run();
+                return;
+              }
+              Alert.alert(t('Alle Dateien sichtbar machen?'), t('Alle gekoppelten Geräte – auch künftig gekoppelte – sehen dann alle deine Dateien. Beim ersten Mal erfasst Snap alle Dateien einmal; das kann etwas dauern.'), [
+                { text: t('Abbrechen'), style: 'cancel' },
+                { text: t('Sichtbar machen'), onPress: run },
+              ]);
+            }}
+            trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+            thumbColor={theme.surface as string}
+            accessibilityLabel={t('Alle Dateien sichtbar')}
+          />
+        </View>
+        <View style={s.sepFull} />
         {shares.length === 0 ? (
           <Text style={[s.muted, s.block]}>{t('Noch keine Ordner freigegeben. In „Dateien“ einen Ordner lange drücken › „Für Geräte freigeben“.')}</Text>
         ) : (

@@ -116,6 +116,8 @@ pub struct Config {
     pub link_default_days: u32,
     /// Snap Drop: Ablage für empfangene Dateien.
     pub drop_dir: PathBuf,
+    /// Wurzel für „Alle Dateien“ (Android: gemeinsamer Speicher; sonst das Home-Verzeichnis).
+    pub storage_root: Option<PathBuf>,
     /// Snap Drop: Gerätetyp für das Symbol beim Gegenüber.
     pub drop_kind: crate::drop::wire::DeviceKind,
     /// Snap Drop: im Netz per mDNS finden/gefunden werden (in Tests aus).
@@ -270,6 +272,7 @@ impl Config {
             upload_reserve_gb: file.upload_reserve_gb.unwrap_or(5),
             link_default_days: file.link_default_days.unwrap_or(7).clamp(1, 3650),
             drop_dir,
+            storage_root: None,
             drop_kind: crate::drop::wire::DeviceKind::Laptop,
             drop_mdns: true,
             drop_hotspot: false,
@@ -306,6 +309,7 @@ impl Config {
             upload_reserve_gb: 0,
             link_default_days: 7,
             drop_dir: root.join("Snap Drop"),
+            storage_root: None,
             drop_kind: crate::drop::wire::DeviceKind::Laptop,
             drop_mdns: false,
             drop_hotspot: false,
@@ -340,6 +344,13 @@ fn expand_tilde(path: PathBuf) -> PathBuf {
         }
     }
     path
+}
+
+impl Config {
+    /// Wurzel für „Alle Dateien“: eingestellter Speicher oder das Home-Verzeichnis.
+    pub fn device_root(&self) -> Option<PathBuf> {
+        self.storage_root.clone().or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
+    }
 }
 
 const CONFIG_TEMPLATE: &str = r#"# Snap / space-daemon Konfiguration

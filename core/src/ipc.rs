@@ -486,6 +486,11 @@ pub enum Request {
     DropUnblock {
         key: String,
     },
+    /// „Alle Dateien“ dieses Geräts für alle gekoppelten Geräte sichtbar machen (oder nicht mehr).
+    /// Ausgenommen: App-Daten, versteckte Ordner und Snap-eigene Ordner.
+    ShareAll {
+        enabled: bool,
+    },
     /// Wartende Kopplung bestätigen oder ablehnen (nach Vergleich des Prüfcodes).
     PairConfirm {
         accept: bool,

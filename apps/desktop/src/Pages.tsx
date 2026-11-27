@@ -57,6 +57,8 @@ export function Devices({ notify }: { notify: Notify }) {
   const [invite, setInvite] = useState<{ code: string; expires_at: number } | null>(null);
   const [code, setCode] = useState("");
   const [grantFor, setGrantFor] = useState<Device | null>(null);
+  const [myShares, reloadShares] = useLoader(() => api.shareList(), notify);
+  const allFiles = (myShares ?? []).some((x) => x.name === "Alle Dateien");
   // Beim Koppeln mit einem Code: Prüfcode, der auf dem anderen Gerät zu bestätigen ist
   const [joinCode, setJoinCode] = useState<string | null>(null);
   useEffect(() => {
@@ -161,6 +163,19 @@ export function Devices({ notify }: { notify: Notify }) {
             {grantFor?.node_id === d.node_id && <GrantForm device={d} notify={notify} done={() => { setGrantFor(null); reload(); }} />}
           </div>
         ))}
+      </section>
+      <section className="panel">
+        <label className="line toggle">
+          <input
+            type="checkbox"
+            checked={allFiles}
+            onChange={(e) => api.shareAll(e.target.checked).then(reloadShares).catch(fail(notify))}
+          />
+          <span className="grow">
+            <span className="strong">{t("Alle Dateien sichtbar")}</span>
+            <span className="muted small">{t("Deine gekoppelten Geräte sehen den ganzen Speicher und öffnen Dateien bei Bedarf. Ausgenommen: App-Daten, versteckte Ordner und Snap-Ordner.")}</span>
+          </span>
+        </label>
       </section>
       <section className="panel">
         <h2>{t("Neues Gerät koppeln")}</h2>

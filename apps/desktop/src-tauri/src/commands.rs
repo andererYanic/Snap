@@ -764,6 +764,28 @@ pub async fn pair_confirm_prompt(app: AppHandle, d: State<'_, Daemon>, name: Str
     d.request(Request::PairConfirm { accept }).await
 }
 
+/// Freigaben dieses Geräts (nur zum Anzeigen).
+#[tauri::command]
+pub async fn share_list(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::ShareList).await
+}
+
+/// „Alle Dateien“ für alle gekoppelten Geräte sichtbar machen – nur nach Bestätigung im nativen
+/// Dialog (eine manipulierte Web-Ansicht kann das nicht selbst einschalten).
+#[tauri::command]
+pub async fn share_all(app: AppHandle, d: State<'_, Daemon>, enabled: bool) -> UiResult<Value> {
+    if enabled {
+        let text = tr(
+            "Alle gekoppelten Geräte – auch künftig gekoppelte – sehen dann alle deine Dateien. Beim ersten Mal erfasst Snap alle Dateien einmal; das kann etwas dauern.",
+            &[],
+        );
+        if !confirm(&app, tr("Alle Dateien sichtbar machen?", &[]), text, tr("Sichtbar machen", &[])).await {
+            return Err(cancelled());
+        }
+    }
+    d.request(Request::ShareAll { enabled }).await
+}
+
 #[tauri::command]
 pub async fn clipboard_send(d: State<'_, Daemon>, device: String, text: String) -> UiResult<Value> {
     if text.len() > 64 * 1024 {

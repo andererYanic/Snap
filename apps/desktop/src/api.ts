@@ -105,6 +105,8 @@ export const api = {
   open: (path: string) => invoke<void>("open_path", { path }),
   clipboardSend: (device: string, text: string) => invoke<unknown>("clipboard_send", { device, text }),
   pairConfirmPrompt: (name: string, code: string) => invoke<unknown>("pair_confirm_prompt", { name, code }),
+  shareList: () => invoke<{ shares: { name: string; root: string; file_count: number }[] }>("share_list").then((r) => r.shares ?? []),
+  shareAll: (enabled: boolean) => invoke<unknown>("share_all", { enabled }),
   clipboardPending: () => invoke<{ name: string | null; text: string | null }>("clipboard_pending"),
   startDaemon: () => invoke<void>("start_daemon"),
   streamUrl: (path: string) => invoke<{ url: string }>("stream_url", { path }),

@@ -124,6 +124,7 @@ pub(crate) async fn handle_request(
         Request::TrashEmpty => fileops::trash_empty(inner).await,
         Request::RemoteOp { device, op } => crate::remote_ops::send(inner, &device, op).await,
         Request::ClipboardSend { device, text } => crate::clipboard::send(inner, &device, text).await,
+        Request::ShareAll { enabled } => share_all(inner, enabled).await,
         Request::PairConfirm { accept } => {
             if inner.pairing.state.answer(accept) {
                 Ok(Response::Success { message: if accept { "Bestätigt".into() } else { "Abgelehnt".into() } })
@@ -376,6 +377,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropCancel { .. } => "drop.cancel",
         Request::ClipboardSend { .. } => "clipboard.send",
         Request::PairConfirm { .. } => "pair.confirm",
+        Request::ShareAll { .. } => "share.all",
         Request::ClipboardPending => "clipboard.pending",
         Request::DropHistory => "drop.history",
         Request::DropHistoryClear => "drop.history.clear",
@@ -411,6 +413,21 @@ fn request_name(req: &Request) -> Option<&'static str> {
 }
 
 /// DOCX-Leseansicht (blockierend lesen, außerhalb der Laufzeit-Threads).
+/// „Alle Dateien“ ein- oder ausschalten (eine Freigabe der Speicherwurzel für alle Geräte).
+async fn share_all(inner: &std::sync::Arc<DaemonInner>, enabled: bool) -> anyhow::Result<Response> {
+    let exists = inner.db.list_shares()?.iter().any(|s| s.name == crate::shares::ALL_FILES_SHARE);
+    match (enabled, exists) {
+        (true, false) => {
+            let Some(root) = inner.config.device_root() else {
+                crate::api_bail!(Unavailable, "Kein Speicherort bekannt");
+            };
+            shares::share_add(inner, &root, Some(crate::shares::ALL_FILES_SHARE.into()), None).await
+        }
+        (false, true) => shares::share_remove(inner, crate::shares::ALL_FILES_SHARE),
+        _ => Ok(Response::Success { message: "Unverändert".into() }),
+    }
+}
+
 async fn read_document(path: std::path::PathBuf, image_dir: Option<std::path::PathBuf>) -> anyhow::Result<Response> {
     let doc = tokio::task::spawn_blocking(move || crate::docs::read_document(&path, image_dir.as_deref()))
         .await
