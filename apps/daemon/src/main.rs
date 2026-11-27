@@ -1,5 +1,7 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 
+#[cfg(target_os = "linux")]
+mod notify;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use space_core::database::{AuditEntry, DeviceInfo, JobState, PeerInfo, PendingJob, RemoteFile, ShareInfo};
@@ -953,6 +955,8 @@ fn absolute(p: &Path) -> Result<PathBuf> {
 
 async fn run_daemon(config: Config) -> Result<()> {
     let daemon = Daemon::start(config).await?;
+    #[cfg(target_os = "linux")]
+    tokio::spawn(notify::run(daemon.clone()));
     let c = daemon.config();
     println!("🆔 Node-ID:      {}", daemon.node_id());
     println!("🔌 IPC-Socket:   {}", c.socket_path.display());
@@ -1674,6 +1678,11 @@ fn print_response(res: Response) -> ExitCode {
             }
         }
         Response::DropContact(c) => println!("👤 Kontakt {} gespeichert ({}).", c.name, c.fingerprint),
+        Response::DropHistory { items } => {
+            for i in items {
+                println!("📥 {} · {} · {} Datei(en)", i.peer, i.kind, i.count);
+            }
+        }
         Response::DropBlocked { blocked } => {
             if blocked.is_empty() {
                 println!("Niemand gesperrt.");

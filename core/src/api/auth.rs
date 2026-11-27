@@ -191,6 +191,9 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropHotspotRequest { .. }
         | Request::DropWakeExport { .. }
         | Request::DropSetRemote { .. }
+        | Request::DropCancel { .. }
+        | Request::DropHistory
+        | Request::DropHistoryClear
         | Request::DropContactRemote { .. }
         | Request::DropSendContact { .. }
         | Request::DropBackground { .. }

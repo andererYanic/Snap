@@ -309,8 +309,26 @@ class SnapDropModule(private val ctx: ReactApplicationContext) : ReactContextBas
     m.putBoolean("wlan", p.getBoolean(DropWake.K_WLAN, false))
     m.putString("who", p.getString(DropWake.K_WHO, "contacts"))
     m.putBoolean("batteryExempt", DropBgService.exempt(ctx))
+    m.putBoolean("popup", DropNotify.popupWanted(ctx) && DropNotify.canPopup(ctx))
     m.putBoolean("supported", Build.VERSION.SDK_INT >= 26 && DropWake.selfTest())
     promise.resolve(m)
+  }
+
+  /**
+   * Angebote zusätzlich als Popup über anderen Apps zeigen. Braucht „Über anderen Apps
+   * einblenden“; fehlt die Erlaubnis, öffnet sich die Systemeinstellung dafür.
+   */
+  @ReactMethod
+  fun setPopup(enabled: Boolean) {
+    DropWake.prefs(ctx).edit().putBoolean(DropNotify.K_POPUP, enabled).apply()
+    if (enabled && !DropNotify.canPopup(ctx) && Build.VERSION.SDK_INT >= 23) {
+      try {
+        ctx.startActivity(
+          Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctx.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+      } catch (_: Throwable) {}
+    }
   }
 
   /** Systemdialog „Akku-Optimierung aufheben“ (nötig, damit das Wecken den Dienst starten darf). */

@@ -32,6 +32,8 @@ pub(crate) const PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
 pub(crate) const CATALOG_MAX_AGE_SECS: i64 = 300;
 
 pub struct DaemonInner {
+    /// Verbundene Oberflächen, die Ereignisse abonniert haben.
+    pub(crate) ui_clients: std::sync::atomic::AtomicUsize,
     pub config: Config,
     pub network: P2pNetwork,
     pub db: Arc<DatabaseManager>,
@@ -295,6 +297,7 @@ impl Daemon {
             db.clone(),
         )?;
         let inner = Arc::new(DaemonInner {
+            ui_clients: std::sync::atomic::AtomicUsize::new(0),
             config,
             network,
             db,
@@ -409,6 +412,11 @@ impl Daemon {
     }
 
     /// Ereignisse abonnieren (eingebettete Nutzung, z. B. Mobile per FFI).
+    /// Zahl der Oberflächen, die gerade Ereignisse abonniert haben (z. B. die Desktop-App).
+    pub fn ui_clients(&self) -> usize {
+        self.inner.ui_clients.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn subscribe(&self) -> crate::events::Subscription {
         self.inner.db.events().subscribe()
     }
@@ -510,6 +518,15 @@ pub(crate) async fn handle_ipc_connection(inner: &Arc<DaemonInner>, mut stream: 
 /// Sendet Ereignisse, bis der Client die Verbindung schließt.
 async fn stream_events(inner: &DaemonInner, mut stream: UnixStream) -> Result<()> {
     let mut sub = inner.db.events().subscribe();
+    // Solange eine Oberfläche zuhört, zeigt sie Angebote selbst (keine Systemmitteilung).
+    struct Listening<'a>(&'a std::sync::atomic::AtomicUsize);
+    impl Drop for Listening<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    inner.ui_clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _listening = Listening(&inner.ui_clients);
     // Bestätigung, damit der Client weiß, dass das Abo aktiv ist.
     write_frame(&mut stream, &Response::Success { message: "Abonniert".into() }).await?;
     let mut probe = [0u8; 1];

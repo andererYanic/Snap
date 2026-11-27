@@ -18,6 +18,8 @@
     <string name="drop_link_copied">Link from %1$s – copied to the clipboard.</string>
     <string name="drop_open">Open</string>
     <string name="drop_failed">Receiving failed: %1$s</string>
+    <string name="drop_popup_title">%1$s wants to send you something</string>
+    <string name="drop_cancel">Cancel</string>
     <plurals name="drop_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>

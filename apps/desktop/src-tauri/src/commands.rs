@@ -750,6 +750,21 @@ pub async fn drop_send_contact(
 }
 
 #[tauri::command]
+pub async fn drop_cancel(d: State<'_, Daemon>, id: u64) -> UiResult<Value> {
+    d.request(Request::DropCancel { id }).await
+}
+
+#[tauri::command]
+pub async fn drop_history(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::DropHistory).await
+}
+
+#[tauri::command]
+pub async fn drop_history_clear(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::DropHistoryClear).await
+}
+
+#[tauri::command]
 pub async fn drop_set_remote(d: State<'_, Daemon>, enabled: bool) -> UiResult<Value> {
     d.request(Request::DropSetRemote { enabled }).await
 }

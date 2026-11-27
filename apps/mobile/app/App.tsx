@@ -15,7 +15,7 @@ import { materialTheme, snapTheme, type Theme } from './src/theme';
 import { NavIcon, themed } from './src/ui';
 import { fadeIn, initMotion, m, toastIn, toastOut } from './src/motion';
 import * as drop from './src/drop';
-import { DropSendSheet, HotspotSheet, OfferSheet } from './src/Drop';
+import { DropSendSheet, HotspotSheet, OfferSheet, ReceiveBar } from './src/Drop';
 
 type Tab = 'files' | 'photos' | 'settings';
 
@@ -93,6 +93,13 @@ export default function App() {
       if (st === 'active' && ready === 'permission') {
         boot();
       }
+      // Ein offenes Angebot könnte inzwischen per Mitteilung beantwortet worden sein
+      if (st === 'active' && ready === 'ok') {
+        drop
+          .offers()
+          .then((list) => setIncoming((cur) => (cur && !list.some((o) => o.id === cur.id) ? null : cur)))
+          .catch(() => {});
+      }
     });
     return () => sub.remove();
   }, [boot, ready]);
@@ -133,6 +140,10 @@ export default function App() {
         .then((c) => notify(t('{name} ist jetzt ein Kontakt.', { name: c.name })))
         .catch((e) => notify(String(e?.message ?? e)));
     const off = core.onEvent((ev) => {
+      if ((ev.type === 'DropProgress' || ev.type === 'DropFinished') && ev.incoming) {
+        // Schon über Mitteilung oder Popup beantwortet
+        setIncoming((cur) => (cur?.id === ev.id ? null : cur));
+      }
       if (ev.type === 'DropOffer') {
         drop
           .offers()
@@ -299,6 +310,7 @@ export default function App() {
               )}
             </Animated.View>
           )}
+          <ReceiveBar theme={theme} />
           {dropShare && <DropSendSheet paths={dropShare.paths} text={dropShare.text} theme={theme} notify={notify} onClose={() => setDropShare(null)} />}
           {incoming && <OfferSheet offer={incoming} theme={theme} onDone={() => setIncoming(null)} />}
           {hotspot && <HotspotSheet offer={hotspot.offer} theme={theme} onAnswer={answerHotspot} />}

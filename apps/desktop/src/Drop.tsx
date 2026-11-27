@@ -3,7 +3,7 @@
 // Entwurf und Risiken: docs/DROP.md.
 import { t } from "./i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { baseName, drop, errorText, formatDate, humanSize, isCancelled, onDaemonEvent, type DropBlocked, type DropContact, type DropMode, type DropStatus, type IncomingOffer, type NearbyPeer } from "./api";
+import { api, baseName, drop, errorText, formatDate, humanSize, isCancelled, onDaemonEvent, type DropBlocked, type DropContact, type DropMode, type DropHistoryItem, type DropStatus, type IncomingOffer, type NearbyPeer } from "./api";
 import type { Toast } from "./App";
 import { Icon } from "./icons";
 
@@ -27,6 +27,7 @@ export function DropPage({ notify }: { notify: Notify }) {
   const [st, setSt] = useState<DropStatus | null>(null);
   const [people, setPeople] = useState<DropContact[]>([]);
   const [blocked, setBlocked] = useState<DropBlocked[]>([]);
+  const [recent, setRecent] = useState<DropHistoryItem[]>([]);
   const [now, setNow] = useState(Date.now() / 1000);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -35,6 +36,7 @@ export function DropPage({ notify }: { notify: Notify }) {
     drop.status().then(setSt).catch(fail(notify));
     drop.contacts().then(setPeople).catch(() => {});
     drop.blocked().then(setBlocked).catch(() => {});
+    drop.history().then(setRecent).catch(() => {});
   }, [notify]);
 
   useEffect(() => {
@@ -129,6 +131,28 @@ export function DropPage({ notify }: { notify: Notify }) {
         <div className="muted small ablage">{t("Ablage")}: {st?.dir}</div>
       </section>
 
+      {recent.length > 0 && (
+        <section className="panel">
+          <h2>{t("Zuletzt empfangen")}</h2>
+          {recent.slice(0, 8).map((h) => (
+            <div key={h.id} className="line person">
+              <div className="grow">
+                <div className={h.kind === "files" && !h.exists ? "strong muted" : "strong"}>
+                  {h.kind === "text" ? t("Text") : h.kind === "link" ? t("Link") : h.count === 1 ? baseName(h.files[0]) : t("{n} Dateien", { n: h.count })}
+                </div>
+                <div className="muted small">{`${h.peer} · ${formatDate(h.at)}`}</div>
+              </div>
+              {h.kind === "files" && h.exists && (
+                <button className="btn" onClick={() => api.open(h.count === 1 ? h.files[0] : h.files[0].slice(0, h.files[0].lastIndexOf("/"))).catch(fail(notify))}>
+                  {h.count === 1 ? t("Öffnen") : t("Ordner öffnen")}
+                </button>
+              )}
+            </div>
+          ))}
+          <button className="btn" onClick={() => drop.clearHistory().then(load).catch(fail(notify))}>{t("Verlauf löschen")}</button>
+        </section>
+      )}
+
       <section className="panel">
         <h2>{t("Kontakte")}</h2>
         <label className="line toggle">
@@ -199,6 +223,7 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
   const [peers, setPeers] = useState<NearbyPeer[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [sendId, setSendId] = useState<number | null>(null);
   const [code, setCode] = useState("");
   const [people, setPeople] = useState<DropContact[]>([]);
 
@@ -214,7 +239,10 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
     const timer = window.setInterval(refresh, 1500);
     const sub = onDaemonEvent((ev) => {
       if (ev.type === "DropNearbyChanged") refresh();
-      if (ev.type === "DropProgress" && !ev.incoming) setProgress({ done: Number(ev.done_bytes), total: Number(ev.total_bytes) });
+      if (ev.type === "DropProgress" && !ev.incoming) {
+        setSendId(Number(ev.id));
+        setProgress({ done: Number(ev.done_bytes), total: Number(ev.total_bytes) });
+      }
     });
     return () => {
       alive = false;
@@ -320,7 +348,11 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
         <div className="line">
           <input className="field grow" placeholder={t("Code (snapdrop1-…)")} value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && code.trim() && connect()} />
           <button className="btn" disabled={!code.trim()} onClick={connect}>{t("Verbinden")}</button>
-          <button className="btn" disabled={!!busy} onClick={onClose}>{t("Schließen")}</button>
+          {busy && sendId !== null ? (
+            <button className="btn" onClick={() => drop.cancel(sendId).catch(fail(notify))}>{t("Abbrechen")}</button>
+          ) : (
+            <button className="btn" disabled={!!busy} onClick={onClose}>{t("Schließen")}</button>
+          )}
         </div>
       </div>
     </div>

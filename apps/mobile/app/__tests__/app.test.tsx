@@ -1440,3 +1440,48 @@ test('Von überall: Kontakt mit Adresse direkt senden, ohne Adresse per Bluetoot
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Empfang: Fortschritt mit Abbrechen, Verlauf „Zuletzt empfangen“ mit Löschen', async () => {
+  const { DeviceEventEmitter } = require('react-native');
+  const { ReceiveBar, DropPage } = require('../src/Drop');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let items = [{ id: 1, at: Math.floor(Date.now() / 1000) - 60, peer: 'Anna', kind: 'files', count: 1, files: ['/storage/emulated/0/Download/Snap Drop/foto.jpg'], exists: true }];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'DropHistory') return JSON.stringify({ DropHistory: { items } });
+    if (req === 'DropHistoryClear') { items = []; return JSON.stringify({ Success: { message: 'ok' } }); }
+    if (req === 'DropStatus') return JSON.stringify({ DropStatus: { mode: 'off', until: null, name: 'Ich', fingerprint: 'f', dir: '/x', code: null } });
+    if (req === 'DropContacts') return JSON.stringify({ DropContacts: { contacts: [] } });
+    if (req === 'DropBlocked') return JSON.stringify({ DropBlocked: { blocked: [] } });
+    if (req.DropCancel) { calls.push(req); return JSON.stringify({ Success: { message: 'ok' } }); }
+    return origRequest(json);
+  });
+  const emit = (ev: object) => act(async () => { DeviceEventEmitter.emit('snap-event', JSON.stringify(ev)); });
+  try {
+    let bar!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { bar = mount(<ReceiveBar theme={snapTheme(false)} />); });
+    await emit({ type: 'DropOffer', id: 9, name: 'Anna', contact: 'Anna', code: '1', files: 1, total: 100, kinds: [], preview: false });
+    await emit({ type: 'DropProgress', id: 9, incoming: true, done_bytes: 40, total_bytes: 100 });
+    expect(allText(bar)).toContain('Empfange von Anna');
+    await act(async () => { pressable(bar, 'Abbrechen').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ DropCancel: { id: 9 } });
+    await emit({ type: 'DropFinished', id: 9, incoming: true, ok: false, peer: 'Anna', files: [], error: 'Abgebrochen', can_save_contact: false });
+    expect(allText(bar)).not.toContain('Empfange von');
+
+    let page!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { page = mount(<DropPage theme={snapTheme(false)} notify={() => {}} />); });
+    await flush();
+    expect(allText(page)).toContain('Zuletzt empfangen');
+    expect(allText(page)).toContain('foto.jpg');
+    NativeModules.SnapCore.openFile.mockClear();
+    await act(async () => { pressable(page, 'foto.jpg').props.onPress(); });
+    expect(NativeModules.SnapCore.openFile).toHaveBeenCalledWith('/storage/emulated/0/Download/Snap Drop/foto.jpg');
+    await act(async () => { await pressable(page, 'Verlauf löschen').props.onPress(); });
+    await flush();
+    expect(allText(page)).not.toContain('Zuletzt empfangen');
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

@@ -4,18 +4,14 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.os.PowerManager
-import android.text.format.Formatter
 import android.util.Base64
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -46,12 +42,10 @@ class DropBgService : Service() {
     private const val ACTION_ALWAYS = "de.snap.mobile.drop.BG_ALWAYS"
     private const val ACTION_STOP_ALWAYS = "de.snap.mobile.drop.BG_STOP_ALWAYS"
     private const val ACTION_RESPOND = "de.snap.mobile.drop.BG_RESPOND"
-    private const val CH_SERVICE = "drop_bg"
-    private const val CH_OFFERS = "drop_offers"
+    private const val CH_SERVICE = DropNotify.CH_SERVICE
+    private const val CH_OFFERS = DropNotify.CH_OFFERS
     private const val NOTE_SERVICE = 4100
     private const val NOTE_WAKE = 4101
-    private const val NOTE_OFFER = 4200
-    private const val NOTE_DONE = 4600
     private const val WAKE_MS = 200_000L
     private const val WINDOW_WAKE_SECS = 240
     private const val WINDOW_ALWAYS_SECS = 900
@@ -112,29 +106,9 @@ class DropBgService : Service() {
       } catch (_: Throwable) {}
     }
 
-    private fun notify(ctx: Context, id: Int, n: android.app.Notification) {
-      try {
-        (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, n)
-      } catch (_: SecurityException) {
-        // Mitteilungen nicht erlaubt (Android 13+): still bleiben
-      }
-    }
+    private fun notify(ctx: Context, id: Int, n: android.app.Notification) = DropNotify.notify(ctx, id, n)
 
-    private fun ensureChannels(ctx: Context) {
-      if (Build.VERSION.SDK_INT < 26) return
-      val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-      nm.createNotificationChannel(
-        NotificationChannel(CH_SERVICE, ctx.getString(R.string.drop_bg_channel), NotificationManager.IMPORTANCE_LOW).apply {
-          setShowBadge(false)
-        },
-      )
-      nm.createNotificationChannel(
-        NotificationChannel(CH_OFFERS, ctx.getString(R.string.drop_offer_channel), NotificationManager.IMPORTANCE_HIGH).apply {
-          // Auf dem Sperrbildschirm ohne Namen und Dateien
-          lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
-        },
-      )
-    }
+    private fun ensureChannels(ctx: Context) = DropNotify.ensureChannels(ctx)
   }
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -143,11 +117,9 @@ class DropBgService : Service() {
   @Volatile private var wakeUntil = 0L
   private val pending = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
   private val active = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
-  private val names = java.util.concurrent.ConcurrentHashMap<Long, String>()
   private var beacon: DropBeacon? = null
   private var lastInfo: String? = null
   private var multicast: WifiManager.MulticastLock? = null
-  private var lastProgress = 0L
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -155,8 +127,8 @@ class DropBgService : Service() {
     ensureChannels(this)
     when (intent?.action) {
       ACTION_RESPOND -> {
-        respond(intent.getLongExtra("id", -1), intent.getBooleanExtra("accept", false))
-        if (loop == null) goForeground()
+        DropNotify.respond(this, intent.getLongExtra("id", -1), intent.getBooleanExtra("accept", false))
+        if (loop == null) stopSelf()
         return START_NOT_STICKY
       }
       ACTION_STOP_ALWAYS -> {
@@ -205,6 +177,7 @@ class DropBgService : Service() {
       finish()
       return
     }
+    DropNotify.install(applicationContext)
     CoreHolder.addListener("drop-bg") { onEvent(it) }
     var lastWindow = 0L
     while (scope.isActive) {
@@ -258,6 +231,7 @@ class DropBgService : Service() {
     if (b.start(bytes)) lastInfo = info
   }
 
+  /** Nur Buchführung (offen/laufend); Mitteilungen und Popup zeigt [DropNotify]. */
   private fun onEvent(json: String) {
     val ev = try { JSONObject(json) } catch (_: Throwable) { return }
     val id = ev.optLong("id", -1)
@@ -265,138 +239,16 @@ class DropBgService : Service() {
       "DropOffer" -> {
         pending += id
         wakeUntil = maxOf(wakeUntil, System.currentTimeMillis() + 130_000)
-        val name = ev.optString("contact").takeIf { it.isNotEmpty() && it != "null" } ?: ev.optString("name")
-        names[id] = name
-        if (!MainActivity.visible) showOffer(id, name, ev)
       }
-      "DropOfferClosed" -> {
-        pending -= id
-        cancel(NOTE_OFFER + (id % 400).toInt())
-      }
+      "DropOfferClosed" -> pending -= id
       "DropProgress" -> if (ev.optBoolean("incoming")) {
+        pending -= id
         active += id
-        val now = System.currentTimeMillis()
-        if (now - lastProgress > 1000 && !MainActivity.visible) {
-          lastProgress = now
-          showProgress(id, ev.optLong("done_bytes"), ev.optLong("total_bytes"))
-        }
       }
       "DropFinished" -> if (ev.optBoolean("incoming")) {
         active -= id
         pending -= id
-        cancel(NOTE_OFFER + (id % 400).toInt())
         wakeUntil = maxOf(wakeUntil, System.currentTimeMillis() + 20_000)
-        if (!MainActivity.visible) showFinished(id, ev)
-      }
-    }
-  }
-
-  private fun cancel(note: Int) {
-    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(note)
-  }
-
-  private fun respondIntent(id: Long, accept: Boolean): PendingIntent {
-    val i = Intent(this, DropBgService::class.java).setAction(ACTION_RESPOND).putExtra("id", id).putExtra("accept", accept)
-    return PendingIntent.getService(this, (id * 2 + if (accept) 1 else 0).toInt(), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-  }
-
-  private fun openApp(): PendingIntent = PendingIntent.getActivity(
-    this, 2, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE,
-  )
-
-  private fun showOffer(id: Long, name: String, ev: JSONObject) {
-    val files = ev.optInt("files")
-    val what = if (files == 0) {
-      getString(R.string.drop_offer_text)
-    } else {
-      getString(
-        R.string.drop_offer_files,
-        resources.getQuantityString(R.plurals.drop_files, files, files),
-        Formatter.formatShortFileSize(this, ev.optLong("total")),
-      )
-    }
-    val contact = ev.optString("contact").let { it.isNotEmpty() && it != "null" }
-    val text = if (contact) what else what + "\n" + getString(R.string.drop_offer_code, ev.optString("code"))
-    val public = NotificationCompat.Builder(this, CH_OFFERS)
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setContentTitle(getString(R.string.drop_share))
-      .setContentText(getString(R.string.drop_offer_locked))
-      .build()
-    val n = NotificationCompat.Builder(this, CH_OFFERS)
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setContentTitle(name)
-      .setContentText(what)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-      .setContentIntent(openApp())
-      .setPublicVersion(public)
-      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-      .setPriority(NotificationCompat.PRIORITY_HIGH)
-      .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-      .setTimeoutAfter(120_000)
-      .addAction(0, getString(R.string.drop_decline), respondIntent(id, false))
-      .addAction(0, getString(R.string.drop_accept), respondIntent(id, true))
-      .build()
-    notify(this, NOTE_OFFER + (id % 400).toInt(), n)
-  }
-
-  private fun showProgress(id: Long, done: Long, total: Long) {
-    val n = NotificationCompat.Builder(this, CH_SERVICE)
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setContentTitle(names[id] ?: getString(R.string.drop_share))
-      .setContentText(getString(R.string.drop_receiving))
-      .setProgress(1000, if (total > 0) (done * 1000 / total).toInt() else 0, total <= 0)
-      .setOngoing(true)
-      .setOnlyAlertOnce(true)
-      .build()
-    notify(this, NOTE_OFFER + (id % 400).toInt(), n)
-  }
-
-  private fun showFinished(id: Long, ev: JSONObject) {
-    val peer = ev.optString("peer")
-    val b = NotificationCompat.Builder(this, CH_OFFERS)
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setContentTitle(getString(R.string.drop_share))
-      .setAutoCancel(true)
-      .setContentIntent(openApp())
-    if (!ev.optBoolean("ok")) {
-      b.setContentText(getString(R.string.drop_failed, ev.optString("error").take(200)))
-    } else {
-      val text = ev.optString("text").takeIf { ev.has("text") && !ev.isNull("text") }
-      val link = ev.optString("link").takeIf { ev.has("link") && !ev.isNull("link") }
-      if (text != null) {
-        // Text immer in die Zwischenablage (Schreiben ist auch im Hintergrund erlaubt)
-        try {
-          (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Snap Drop", text))
-        } catch (_: Throwable) {}
-        b.setContentText(getString(if (link != null) R.string.drop_link_copied else R.string.drop_text_copied, peer))
-        val uri = link?.let { Uri.parse(it) }
-        if (uri != null && (uri.scheme == "https" || uri.scheme == "http") && !uri.host.isNullOrEmpty()) {
-          val view = Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          b.addAction(0, getString(R.string.drop_open), PendingIntent.getActivity(this, 3, view, PendingIntent.FLAG_IMMUTABLE))
-        }
-      } else {
-        val n = ev.optJSONArray("files")?.length() ?: 0
-        b.setContentText(getString(R.string.drop_saved, resources.getQuantityString(R.plurals.drop_files, n, n), peer))
-      }
-    }
-    notify(this, NOTE_DONE + (id % 400).toInt(), b.build())
-  }
-
-  private fun respond(id: Long, accept: Boolean) {
-    if (id < 0) return
-    cancel(NOTE_OFFER + (id % 400).toInt())
-    scope.launch {
-      try {
-        val core = CoreHolder.get(applicationContext)
-        core.request("""{"DropRespond":{"id":$id,"accept":$accept,"block":false}}""")
-        if (accept) {
-          active += id
-          wakeUntil = maxOf(wakeUntil, System.currentTimeMillis() + 60_000)
-        }
-      } catch (e: Throwable) {
-        android.util.Log.w("SnapDrop", "Antwort nicht übermittelt: ${e.message}")
-      } finally {
-        pending -= id
       }
     }
   }
