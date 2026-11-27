@@ -486,6 +486,14 @@ pub enum Request {
     DropUnblock {
         key: String,
     },
+    /// Laufende Übertragung oder offenes Angebot abbrechen.
+    DropCancel {
+        id: u64,
+    },
+    /// Zuletzt empfangene Sendungen.
+    DropHistory,
+    /// Verlauf löschen (die Dateien bleiben).
+    DropHistoryClear,
     /// Von überall empfangen (nur Kontakte) ein- oder ausschalten.
     DropSetRemote {
         enabled: bool,
@@ -817,6 +825,9 @@ pub enum Response {
         contacts: Vec<crate::drop::ContactInfo>,
     },
     DropContact(crate::drop::ContactInfo),
+    DropHistory {
+        items: Vec<crate::drop::HistoryItem>,
+    },
 
     DropBlocked {
         blocked: Vec<crate::drop::BlockedSender>,

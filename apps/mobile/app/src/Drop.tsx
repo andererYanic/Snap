@@ -2,7 +2,7 @@
 // Kurzanfrage für den Offline-Weg und die Einstellungsseite (Sichtbarkeit, Kontakte, Sperren).
 // Grundsätze: docs/DESIGN.md; Sicherheit: docs/DROP.md.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, BackHandler, Image, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { Alert, AppState, BackHandler, Image, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, TextInput, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import * as core from './core';
 import * as drop from './drop';
@@ -62,7 +62,7 @@ function Sheet({ theme, onClose, children }: { theme: Theme; onClose: () => void
 
 // ------------------------------------------------------------------ Senden
 
-type SendState = { peer: string; phase: 'waiting' | 'sending' | 'done' | 'failed'; done: number; total: number; error?: string };
+type SendState = { peer: string; phase: 'waiting' | 'sending' | 'done' | 'failed'; done: number; total: number; error?: string; id?: number };
 
 export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
   paths: string[]; text?: string | null; theme: Theme; onClose: () => void; notify: (text: string) => void;
@@ -92,7 +92,12 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
       if (ev.type === 'DropNearbyChanged') {
         refresh();
       } else if (ev.type === 'DropProgress' && !ev.incoming) {
-        setState((st) => (st ? { ...st, phase: 'sending', done: ev.done_bytes, total: ev.total_bytes } : st));
+        // Das erste Lebenszeichen (0 Byte) kommt vor dem Annehmen und liefert die Kennung
+        setState((st) =>
+          st && st.phase !== 'done' && st.phase !== 'failed'
+            ? { ...st, id: ev.id, phase: ev.done_bytes > 0 ? 'sending' : st.phase, done: ev.done_bytes, total: ev.total_bytes }
+            : st,
+        );
       }
     });
     return () => {
@@ -211,6 +216,11 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
         <Text style={s.sheetTitle}>{t('In der Nähe senden')}</Text>
         <Text style={s.meta} numberOfLines={1}>{subtitle}</Text>
       </View>
+      {busy && state?.id !== undefined ? (
+        <Pressable onPress={() => drop.cancel(state.id!).catch(() => {})} style={s.textBtn} accessibilityRole="button">
+          <Text style={[s.link, s.dangerText]}>{t('Abbrechen')}</Text>
+        </Pressable>
+      ) : null}
       <ScrollView style={s.list} contentContainerStyle={s.listInner}>
         {peers.length === 0 ? (
           <View style={s.empty}>
@@ -335,6 +345,43 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
 }
 
 // ------------------------------------------------------------------ Empfangen
+
+/** Laufender Empfang: Fortschritt und „Abbrechen“ (verschwindet mit dem Ende). */
+export function ReceiveBar({ theme }: { theme: Theme }) {
+  const s = styles(theme);
+  const [rx, setRx] = useState<{ id: number; name: string; done: number; total: number } | null>(null);
+  const names = useRef(new Map<number, string>());
+  useEffect(() => {
+    const off = core.onEvent((ev) => {
+      if (ev.type === 'DropOffer') {
+        names.current.set(ev.id, ev.contact ?? ev.name);
+      } else if (ev.type === 'DropProgress' && ev.incoming) {
+        setRx({ id: ev.id, name: names.current.get(ev.id) ?? '', done: ev.done_bytes, total: ev.total_bytes });
+      } else if (ev.type === 'DropFinished' && ev.incoming) {
+        names.current.delete(ev.id);
+        setRx((cur) => (cur?.id === ev.id ? null : cur));
+      }
+    });
+    return off;
+  }, []);
+  if (!rx || rx.total <= 0 || rx.done >= rx.total) {
+    return null;
+  }
+  return (
+    <View style={s.rxBar} accessibilityLiveRegion="polite">
+      <View style={s.grow}>
+        <Text style={s.label} numberOfLines={1}>{t('Empfange von {name} …', { name: rx.name })}</Text>
+        <Text style={s.meta}>{`${size(rx.done)} / ${size(rx.total)}`}</Text>
+        <View style={s.track}>
+          <View style={[s.bar, { width: `${Math.min(100, (rx.done / rx.total) * 100)}%` }]} />
+        </View>
+      </View>
+      <Pressable onPress={() => drop.cancel(rx.id).catch(() => {})} style={s.tonal} accessibilityRole="button">
+        <Text style={s.tonalText}>{t('Abbrechen')}</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 /** Eingehendes, im Kern geprüftes Angebot. */
 export function OfferSheet({ offer, theme, onDone }: { offer: drop.IncomingOffer; theme: Theme; onDone: () => void }) {
@@ -486,9 +533,13 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [bg, setBg] = useState<drop.BackgroundState | null>(null);
+  const [recent, setRecent] = useState<drop.HistoryItem[]>([]);
+  const [showAll, setShowAll] = useState(false);
+  const [openItem, setOpenItem] = useState<number | null>(null);
 
   const load = useCallback(() => {
     drop.backgroundState().then(setBg).catch(() => {});
+    drop.history().then(setRecent).catch(() => {});
     drop.status().then(setSt).catch(() => {});
     drop.contacts().then(setPeople).catch(() => {});
     drop.blocked().then(setBlocked).catch(() => {});
@@ -502,9 +553,12 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
       }
     });
     const tick = setInterval(() => setNow(Date.now() / 1000), 15_000);
+    // Zurück aus einer Systemeinstellung (Popup-Erlaubnis, Akku): Stand neu lesen
+    const appState = AppState.addEventListener('change', (st) => st === 'active' && load());
     return () => {
       off();
       clearInterval(tick);
+      appState.remove();
     };
   }, [load]);
 
@@ -626,10 +680,80 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
         ) : null}
       </View>
 
+      {recent.length > 0 ? (
+        <>
+          <SectionLabel theme={theme} style={s.section}>{t('Zuletzt empfangen')}</SectionLabel>
+          <View style={s.card}>
+            {(showAll ? recent : recent.slice(0, 4)).map((h, i) => {
+              const what = h.kind === 'text' ? t('Text') : h.kind === 'link' ? t('Link') : h.count === 1 ? h.files[0].slice(h.files[0].lastIndexOf('/') + 1) : filesLabel(h.count);
+              const open = () => {
+                if (h.kind !== 'files') {
+                  return;
+                }
+                if (h.count === 1) {
+                  core.openFile(h.files[0]).catch(() => notify(t('Die Datei ist nicht mehr da.')));
+                } else {
+                  setOpenItem(openItem === h.id ? null : h.id);
+                }
+              };
+              return (
+                <View key={h.id}>
+                  {i > 0 ? <View style={s.sep} /> : null}
+                  <Pressable onPress={open} style={s.row} android_ripple={{ color: theme.accentSoft as string }} accessibilityRole="button">
+                    <Icon name={h.kind === 'files' ? 'download' : h.kind === 'link' ? 'link' : 'copy'} size={22} color={theme.text2 as string} />
+                    <View style={s.grow}>
+                      <Text style={[s.label, h.kind === 'files' && !h.exists && s.dim]} numberOfLines={1}>{what}</Text>
+                      <Text style={s.meta} numberOfLines={1}>{`${h.peer} · ${core.relativeDate(h.at, locale(), t('gestern'))}`}</Text>
+                    </View>
+                  </Pressable>
+                  {openItem === h.id
+                    ? h.files.map((f) => (
+                        <Pressable key={f} onPress={() => core.openFile(f).catch(() => notify(t('Die Datei ist nicht mehr da.')))} style={s.subRow} accessibilityRole="button">
+                          <Text style={s.meta} numberOfLines={1}>{f.slice(f.lastIndexOf('/') + 1)}</Text>
+                        </Pressable>
+                      ))
+                    : null}
+                </View>
+              );
+            })}
+            <View style={s.sep} />
+            <View style={s.rowInline}>
+              {recent.length > 4 ? (
+                <Pressable onPress={() => setShowAll(!showAll)} style={s.textBtn} accessibilityRole="button">
+                  <Text style={s.link}>{showAll ? t('Weniger') : t('Alle anzeigen')}</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => drop.clearHistory().then(load).catch(() => {})} style={s.textBtn} accessibilityRole="button">
+                <Text style={s.link}>{t('Verlauf löschen')}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </>
+      ) : null}
+
       {bg?.supported ? (
         <>
           <SectionLabel theme={theme} style={s.section}>{t('Wenn Snap geschlossen ist')}</SectionLabel>
           <View style={s.card}>
+            <View style={s.row}>
+              <Icon name="info" size={22} color={theme.text2 as string} />
+              <View style={s.grow}>
+                <Text style={s.label}>{t('Anfragen als Popup zeigen')}</Text>
+                <Text style={s.meta}>{t('Zusätzlich zur Mitteilung ein Fenster über der gerade genutzten App und auf dem Sperrbildschirm. Braucht die Erlaubnis „Über anderen Apps einblenden“.')}</Text>
+              </View>
+              <Switch
+                value={!!bg.popup}
+                onValueChange={(v) => {
+                  drop.setPopup(v);
+                  core.haptic('tick');
+                  setBg({ ...bg, popup: v });
+                }}
+                trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                thumbColor={theme.surface as string}
+                accessibilityLabel={t('Anfragen als Popup zeigen')}
+              />
+            </View>
+            <View style={s.sep} />
             <View style={s.row}>
               <Icon name="nearby" size={22} color={theme.text2 as string} />
               <View style={s.grow}>
@@ -835,6 +959,8 @@ const styles = themed((th: Theme) =>
     listInner: { paddingVertical: 4 },
     peer: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 68, paddingHorizontal: 20, paddingVertical: 8 },
     groupLabel: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 4 },
+    subRow: { paddingLeft: 56, paddingRight: 20, paddingVertical: 8 },
+    rxBar: { position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, backgroundColor: th.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: th.line, elevation: 6 },
     rowInline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     label: { color: th.text, fontSize: 16, lineHeight: 22 },
     meta: { color: th.text2, fontSize: 13, lineHeight: 18 },

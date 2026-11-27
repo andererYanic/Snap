@@ -282,6 +282,7 @@ export interface NearbyPeer { id: string; name: string | null; kind: "phone" | "
 export interface IncomingOffer { id: number; name: string; contact: string | null; code: string; files: { name: string; size: number; mime: string }[]; total: number; preview: boolean; expires_at: number; text?: string | null; link?: string | null }
 export interface DropContact { key: string; name: string; device_name: string; renamed: boolean; fingerprint: string; added_at: number; last_seen: number; remote?: boolean; remote_ok?: boolean }
 export interface DropBlocked { key: string; name: string; blocked_at: number }
+export interface DropHistoryItem { id: number; at: number; peer: string; kind: "files" | "text" | "link"; count: number; files: string[]; exists: boolean }
 export interface DropSent { id: number; ok: boolean; error: string | null; code: string | null }
 
 export const drop = {
@@ -292,6 +293,9 @@ export const drop = {
   addCode: (code: string) => invoke<NearbyPeer>("drop_add_code", { code }),
   send: (peer: string, paths: string[]) => invoke<DropSent>("drop_send", { peer, paths }),
   sendToContact: (contact: string, paths: string[]) => invoke<DropSent>("drop_send_contact", { contact, paths }),
+  cancel: (id: number) => invoke<unknown>("drop_cancel", { id }),
+  history: () => invoke<{ items: DropHistoryItem[] }>("drop_history").then((r) => r.items),
+  clearHistory: () => invoke<unknown>("drop_history_clear"),
   setRemote: (enabled: boolean) => invoke<DropStatus>("drop_set_remote", { enabled }),
   setContactRemote: (key: string, ok: boolean) => invoke<DropContact>("drop_contact_remote", { key, ok }),
   offers: () => invoke<{ offers: IncomingOffer[] }>("drop_offers").then((r) => r.offers),

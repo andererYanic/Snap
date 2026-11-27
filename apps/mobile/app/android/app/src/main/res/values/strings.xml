@@ -22,6 +22,8 @@
     <string name="drop_link_copied">Link von %1$s – in die Zwischenablage kopiert.</string>
     <string name="drop_open">Öffnen</string>
     <string name="drop_failed">Empfang fehlgeschlagen: %1$s</string>
+    <string name="drop_popup_title">%1$s möchte dir etwas senden</string>
+    <string name="drop_cancel">Abbrechen</string>
     <plurals name="drop_files">
         <item quantity="one">%d Datei</item>
         <item quantity="other">%d Dateien</item>

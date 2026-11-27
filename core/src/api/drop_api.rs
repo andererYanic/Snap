@@ -54,6 +54,15 @@ pub(crate) async fn handle(inner: &Arc<DaemonInner>, req: Request) -> Result<Res
         }
         Request::DropPreview { id } => Response::DropPreview { png: d.offer_preview(id).map(|p| BASE64.encode(&p)) },
         Request::DropContacts => Response::DropContacts { contacts: d.contacts()? },
+        Request::DropCancel { id } => {
+            d.cancel(id)?;
+            Response::Success { message: "Abgebrochen".into() }
+        }
+        Request::DropHistory => Response::DropHistory { items: d.history(50)? },
+        Request::DropHistoryClear => {
+            d.clear_history()?;
+            Response::Success { message: "Verlauf gelöscht".into() }
+        }
         Request::DropSetRemote { enabled } => Response::DropStatus(d.set_remote(enabled).await?),
         Request::DropContactRemote { key, ok } => Response::DropContact(d.set_contact_remote(&key, ok)?),
         Request::DropSendContact { contact, paths, text } => {

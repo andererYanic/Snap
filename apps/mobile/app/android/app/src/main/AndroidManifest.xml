@@ -31,6 +31,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Nur auf Wunsch: Snap-Drop-Anfragen als Popup über anderen Apps -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
@@ -85,6 +87,14 @@
         android:name=".DropBgService"
         android:exported="false"
         android:foregroundServiceType="connectedDevice" />
+      <receiver android:name=".DropActionReceiver" android:exported="false" />
+      <activity
+        android:name=".DropOfferActivity"
+        android:exported="false"
+        android:excludeFromRecents="true"
+        android:launchMode="singleTask"
+        android:taskAffinity=".drop"
+        android:theme="@android:style/Theme.Translucent.NoTitleBar" />
       <receiver android:name=".DropWakeReceiver" android:exported="false">
         <intent-filter>
           <action android:name="android.intent.action.BOOT_COMPLETED" />

@@ -207,6 +207,9 @@ pub(crate) async fn handle_request(
         | Request::DropHotspotRequest { .. }
         | Request::DropWakeExport { .. }
         | Request::DropSetRemote { .. }
+        | Request::DropCancel { .. }
+        | Request::DropHistory
+        | Request::DropHistoryClear
         | Request::DropContactRemote { .. }
         | Request::DropSendContact { .. }
         | Request::DropBackground { .. } => drop_api::handle(inner, req).await,
@@ -354,6 +357,9 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropContacts => "drop.contacts",
         Request::DropWakeExport { .. } => "drop.wake_export",
         Request::DropSetRemote { .. } => "drop.remote",
+        Request::DropCancel { .. } => "drop.cancel",
+        Request::DropHistory => "drop.history",
+        Request::DropHistoryClear => "drop.history.clear",
         Request::DropContactRemote { .. } => "drop.contact_remote",
         Request::DropSendContact { .. } => "drop.send_contact",
         Request::DropBackground { .. } => "drop.background",

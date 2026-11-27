@@ -208,6 +208,22 @@ pub struct ContactInfo {
     pub remote_ok: bool,
 }
 
+/// Eine empfangene Sendung im Verlauf (ohne Textinhalt).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct HistoryItem {
+    pub id: i64,
+    pub at: i64,
+    pub peer: String,
+    /// `files`, `text` oder `link`.
+    pub kind: String,
+    /// Zahl der Dateien.
+    pub count: usize,
+    /// Die ersten Pfade (höchstens 20).
+    pub files: Vec<String>,
+    /// Die erste Datei liegt noch dort.
+    pub exists: bool,
+}
+
 /// Gesperrter Absender.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct BlockedSender {
@@ -371,7 +387,14 @@ pub struct DropService {
     /// Generation der Sichtbarkeit, die `background` gesetzt hat (zum Zurücknehmen).
     background_gen: Mutex<Option<u64>>,
     remote: tokio::sync::Mutex<Option<RemoteNode>>,
+    /// Laufende Übertragungen (zum Abbrechen).
+    transfers: Mutex<HashMap<u64, Connection>>,
+    /// Vom Nutzer abgebrochene Übertragungen (für eine klare Meldung).
+    cancelled: Mutex<HashSet<u64>>,
 }
+
+/// Schließcode „vom Nutzer abgebrochen“.
+const CLOSE_CANCELLED: u32 = 5;
 
 impl DropService {
     pub fn new(opts: DropOptions, db: Arc<DatabaseManager>) -> Result<Arc<Self>> {
@@ -401,6 +424,8 @@ impl DropService {
             pre_accept: Mutex::new(None),
             background_gen: Mutex::new(None),
             remote: tokio::sync::Mutex::new(None),
+            transfers: Mutex::new(HashMap::new()),
+            cancelled: Mutex::new(HashSet::new()),
         })
     }
 
@@ -735,6 +760,56 @@ impl DropService {
         Ok(SendResult { id, ok, error, code })
     }
 
+    /// Laufende Übertragung bzw. offenes Angebot abbrechen (beide Seiten erfahren es sofort;
+    /// halb empfangene Dateien werden verworfen).
+    pub fn cancel(&self, id: u64) -> Result<()> {
+        if self.pending.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&id) {
+            return self.respond(id, false, false);
+        }
+        let conn = self.transfers.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned();
+        let Some(conn) = conn else {
+            api_bail!(NotFound, "Diese Übertragung läuft nicht mehr");
+        };
+        self.cancelled.lock().unwrap_or_else(|e| e.into_inner()).insert(id);
+        conn.close(VarInt::from_u32(CLOSE_CANCELLED), b"cancelled");
+        Ok(())
+    }
+
+    /// Klare Fehlermeldung für eine beendete Übertragung (abgebrochen hier oder drüben).
+    fn transfer_error(&self, id: u64, conn: &Connection, e: &anyhow::Error) -> String {
+        if self.cancelled.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
+            return "Abgebrochen".into();
+        }
+        if let Some(iroh::endpoint::ConnectionError::ApplicationClosed(c)) = conn.close_reason() {
+            if c.error_code == VarInt::from_u32(CLOSE_CANCELLED) {
+                return "Vom Gegenüber abgebrochen".into();
+            }
+        }
+        format!("{e:#}")
+    }
+
+    /// Zuletzt empfangene Sendungen (neueste zuerst).
+    pub fn history(&self, limit: usize) -> Result<Vec<HistoryItem>> {
+        Ok(self
+            .db
+            .drop_history(limit.min(200))?
+            .into_iter()
+            .map(|(id, at, peer, kind, files)| HistoryItem {
+                id,
+                at,
+                peer,
+                kind,
+                count: files.len(),
+                exists: files.first().is_some_and(|f| Path::new(f).exists()),
+                files: files.into_iter().take(20).collect(),
+            })
+            .collect())
+    }
+
+    pub fn clear_history(&self) -> Result<()> {
+        self.db.clear_drop_history()
+    }
+
     pub fn status(&self) -> Result<DropStatus> {
         let (mode, until) = {
             let v = self.vis.lock().unwrap_or_else(|e| e.into_inner());
@@ -1039,7 +1114,9 @@ impl DropService {
         }
         reply(&mut send, true, "").await?;
 
+        self.transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, conn.clone());
         let result = self.receive_files(conn, id, &offer).await;
+        self.transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         let peer = contact_name.clone().unwrap_or_else(|| offer.name.clone());
         match result {
             Ok(saved) => {
@@ -1052,6 +1129,17 @@ impl DropService {
                 let _ = send.finish();
                 let remote = offer.remote.as_ref().map(|(k, a)| RemoteAddr::new(k, a));
                 let can_save = self.remember_exchange(id, offer.sender, &offer.name, &session, remote)?;
+                let files: Vec<String> = saved.iter().map(|p| p.display().to_string()).collect();
+                let kind = if !files.is_empty() {
+                    "files"
+                } else if offer.link.is_some() {
+                    "link"
+                } else {
+                    "text"
+                };
+                if let Err(e) = self.db.add_drop_history(&peer, kind, &files) {
+                    tracing::warn!("Drop: Verlauf nicht gespeichert: {e:#}");
+                }
                 self.db.events().emit(Event::DropFinished {
                     id,
                     incoming: true,
@@ -1073,7 +1161,7 @@ impl DropService {
                     ok: false,
                     peer,
                     files: vec![],
-                    error: Some(format!("{e:#}")),
+                    error: Some(self.transfer_error(id, conn, &e)),
                     can_save_contact: false,
                     text: None,
                     link: None,
@@ -1479,7 +1567,24 @@ impl DropService {
         }
         let files = if paths.is_empty() && text.is_some() { Vec::new() } else { prepare_files(paths).await? };
         let conn = self.connect(target).await?;
-        let session = identity::session_value(&conn)?;
+        let total: u64 = files.iter().map(|f| f.offer.size).sum();
+        self.transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, conn.clone());
+        // Erstes Lebenszeichen: die Oberfläche kennt so die Kennung (zum Abbrechen)
+        self.db.events().emit(Event::DropProgress { id, incoming: false, done_bytes: 0, total_bytes: total });
+        let r = self.send_on(id, &conn, files, text, expect_contact).await;
+        self.transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        r.map_err(|e| anyhow::anyhow!(self.transfer_error(id, &conn, &e)))
+    }
+
+    async fn send_on(
+        &self,
+        id: u64,
+        conn: &Connection,
+        files: Vec<Prepared>,
+        text: Option<String>,
+        expect_contact: Option<&str>,
+    ) -> Result<(String, bool)> {
+        let session = identity::session_value(conn)?;
         let code = identity::check_code(&session);
         let (mut send, mut recv) = tokio::time::timeout(IO_TIMEOUT, conn.open_bi()).await??;
         write_frame_max(&mut send, &self.probe_for(&session)?, MAX_FRAME).await?;

@@ -92,6 +92,19 @@ export const saveContact = (id: number) => request<Contact>({ DropSaveContact: {
 export const removeContact = (key: string) => request({ DropRemoveContact: { key } });
 export const renameContact = (key: string, alias: string | null) => request<Contact>({ DropRenameContact: { key, alias } });
 /** Eigener Anzeigename (`null` = Gerätename). */
+export interface HistoryItem {
+  id: number;
+  at: number;
+  peer: string;
+  kind: 'files' | 'text' | 'link';
+  count: number;
+  files: string[];
+  exists: boolean;
+}
+/** Laufende Übertragung oder offenes Angebot abbrechen. */
+export const cancel = (id: number) => request({ DropCancel: { id } });
+export const history = () => request<{ items?: HistoryItem[] }>('DropHistory').then((r) => r?.items ?? []);
+export const clearHistory = () => request('DropHistoryClear');
 export const setRemote = (enabled: boolean) => request<DropStatus>({ DropSetRemote: { enabled } });
 export const setContactRemote = (key: string, ok: boolean) => request<Contact>({ DropContactRemote: { key, ok } });
 /** An einen gespeicherten Kontakt senden, egal wo er ist (Ende-zu-Ende verschlüsselt, ggf. über ein Relais). */
@@ -199,6 +212,8 @@ export interface BackgroundState {
   who: 'contacts' | 'visibility';
   batteryExempt: boolean;
   supported: boolean;
+  /** Anfragen zusätzlich als Popup (Erlaubnis vorhanden und eingeschaltet). */
+  popup?: boolean;
 }
 
 export const backgroundState = (): Promise<BackgroundState | null> =>
@@ -230,6 +245,8 @@ export async function setBackground(enabled: boolean, wlan: boolean, who: 'conta
   native()?.setBackground?.(enabled, wlan, who);
 }
 
+/** Popup über anderen Apps ein-/ausschalten (öffnet beim ersten Mal die Systemeinstellung). */
+export const setPopup = (enabled: boolean) => native()?.setPopup?.(enabled);
 export const requestBatteryExempt = () => native()?.requestBatteryExempt?.();
 
 /** Einen gespeicherten Kontakt per Bluetooth wecken (90 s). `false`, wenn nicht möglich. */

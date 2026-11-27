@@ -748,3 +748,16 @@ Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
   Relais-Verbindung (wie der Geräte-Endpunkt). Auf Android läuft er nur, solange der Kern läuft
   (App offen oder „Auch über WLAN“) – keine zusätzliche Dauerlast.
 - Zusätzliche Prüfung je Probe: Abgleich der Kontakt-Tags wie in der Nähe (gemessen in Review 34).
+
+## Review 40 – Snap Drop: Abbrechen, Verlauf, Mitteilungen (2026-11-27)
+
+- **Verlauf:** eine Zeile je empfangener Sendung (höchstens 200, ohne Textinhalt); Einfügen mit
+  einem Aufräum-`DELETE` über den Primärschlüssel, Abfrage `ORDER BY id DESC LIMIT 50`. Beim
+  Anzeigen wird nur die erste Datei je Eintrag auf Existenz geprüft (≤ 50 `stat`).
+- **Abbrechen:** schließt die QUIC-Verbindung (Code 5); kein Polling, beide Seiten erfahren es
+  sofort. Halbe Dateien werden wie bei Verbindungsverlust verworfen (Test `abbrechen_und_verlauf`,
+  64 MiB, Abbruch nach dem ersten Fortschritt).
+- **Desktop-Mitteilungen:** ein Abo auf den Ereignisbus im Dienst; D-Bus-Aufrufe nur bei Angeboten.
+  Ohne Sitzungsbus endet die Aufgabe sofort.
+- **Android:** ein Ereignis-Empfänger je Prozess (`DropNotify`); Fortschritts-Mitteilungen höchstens
+  einmal je Sekunde.

@@ -46,6 +46,8 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
             android.util.Log.w("Snap", "Ereignis nicht zustellbar: ${e.message}")
           }
         }
+        // Angebote auch zeigen, wenn die App im Hintergrund ist (Mitteilung bzw. Popup)
+        DropNotify.install(ctx.applicationContext)
         promise.resolve(core.apiVersion().toInt())
       } catch (e: SnapException) {
         promise.reject("start", e.message, e)

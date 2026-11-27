@@ -852,3 +852,61 @@ async fn fern_endpunkt_nur_fuer_kontakte() {
     b.svc.shutdown().await;
     c.svc.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn abbrechen_und_verlauf() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let peer = a.svc.add_code(&code_of(&b)).await.unwrap();
+    let src = tmp.path().join("src");
+
+    // Erfolgreich empfangen → im Verlauf (ohne Textinhalt), Datei existiert
+    let f = write(&src, "eins.txt", b"1");
+    let send = {
+        let svc = a.svc.clone();
+        let id = peer.id.clone();
+        tokio::spawn(async move { svc.send(&id, vec![f]).await.unwrap() })
+    };
+    answer(&mut b, true, false).await;
+    assert!(send.await.unwrap().ok);
+    let h = b.svc.history(10).unwrap();
+    assert_eq!((h.len(), h[0].kind.as_str(), h[0].count, h[0].exists), (1, "files", 1, true));
+    assert_eq!(h[0].peer, "Anna");
+
+    // Großer Transfer: der Empfänger bricht mitten drin ab → beide Seiten erfahren es, keine Reste
+    let big: Vec<u8> = vec![7u8; 64 << 20];
+    let f = write(&src, "gross.bin", &big);
+    let send = {
+        let svc = a.svc.clone();
+        let id = peer.id.clone();
+        tokio::spawn(async move { svc.send(&id, vec![f]).await.unwrap() })
+    };
+    let id = answer(&mut b, true, false).await;
+    next_event(
+        &mut b.events,
+        |e| matches!(e, Event::DropProgress { incoming: true, done_bytes, .. } if *done_bytes > 0),
+    )
+    .await;
+    b.svc.cancel(id).unwrap();
+    let Event::DropFinished { ok, error, .. } =
+        next_event(&mut b.events, |e| matches!(e, Event::DropFinished { incoming: true, .. })).await
+    else {
+        unreachable!()
+    };
+    assert!(!ok);
+    assert_eq!(error.as_deref(), Some("Abgebrochen"));
+    let r = send.await.unwrap();
+    assert!(!r.ok);
+    assert!(r.error.unwrap().contains("abgebrochen"), "Sender erfährt den Abbruch");
+    assert!(!inbox_files(&b).iter().any(|f| f.contains("gross") || f.ends_with(".snap-part")), "{:?}", inbox_files(&b));
+    assert_eq!(b.svc.history(10).unwrap().len(), 1, "Abgebrochenes nicht im Verlauf");
+
+    // Unbekannte Kennung
+    assert!(b.svc.cancel(999_999).is_err());
+    b.svc.clear_history().unwrap();
+    assert!(b.svc.history(10).unwrap().is_empty());
+    a.svc.shutdown().await;
+    b.svc.shutdown().await;
+}

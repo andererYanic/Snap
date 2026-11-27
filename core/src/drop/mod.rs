@@ -10,6 +10,6 @@ pub mod wake;
 pub mod wire;
 
 pub use service::{
-    BlockedSender, ContactInfo, DropOptions, DropService, DropStatus, HotspotOffer, IncomingOffer, Mode, NearbyPeer,
-    OfferedFile, SendResult, WakeKey,
+    BlockedSender, ContactInfo, DropOptions, DropService, DropStatus, HistoryItem, HotspotOffer, IncomingOffer, Mode,
+    NearbyPeer, OfferedFile, SendResult, WakeKey,
 };

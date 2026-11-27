@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 15;
+const SCHEMA_VERSION: i64 = 16;
 /// So lange merkt sich ein Gerät, wen es entkoppelt hat (um es der Gegenseite sagen zu können).
 pub const UNPAIRED_KEEP_SECS: i64 = 90 * 24 * 3600;
 
@@ -64,6 +64,9 @@ pub struct DropContactRow {
     /// Darf dieser Kontakt von überall senden?
     pub remote_ok: bool,
 }
+
+/// Eintrag im Snap-Drop-Verlauf: (id, Zeit, Absender, Art, Pfade).
+pub type DropHistoryRow = (i64, i64, String, String, Vec<String>);
 
 /// Ein Freigabelink (lokal gespeichert; `secret` ist der Schlüssel aus dem Link).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -719,6 +722,20 @@ impl DatabaseManager {
                     conn.execute_batch(ddl)?;
                 }
             }
+        }
+        if version < 16 {
+            // Migration -> 16: Verlauf empfangener Snap-Drop-Sendungen (nur lokal, ohne Textinhalt).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS drop_history (
+                    id     INTEGER PRIMARY KEY,
+                    at     INTEGER NOT NULL,
+                    peer   TEXT    NOT NULL,
+                    kind   TEXT    NOT NULL,   -- files | text | link
+                    files  TEXT    NOT NULL    -- JSON-Liste der gespeicherten Pfade
+                );
+                ",
+            )?;
         }
         if version > 0 && version < 3 {
             // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
@@ -2037,6 +2054,40 @@ impl DatabaseManager {
                 remote = COALESCE(excluded.remote, drop_contacts.remote)",
             params![c.key, c.name, c.secret, c.added_at, c.last_seen, c.remote],
         )?;
+        Ok(())
+    }
+
+    /// Empfangene Sendung merken (höchstens die neuesten 200).
+    pub fn add_drop_history(&self, peer: &str, kind: &str, files: &[String]) -> Result<()> {
+        let json = serde_json::to_string(&files.iter().take(1000).collect::<Vec<_>>())?;
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO drop_history (at, peer, kind, files) VALUES (?1, ?2, ?3, ?4)",
+            params![now_unix(), peer, kind, json],
+        )?;
+        conn.execute(
+            "DELETE FROM drop_history WHERE id NOT IN (SELECT id FROM drop_history ORDER BY id DESC LIMIT 200)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Neueste empfangene Sendungen: (id, Zeit, Absender, Art, Pfade).
+    pub fn drop_history(&self, limit: usize) -> Result<Vec<DropHistoryRow>> {
+        let conn = self.read();
+        let mut stmt =
+            conn.prepare_cached("SELECT id, at, peer, kind, files FROM drop_history ORDER BY id DESC LIMIT ?1")?;
+        let rows = stmt
+            .query_map(params![limit as i64], |r| {
+                let files: String = r.get(4)?;
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, serde_json::from_str(&files).unwrap_or_default()))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn clear_drop_history(&self) -> Result<()> {
+        self.conn().execute("DELETE FROM drop_history", [])?;
         Ok(())
     }
 
