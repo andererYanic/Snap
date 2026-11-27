@@ -1192,6 +1192,61 @@ fn unpair_cleanup() {
 
 #[test]
 #[ignore]
+fn drop_wake() {
+    use space_core::drop::wake;
+    // Weck-Tags: Android prüft je Treffer 3 Epochen je Kontakt (hier die Rust-Seite als Maß)
+    let keys: Vec<[u8; 32]> = (0..500u32).map(|i| wake::wake_key(&i.to_le_bytes())).collect();
+    let t = Instant::now();
+    let mut hits = 0;
+    for k in &keys {
+        for e in 0..3 {
+            if wake::wake_tag(k, 1_000_000 + e)[0] == 0 {
+                hits += 1;
+            }
+        }
+    }
+    report(&format!("Weck-Tags prüfen (500 Kontakte × 3, {hits} Nullbytes)"), 1500, t.elapsed());
+    // Schlüssel-Datei für 500 Kontakte schreiben (bei jeder Kontaktänderung)
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    let db = Arc::new(DatabaseManager::open(&dir.path().join("w.db")).unwrap());
+    for i in 0..500u32 {
+        db.upsert_drop_contact(&space_core::database::DropContactRow {
+            key: format!("{i:064x}"),
+            name: format!("Kontakt {i}"),
+            alias: None,
+            secret: i.to_le_bytes().repeat(8),
+            added_at: 0,
+            last_seen: 0,
+        })
+        .unwrap();
+    }
+    let opts = space_core::drop::DropOptions {
+        dir: dir.path().join("a/in"),
+        identity_path: dir.path().join("a/drop.key"),
+        name: "A".into(),
+        kind: space_core::drop::wire::DeviceKind::Phone,
+        use_relay: false,
+        relay_urls: vec![],
+        relay_fallback_n0: false,
+        loopback_only: true,
+        mdns: false,
+        reserve_bytes: 0,
+        can_join_hotspot: false,
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _g = rt.enter();
+    let svc =
+        space_core::drop::DropService::with_identity(opts, db, space_core::drop::identity::DropIdentity::ephemeral());
+    let t = Instant::now();
+    for _ in 0..10 {
+        svc.set_wake_export(true).unwrap();
+    }
+    report("Weck-Schlüssel-Datei (500 Kontakte)", 10, t.elapsed());
+}
+
+#[test]
+#[ignore]
 fn formats_read() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();

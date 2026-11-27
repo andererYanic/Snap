@@ -2,7 +2,7 @@
 // Kurzanfrage für den Offline-Weg und die Einstellungsseite (Sichtbarkeit, Kontakte, Sperren).
 // Grundsätze: docs/DESIGN.md; Sicherheit: docs/DROP.md.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, Image, Modal, Pressable, ScrollView, Share, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, BackHandler, Image, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, TextInput, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import * as core from './core';
 import * as drop from './drop';
@@ -70,6 +70,9 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
   const s = styles(theme);
   const [peers, setPeers] = useState<drop.NearbyPeer[]>([]);
   const [state, setState] = useState<SendState | null>(null);
+  const [people, setPeople] = useState<drop.Contact[]>([]);
+  // Kontakt, der gerade geweckt wird (wird gesendet, sobald er erscheint)
+  const [waking, setWaking] = useState<string | null>(null);
   const [codeOpen, setCodeOpen] = useState(false);
   const [code, setCode] = useState('');
   const [codeBusy, setCodeBusy] = useState(false);
@@ -81,6 +84,8 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
 
   useEffect(() => {
     drop.startBrowse();
+    drop.wakeAll();
+    drop.contacts().then(setPeople).catch(() => {});
     refresh();
     const timer = setInterval(refresh, 1500);
     const off = core.onEvent((ev) => {
@@ -93,6 +98,7 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
     return () => {
       clearInterval(timer);
       off();
+      drop.stopWake();
       drop.stopBrowse();
     };
   }, [refresh]);
@@ -124,6 +130,35 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
     } catch (e: any) {
       setState({ peer: p.id, phase: 'failed', done: 0, total: 0, error: String(e?.message ?? e) });
     }
+  };
+
+  // Geweckter Kontakt taucht auf → sofort senden
+  useEffect(() => {
+    if (!waking) {
+      return;
+    }
+    const p = peers.find((x) => x.contact_key === waking && !x.offline);
+    if (p) {
+      setWaking(null);
+      drop.stopWake();
+      sendTo(p);
+    }
+    // sendTo ändert sich bei jedem Zeichnen; entscheidend sind nur Kontakt und Liste
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waking, peers]);
+
+  const wake = async (c: drop.Contact) => {
+    if (busy || waking) {
+      return;
+    }
+    core.haptic('select');
+    if (!(await drop.wakeContact(c.key))) {
+      notify(t('Bluetooth ist aus oder nicht erlaubt – „{name}“ lässt sich nicht wecken.', { name: c.name }));
+      return;
+    }
+    setWaking(c.key);
+    // Nach 90 s ohne Antwort aufgeben
+    setTimeout(() => setWaking((w) => (w === c.key ? null : w)), 90_000);
   };
 
   const connectCode = async () => {
@@ -211,6 +246,32 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
             );
           })
         )}
+        {people.filter((c) => !peers.some((p) => p.contact_key === c.key)).length > 0 ? (
+          <>
+            <Text style={[s.meta, s.groupLabel]}>{t('Kontakte, nicht gefunden')}</Text>
+            {people
+              .filter((c) => !peers.some((p) => p.contact_key === c.key))
+              .map((c) => (
+                <Pressable
+                  key={c.key}
+                  onPress={() => wake(c)}
+                  disabled={busy || (!!waking && waking !== c.key)}
+                  android_ripple={{ color: theme.accentSoft as string }}
+                  style={[s.peer, (busy || (!!waking && waking !== c.key)) && s.dim]}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('{name} wecken', { name: c.name })}
+                >
+                  <Avatar name={c.name} contact theme={theme} />
+                  <View style={s.grow}>
+                    <Text style={s.label} numberOfLines={1}>{c.name}</Text>
+                    <Text style={s.meta} numberOfLines={2}>
+                      {waking === c.key ? t('Wird geweckt … (Bluetooth, in Reichweite)') : t('Antippen zum Wecken – Snap muss dort nicht offen sein')}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+          </>
+        ) : null}
       </ScrollView>
       {codeOpen ? (
         <View style={s.codeRow}>
@@ -389,8 +450,10 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
   // Bearbeiten: eigener Anzeigename (`'me'`) oder lokaler Name eines Kontakts (Schlüssel)
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [bg, setBg] = useState<drop.BackgroundState | null>(null);
 
   const load = useCallback(() => {
+    drop.backgroundState().then(setBg).catch(() => {});
     drop.status().then(setSt).catch(() => {});
     drop.contacts().then(setPeople).catch(() => {});
     drop.blocked().then(setBlocked).catch(() => {});
@@ -416,6 +479,30 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
       core.haptic('tick');
     } catch (e: any) {
       notify(String(e?.message ?? e));
+    }
+  };
+
+  const changeBg = async (patch: Partial<drop.BackgroundState>) => {
+    if (!bg) {
+      return;
+    }
+    const next = { ...bg, ...patch };
+    setBg(next);
+    core.haptic('tick');
+    await drop.setBackground(next.enabled, next.wlan, next.who);
+    const fresh = await drop.backgroundState().catch(() => null);
+    if (fresh) {
+      setBg(fresh);
+    }
+    if (patch.enabled && fresh && !fresh.batteryExempt) {
+      Alert.alert(
+        t('Im Hintergrund empfangen'),
+        t('Damit Snap den Empfang selbst starten darf, braucht es die Ausnahme von der Akku-Optimierung. Sie kostet keinen Akku – Snap läuft nur, wenn dich jemand weckt.'),
+        [
+          { text: t('Später'), style: 'cancel' },
+          { text: t('Erlauben'), onPress: () => drop.requestBatteryExempt() },
+        ],
+      );
     }
   };
 
@@ -503,6 +590,78 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
           </>
         ) : null}
       </View>
+
+      {bg?.supported ? (
+        <>
+          <SectionLabel theme={theme} style={s.section}>{t('Wenn Snap geschlossen ist')}</SectionLabel>
+          <View style={s.card}>
+            <View style={s.row}>
+              <Icon name="nearby" size={22} color={theme.text2 as string} />
+              <View style={s.grow}>
+                <Text style={s.label}>{t('Im Hintergrund empfangen')}</Text>
+                <Text style={s.meta}>{t('Kontakte wecken dein Gerät per Bluetooth – Snap läuft dabei nicht. Kaum Akkuverbrauch.')}</Text>
+              </View>
+              <Switch
+                value={bg.enabled}
+                onValueChange={(v) => changeBg({ enabled: v })}
+                trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                thumbColor={theme.surface as string}
+                accessibilityLabel={t('Im Hintergrund empfangen')}
+              />
+            </View>
+            {bg.enabled ? (
+              <>
+                <View style={s.sep} />
+                <View style={s.row}>
+                  <Icon name="wifi" size={22} color={theme.text2 as string} />
+                  <View style={s.grow}>
+                    <Text style={s.label}>{t('Auch über WLAN')}</Text>
+                    <Text style={s.meta}>{t('Ständig empfangsbereit, auch für Geräte ohne Bluetooth. Braucht mehr Akku und zeigt eine dauerhafte Mitteilung.')}</Text>
+                  </View>
+                  <Switch
+                    value={bg.wlan}
+                    onValueChange={(v) => changeBg({ wlan: v })}
+                    trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                    thumbColor={theme.surface as string}
+                    accessibilityLabel={t('Auch über WLAN')}
+                  />
+                </View>
+                <View style={s.sep} />
+                <View style={s.pad}>
+                  <Text style={s.label}>{t('Wecken dürfen')}</Text>
+                  <View style={[s.segment, s.explain]} accessibilityRole="radiogroup">
+                    {([['contacts', t('Nur Kontakte')], ['visibility', t('Wie Sichtbarkeit')]] as const).map(([key, label]) => {
+                      const on = bg.who === key;
+                      return (
+                        <Pressable key={key} onPress={() => changeBg({ who: key })} style={[s.segItem, on && s.segOn]} accessibilityRole="radio" accessibilityState={{ selected: on }}>
+                          <Text style={[s.segText, on && s.segTextOn]}>{label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={[s.meta, s.explain]}>
+                    {bg.who === 'contacts'
+                      ? t('Nur gespeicherte Kontakte können dein Gerät wecken.')
+                      : t('Ist „Alle“ eingeschaltet, kann in diesen 10 Minuten jeder in der Nähe dein Gerät wecken; sonst nur Kontakte.')}
+                  </Text>
+                </View>
+                {!bg.batteryExempt ? (
+                  <>
+                    <View style={s.sep} />
+                    <Pressable onPress={() => drop.requestBatteryExempt()} style={s.row} android_ripple={{ color: theme.accentSoft as string }} accessibilityRole="button">
+                      <Icon name="warning" size={22} color={theme.warn as string} />
+                      <View style={s.grow}>
+                        <Text style={s.label}>{t('Akku-Optimierung für Snap aufheben')}</Text>
+                        <Text style={s.meta}>{t('Sonst darf Android den Empfang nicht selbst starten – du bekommst dann eine Mitteilung zum Antippen. Kostet selbst keinen Akku.')}</Text>
+                      </View>
+                    </Pressable>
+                  </>
+                ) : null}
+              </>
+            ) : null}
+          </View>
+        </>
+      ) : null}
 
       <SectionLabel theme={theme} style={s.section}>{t('Dieses Gerät')}</SectionLabel>
       <View style={s.card}>
@@ -614,6 +773,7 @@ const styles = themed((th: Theme) =>
     list: { maxHeight: 420 },
     listInner: { paddingVertical: 4 },
     peer: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 68, paddingHorizontal: 20, paddingVertical: 8 },
+    groupLabel: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 4 },
     rowInline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     label: { color: th.text, fontSize: 16, lineHeight: 22 },
     meta: { color: th.text2, fontSize: 13, lineHeight: 18 },

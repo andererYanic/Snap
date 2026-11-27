@@ -2,4 +2,28 @@
     <string name="app_name">Snap</string>
     <!-- Eintrag im „Teilen“-Menü anderer Apps -->
     <string name="drop_share">Snap Drop</string>
+    <!-- Snap Drop im Hintergrund (Mitteilungen) -->
+    <string name="drop_bg_channel">Snap Drop im Hintergrund</string>
+    <string name="drop_offer_channel">Snap Drop: Anfragen</string>
+    <string name="drop_bg_ready">Snap Drop ist kurz empfangsbereit</string>
+    <string name="drop_bg_always">Snap Drop empfängt im Hintergrund</string>
+    <string name="drop_bg_text">Tippen, um Snap zu öffnen</string>
+    <string name="drop_wake_contact">%1$s möchte dir etwas senden – tippen zum Empfangen.</string>
+    <string name="drop_wake_someone">Jemand in der Nähe möchte dir etwas senden – tippen zum Empfangen.</string>
+    <string name="drop_offer_files">möchte dir %1$s senden (%2$s)</string>
+    <string name="drop_offer_text">möchte dir einen Text senden</string>
+    <string name="drop_offer_code">Prüfcode %1$s – nur annehmen, wenn du die Person kennst.</string>
+    <string name="drop_offer_locked">Neue Anfrage</string>
+    <string name="drop_accept">Annehmen</string>
+    <string name="drop_decline">Ablehnen</string>
+    <string name="drop_receiving">Wird empfangen …</string>
+    <string name="drop_saved">%1$s von %2$s gespeichert.</string>
+    <string name="drop_text_copied">Text von %1$s in die Zwischenablage kopiert.</string>
+    <string name="drop_link_copied">Link von %1$s – in die Zwischenablage kopiert.</string>
+    <string name="drop_open">Öffnen</string>
+    <string name="drop_failed">Empfang fehlgeschlagen: %1$s</string>
+    <plurals name="drop_files">
+        <item quantity="one">%d Datei</item>
+        <item quantity="other">%d Dateien</item>
+    </plurals>
 </resources>

@@ -22,6 +22,7 @@ export interface NearbyPeer {
   name: string | null;
   kind: 'phone' | 'tablet' | 'laptop' | 'desktop' | null;
   contact: string | null;
+  contact_key?: string | null;
   via: 'lan' | 'bluetooth' | 'code';
   offline: boolean;
 }
@@ -151,6 +152,8 @@ export async function setVisibility(mode: Mode): Promise<DropStatus> {
   }
   const st = await request<DropStatus>({ DropSetVisibility: { mode } });
   await syncRadio(st.mode);
+  // Für das Wecken „wie Sichtbarkeit“: Ende des „Alle“-Fensters merken (auch wenn Snap schließt)
+  native()?.setEveryoneUntil?.(st.mode === 'everyone' && st.until ? st.until : 0);
   return st;
 }
 
@@ -176,6 +179,64 @@ export async function syncRadio(mode?: Mode) {
     n.updateInfo(info.info);
   }
 }
+
+// --- Im Hintergrund empfangen (Android) ---
+
+export interface BackgroundState {
+  enabled: boolean;
+  wlan: boolean;
+  who: 'contacts' | 'visibility';
+  batteryExempt: boolean;
+  supported: boolean;
+}
+
+export const backgroundState = (): Promise<BackgroundState | null> =>
+  native()?.backgroundState ? native().backgroundState() : Promise.resolve(null);
+
+/** Beim App-Start: Weck-Schlüssel bereitstellen und die Weck-Suche neu einrichten. */
+export async function initBackground() {
+  const st = await backgroundState().catch(() => null);
+  if (!st) {
+    return;
+  }
+  // Die Schlüssel braucht auch der Sender (zum Wecken eines Kontakts) – nur als private Datei.
+  await request({ DropWakeExport: { enable: true } }).catch(() => {});
+  native().setBackground(st.enabled, st.wlan, st.who);
+}
+
+/** Einstellungen übernehmen; beim Einschalten werden Bluetooth- und Mitteilungsrechte erfragt. */
+export async function setBackground(enabled: boolean, wlan: boolean, who: 'contacts' | 'visibility') {
+  if (enabled) {
+    if (!(await hasPermissions())) {
+      await askPermissions();
+    }
+    const c = caps ?? (await capabilities());
+    if (c.sdk >= 33 && P.POST_NOTIFICATIONS) {
+      await PermissionsAndroid.request(P.POST_NOTIFICATIONS as any).catch(() => {});
+    }
+  }
+  await request({ DropWakeExport: { enable: true } }).catch(() => {});
+  native()?.setBackground?.(enabled, wlan, who);
+}
+
+export const requestBatteryExempt = () => native()?.requestBatteryExempt?.();
+
+/** Einen gespeicherten Kontakt per Bluetooth wecken (90 s). `false`, wenn nicht möglich. */
+export async function wakeContact(key: string): Promise<boolean> {
+  if (!native()?.wake || !(await hasPermissions())) {
+    return false;
+  }
+  return native().wake(key, 90);
+}
+
+/** „Jemand sucht“ (30 s) – weckt nur Geräte mit laufendem „Alle“-Fenster. */
+export async function wakeAll() {
+  if (native()?.wakeAll && (await hasPermissions())) {
+    native().wakeAll(30).catch(() => {});
+  }
+}
+
+export const stopWake = () => native()?.stopWake?.();
 
 // --- Suchen ---
 

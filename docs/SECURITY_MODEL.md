@@ -48,6 +48,11 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   je Gerät, Entkoppeln löscht den gemeldeten Wert. Gegenstellen mit Protokoll 1 bleiben verbunden,
   bekommen aber keine Meldung. Angriffstests: fremd, alt, manipuliert (5 Varianten), Flut,
   entzogenes Recht, entkoppelt.
+- **Snap Drop im Hintergrund (Android):** Wecken per Bluetooth-Werbung mit kurzlebigem Tag
+  (HMAC-SHA256 über die 15-Minuten-Epoche mit einem aus dem Kontakt-Geheimnis abgeleiteten
+  Weck-Schlüssel); geprüft wird in konstanter Zeit und gedrosselt, das Tag weckt nur – Annehmen,
+  Prüfcode und verschlüsselte Übertragung bleiben unverändert. Weck-Schlüssel nie über die API,
+  nur als private Datei (0600). Details und Risiken: [`DROP.md`](DROP.md#im-hintergrund-android).
 - **Entkoppeln in beide Richtungen:** Wer entkoppelt, schließt die Verbindung mit dem
   Anwendungscode 3 („unpaired“). Der Code kommt im verschlüsselten, per TLS als genau dieses Gerät
   ausgewiesenen QUIC-Kanal an und wirkt **nur auf den Absender selbst** – kein Gerät kann so ein

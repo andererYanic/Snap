@@ -135,6 +135,9 @@ pub struct NearbyPeer {
     pub kind: Option<DeviceKind>,
     /// Gespeicherter Kontakt (am Schlüssel erkannt).
     pub contact: Option<String>,
+    /// Schlüssel des Kontakts (zum Zuordnen in der Oberfläche).
+    #[serde(default)]
+    pub contact_key: Option<String>,
     /// `lan`, `bluetooth` oder `code`.
     pub via: String,
     /// Nur über Bluetooth gefunden und per Netz nicht erreichbar: Senden über den Offline-Weg
@@ -238,6 +241,9 @@ impl Target {
     }
 }
 
+/// Karte eines Geräts: Name, Art, Kontakt (angezeigter Name, Schlüssel).
+type CardView = (String, DeviceKind, Option<(String, String)>);
+
 struct NearbyEntry {
     target: Target,
     via: &'static str,
@@ -245,7 +251,7 @@ struct NearbyEntry {
     ble_name: Option<String>,
     offline: bool,
     seen: Instant,
-    card: Option<(String, DeviceKind, Option<String>)>,
+    card: Option<CardView>,
     hidden: bool,
     probed: Option<Instant>,
     probing: bool,
@@ -1202,7 +1208,7 @@ impl DropService {
     }
 
     /// Fragt die Karte eines Geräts ab: `Some((Name, Typ, Kontaktname))` oder `None` (verborgen).
-    async fn probe(&self, target: &Target) -> Result<Option<(String, DeviceKind, Option<String>)>> {
+    async fn probe(&self, target: &Target) -> Result<Option<CardView>> {
         let conn = self.connect(target).await?;
         let session = identity::session_value(&conn)?;
         let (mut send, mut recv) = tokio::time::timeout(IO_TIMEOUT, conn.open_bi()).await??;
@@ -1213,14 +1219,14 @@ impl DropService {
         self.card_view(card, &session)
     }
 
-    fn card_view(&self, card: Card, session: &[u8; 32]) -> Result<Option<(String, DeviceKind, Option<String>)>> {
+    fn card_view(&self, card: Card, session: &[u8; 32]) -> Result<Option<CardView>> {
         Ok(match card {
             Card::Hidden => None,
             Card::Visible { name, kind, proof } => {
                 let contact = match proof {
                     Some(p) => {
                         let key = p.verify(session)?;
-                        self.contact_by_key(&hex(key.as_bytes()))?.map(|c| label(&c))
+                        self.contact_by_key(&hex(key.as_bytes()))?.map(|c| (label(&c), c.key.clone()))
                     }
                     None => None,
                 };
@@ -1263,7 +1269,7 @@ impl DropService {
         nearby
             .get(&target.endpoint)
             .and_then(|e| e.card.as_ref())
-            .map(|(n, _, c)| c.clone().unwrap_or_else(|| n.clone()))
+            .map(|(n, _, c)| c.as_ref().map(|c| c.0.clone()).unwrap_or_else(|| n.clone()))
             .unwrap_or_else(|| "Gerät".into())
     }
 
@@ -1497,6 +1503,7 @@ impl DropService {
                         name: e.ble_name.clone(),
                         kind: None,
                         contact: None,
+                        contact_key: None,
                         via: e.via.into(),
                         offline: true,
                     });
@@ -1506,7 +1513,8 @@ impl DropService {
                     id: hex(k.as_bytes()),
                     name: Some(name),
                     kind: Some(kind),
-                    contact,
+                    contact_key: contact.as_ref().map(|c| c.1.clone()),
+                    contact: contact.map(|c| c.0),
                     via: e.via.into(),
                     offline: false,
                 })
@@ -1542,7 +1550,8 @@ impl DropService {
             id: hex(info.endpoint.as_bytes()),
             name: Some(name),
             kind: Some(kind),
-            contact,
+            contact_key: contact.as_ref().map(|c| c.1.clone()),
+            contact: contact.map(|c| c.0),
             via: "code".into(),
             offline: false,
         })
