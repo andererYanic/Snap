@@ -835,3 +835,11 @@ Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP
 - SVG: Bereinigung per regulären Ausdrücken über höchstens 2 MB Text, einmal je Öffnen.
 - Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
   Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.
+
+## Review 49 – Ablaufende Sendungen (2026-11-27)
+
+- Beim Empfang: ein `INSERT` je Datei in `drop_expiry` (eine Transaktion), gemessen im Test
+  `core/tests/drop.rs` › `ablaufende_sendung_vorschlag_und_eigene_frist` ohne messbaren Unterschied
+  zur Übertragung ohne Frist (< 1 ms).
+- Aufräumen alle 5 Minuten in `spawn_blocking`: eine indizierte Abfrage (`idx_drop_expiry`) nach
+  höchstens 500 fälligen Pfaden; ohne fällige Einträge kein Plattenzugriff außer der Abfrage.

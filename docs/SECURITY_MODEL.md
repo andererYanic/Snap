@@ -45,6 +45,11 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   JPEG-Decoder mit dessen Grenzen. Fuzz-Ziel `raw_preview`. SVGs zeigt Android erst nach Bereinigung
   (keine Skripte, Fremdinhalte, Ereignis-Attribute, Entitäten oder Verweise nach außen – nur `#id`
   und eingebettete Bilder), damit eine Grafik beim Ansehen nichts nachlädt.
+- **Ablaufende Snap-Drop-Sendungen:** Der Absender kann eine Frist vorschlagen (nur 1 h, 1 Tag,
+  7 Tage – andere Werte lehnt der Empfänger ab), der Empfänger kann zusätzlich selbst eine setzen
+  (`drop_expire_days`); es gilt die kürzere. Fällige Dateien landen im Papierkorb (nie über Symlinks,
+  verschobene werden übersprungen). Das ist eine Abmachung, kein Schutz: Der Empfänger kann vorher
+  kopieren – so steht es auch in der App. Ohne Frist bleibt das Angebotsformat unverändert.
 - **Zwei-Wege-Sync (Pins mit `two_way`):** lokale Änderungen am Spiegel gehen ausschließlich über
   die Fernoperationen zum Ursprung und damit durch dessen Rechteprüfung (`files.write`, für Ersetzen
   und Löschen zusätzlich `files.delete`, ordnergebunden, nie Standard), Massenschutz und Audit-Log.
