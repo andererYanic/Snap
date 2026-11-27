@@ -88,6 +88,7 @@
         android:exported="false"
         android:foregroundServiceType="connectedDevice" />
       <receiver android:name=".DropActionReceiver" android:exported="false" />
+      <receiver android:name=".RingStopReceiver" android:exported="false" />
       <activity
         android:name=".DropOfferActivity"
         android:exported="false"

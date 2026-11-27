@@ -83,6 +83,8 @@ Leistungsgrenzen (relevant für DoS-Fragen): `core/tests/perf.rs`, Ergebnisse in
   Symlinks, Massenschutz, Entpacken (Zip-Slip, Passwort-Raten, Passwort nie gespeichert).
 - `core/tests/clipboard.rs`: ohne Recht, fremd, entkoppelt, manipulierte Nachrichten (Zusatzfelder,
   Version, Übergröße, Unsinn), Flut, Entzug.
+- `core/tests/ring.rs` (Gerät finden): ohne Recht, fremd, entkoppelt, manipulierte Nachrichten
+  (eigene Dauer, Version, fehlende Felder, Übergröße, Unsinn), Flut, Entzug, Audit-Log.
 - `core/tests/unpair.rs`: Entkoppeln erreicht die Gegenseite sofort bzw. beim Wiederkommen; nur
   der Absender selbst wird entkoppelt; Neuinstallation und Fremde lösen nichts aus.
 - `core/tests/two_nodes.rs`, `core/tests/live.rs`, `core/tests/upload.rs`, `core/tests/stream.rs`,
@@ -103,7 +105,7 @@ Geräten, nicht an geheimem Code (Kerckhoffs). Ergebnis je Weg:
 
 | Weg | Schutz | Ergebnis |
 |---|---|---|
-| Gekoppelte Geräte (Katalog, Dateien, Live, Fernzugriff, Zwischenablage) | QUIC/TLS 1.3, Gegenstelle an ihrem Ed25519-Schlüssel erkannt; Relais sieht nur Verschlüsseltes | kein Mittelsmann möglich |
+| Gekoppelte Geräte (Katalog, Dateien, Live, Fernzugriff, Zwischenablage, Gerät finden) | QUIC/TLS 1.3, Gegenstelle an ihrem Ed25519-Schlüssel erkannt; Relais sieht nur Verschlüsseltes | kein Mittelsmann möglich |
 | Koppeln | Code mit 256-Bit-Token; **neu:** Prüfcode auf beiden Geräten + Bestätigung | weitergegebener Code allein reicht nicht mehr |
 | Snap Drop mit Kontakten (nah und von überall) | Beweis mit Drop-Schlüssel an die Sitzung gebunden, Sender prüft den erwarteten Kontakt | kein Mittelsmann möglich |
 | Snap Drop mit Unbekannten | Prüfcode aus der Sitzung; **neu:** auch der Sender sieht ihn vor dem Annehmen | sicher, wenn die Codes verglichen werden |

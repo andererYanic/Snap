@@ -164,3 +164,10 @@ path = "fuzz_targets/clip_request.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ring_request"
+path = "fuzz_targets/ring_request.rs"
+test = false
+doc = false
+bench = false

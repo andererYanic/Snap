@@ -794,6 +794,18 @@ pub async fn clipboard_send(d: State<'_, Daemon>, device: String, text: String) 
     d.request(Request::ClipboardSend { device, text }).await
 }
 
+/// Gerät finden: ein eigenes Gerät klingeln lassen bzw. das Klingeln dort beenden.
+#[tauri::command]
+pub async fn ring(d: State<'_, Daemon>, device: String, stop: bool) -> UiResult<Value> {
+    d.request(Request::Ring { device, stop }).await
+}
+
+/// Klingeln auf diesem Gerät beenden.
+#[tauri::command]
+pub async fn ring_stop(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::RingStop).await
+}
+
 #[tauri::command]
 pub async fn clipboard_pending(d: State<'_, Daemon>) -> UiResult<Value> {
     d.request(Request::ClipboardPending).await

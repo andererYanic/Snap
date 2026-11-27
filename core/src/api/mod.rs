@@ -124,6 +124,11 @@ pub(crate) async fn handle_request(
         Request::TrashEmpty => fileops::trash_empty(inner).await,
         Request::RemoteOp { device, op } => crate::remote_ops::send(inner, &device, op).await,
         Request::ClipboardSend { device, text } => crate::clipboard::send(inner, &device, text).await,
+        Request::Ring { device, stop } => crate::ring::send(inner, &device, stop).await,
+        Request::RingStop => {
+            inner.db.events().emit(crate::events::Event::Ring { node_id: String::new(), name: String::new(), secs: 0 });
+            Ok(Response::Success { message: "Klingeln beendet.".into() })
+        }
         Request::ShareAll { enabled } => share_all(inner, enabled).await,
         Request::PairConfirm { accept } => {
             if inner.pairing.state.answer(accept) {
@@ -376,6 +381,8 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropSetRemote { .. } => "drop.remote",
         Request::DropCancel { .. } => "drop.cancel",
         Request::ClipboardSend { .. } => "clipboard.send",
+        Request::Ring { .. } => "device.ring",
+        Request::RingStop => "device.ring_stop",
         Request::PairConfirm { .. } => "pair.confirm",
         Request::ShareAll { .. } => "share.all",
         Request::ClipboardPending => "clipboard.pending",

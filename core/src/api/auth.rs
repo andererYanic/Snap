@@ -32,12 +32,14 @@ pub enum Capability {
     FilesPurge,
     /// Text in die Zwischenablage dieses Geräts legen – nie Standard.
     Clipboard,
+    /// Dieses Gerät klingeln lassen (Gerät finden) – nie Standard.
+    Ring,
     /// Fernverwaltung (Einstellungen, Kopplungen) – für Geräte noch gesperrt.
     Admin,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 8] = [
+    pub const ALL: [Capability; 9] = [
         Capability::CatalogRead,
         Capability::FilesRead,
         Capability::FilesWrite,
@@ -45,6 +47,7 @@ impl Capability {
         Capability::FilesDelete,
         Capability::FilesPurge,
         Capability::Clipboard,
+        Capability::Ring,
         Capability::Admin,
     ];
 
@@ -57,6 +60,7 @@ impl Capability {
             Capability::FilesDelete => "files.delete",
             Capability::FilesPurge => "files.purge",
             Capability::Clipboard => "clipboard.write",
+            Capability::Ring => "device.ring",
             Capability::Admin => "admin",
         }
     }
@@ -197,6 +201,8 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropSetRemote { .. }
         | Request::DropCancel { .. }
         | Request::ClipboardSend { .. }
+        | Request::Ring { .. }
+        | Request::RingStop
         | Request::PairConfirm { .. }
         | Request::ShareAll { .. }
         | Request::ClipboardPending

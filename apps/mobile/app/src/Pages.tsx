@@ -20,6 +20,15 @@ export interface Device {
   storage?: { total: number; free: number; updated_at: number };
 }
 
+/** Upload-Regel des Kerns: neue Dateien aus `local_dir` gehen in eine Freigabe eines Geräts. */
+interface UploadRule {
+  id: number;
+  local_dir: string;
+  device: string;
+  share: string;
+  dest_dir: string;
+}
+
 /** Name der Freigabe für den ganzen Speicher (wie im Kern). */
 const ALL_FILES = 'Alle Dateien';
 
@@ -39,11 +48,15 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
   const [joinCode, setJoinCode] = useState<string | null>(null);
   useEffect(() => core.onEvent((ev) => ev.type === 'PairCode' && setJoinCode(ev.code)), []);
   const [auto, setAuto] = useState<Set<string>>(new Set());
+  // Foto-Sicherung: Upload-Regeln (Kamera-Ordner → Freigabe eines Geräts) und Auswahl der Freigabe
+  const [rules, setRules] = useState<UploadRule[]>([]);
+  const [pick, setPick] = useState<{ device: string; shares: string[] } | null>(null);
 
   const load = useCallback(async () => {
     try {
       setDevices((await request<{ devices: Device[] }>('PairList')).devices);
       setShares((await request<{ shares: { name: string; root: string; file_count: number }[] }>('ShareList')).shares ?? []);
+      setRules((await request<{ rules: UploadRule[] }>('UploadRuleList').catch(() => ({ rules: [] }))).rules ?? []);
       const peers = (await request<{ peers: { node_id: string; status: string }[] }>('Peers')).peers;
       setOnline(new Set(peers.filter((p) => p.status === 'online').map((p) => p.node_id)));
     } catch (e: any) {
@@ -61,6 +74,51 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
     request({ [on ? 'PairGrant' : 'PairRevoke']: { device: d.node_id, capability: 'clipboard.write', folder: null } })
       .then(load)
       .catch((e) => notify(e?.message ?? String(e)));
+  const mayRing = (d: Device) => d.grants.some((g) => g.capability === 'device.ring');
+  const toggleRing = (d: Device, on: boolean) =>
+    request({ [on ? 'PairGrant' : 'PairRevoke']: { device: d.node_id, capability: 'device.ring', folder: null } })
+      .then(load)
+      .catch((e) => notify(e?.message ?? String(e)));
+  // Gerät finden: 30 s laut klingeln lassen; „Stopp“ beendet es dort
+  const ring = (d: Device) =>
+    request<{ message: string }>({ Ring: { device: d.node_id, stop: false } })
+      .then((r) =>
+        Alert.alert(t('Gerät finden'), r.message, [
+          { text: t('Stopp'), onPress: () => request({ Ring: { device: d.node_id, stop: true } }).catch((e) => notify(e?.message ?? String(e))) },
+        ]),
+      )
+      .catch((e) => notify(e?.message ?? String(e)));
+  // Fotos sichern: neue Bilder und Videos aus DCIM/Camera landen auf dem Gerät (z. B. dem Server)
+  const backupRule = (d: Device) => rules.find((r) => r.device === d.node_id && r.local_dir.endsWith('/DCIM/Camera'));
+  const startBackup = async (d: Device, share: string) => {
+    setPick(null);
+    try {
+      const root = await core.storageRoot();
+      const me = (await request<{ device_name: string }>('Info').catch(() => ({ device_name: '' }))).device_name;
+      const dest = me.replace(/[\/\\]/g, ' ').trim().slice(0, 60);
+      const r = await request<{ rules: UploadRule[] }>({ UploadRuleAdd: { path: `${root}/DCIM/Camera`, device: d.node_id, share, dest_dir: dest } });
+      setRules(r.rules ?? []);
+      notify(t('Neue Fotos werden auf „{name}“ gesichert ({share}).', { name: d.name, share }));
+    } catch (e: any) {
+      notify(e?.message ?? String(e));
+    }
+  };
+  const toggleBackup = async (d: Device, on: boolean) => {
+    if (!on) {
+      const r = backupRule(d);
+      if (r) await request({ UploadRuleRemove: { id: r.id } }).catch((e) => notify(e?.message ?? String(e)));
+      return load();
+    }
+    try {
+      const page = await request<{ dirs: string[] }>({ RemoteDir: { device: d.node_id, share: null, dir: '', after: null, limit: 50 } });
+      const list = page.dirs ?? [];
+      if (list.length === 0) notify(t('„{name}“ hat keine Freigabe. Dort einen Ordner freigeben und dir „Dateien ändern“ erlauben.', { name: d.name }));
+      else if (list.length === 1) await startBackup(d, list[0]);
+      else setPick({ device: d.node_id, shares: list });
+    } catch (e: any) {
+      notify(e?.message ?? String(e));
+    }
+  };
   const toggleAuto = async (d: Device, on: boolean) => {
     await clip.setAuto(d.node_id, on);
     setAuto(new Set(await clip.autoDevices()));
@@ -162,6 +220,48 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
                       <Icon name="copy" size={20} color={theme.text2 as string} />
                       <Text style={[s.text, s.grow]}>{t('Zwischenablage senden')}</Text>
                     </Pressable>
+                    <View style={s.devAction}>
+                      <View style={s.grow}>
+                        <Text style={s.text}>{t('Fotos hierhin sichern')}</Text>
+                        <Text style={s.muted}>
+                          {backupRule(d) ? t('Kamera → {share}', { share: backupRule(d)!.share }) : t('Neue Fotos und Videos der Kamera automatisch hochladen.')}
+                        </Text>
+                      </View>
+                      <Switch
+                        value={!!backupRule(d)}
+                        onValueChange={(v) => toggleBackup(d, v)}
+                        trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                        thumbColor={theme.surface as string}
+                        accessibilityLabel={t('Fotos hierhin sichern')}
+                      />
+                    </View>
+                    {pick?.device === d.node_id && (
+                      <View style={s.devAction}>
+                        <Text style={[s.muted, s.grow]}>{t('In welche Freigabe?')}</Text>
+                        {pick.shares.slice(0, 6).map((sh) => (
+                          <Pressable key={sh} onPress={() => startBackup(d, sh)} style={s.iconBtn} accessibilityRole="button">
+                            <Text style={s.text}>{sh}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    )}
+                    <Pressable onPress={() => ring(d)} style={s.devAction} accessibilityRole="button">
+                      <Icon name="soundOn" size={20} color={theme.text2 as string} />
+                      <Text style={[s.text, s.grow]}>{t('Klingeln lassen')}</Text>
+                    </Pressable>
+                    <View style={s.devAction}>
+                      <View style={s.grow}>
+                        <Text style={s.text}>{t('Darf mein Gerät klingeln lassen')}</Text>
+                        <Text style={s.muted}>{t('Zum Wiederfinden: 30 Sekunden laut, auch wenn es stumm ist.')}</Text>
+                      </View>
+                      <Switch
+                        value={mayRing(d)}
+                        onValueChange={(v) => toggleRing(d, v)}
+                        trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                        thumbColor={theme.surface as string}
+                        accessibilityLabel={t('Darf mein Gerät klingeln lassen')}
+                      />
+                    </View>
                     <View style={s.devAction}>
                       <Text style={[s.text, s.grow]}>{t('Darf meine Zwischenablage füllen')}</Text>
                       <Switch

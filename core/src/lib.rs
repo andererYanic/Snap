@@ -28,6 +28,7 @@ pub mod photos;
 pub mod pins;
 pub mod remote_ops;
 pub mod remote_thumbs;
+pub mod ring;
 pub mod secure_fs;
 pub mod settings;
 pub mod shares;

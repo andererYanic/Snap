@@ -25,6 +25,10 @@
     <string name="drop_popup_title">%1$s möchte dir etwas senden</string>
     <string name="drop_cancel">Abbrechen</string>
     <string name="clip_received">Zwischenablage übernommen</string>
+    <string name="ring_channel">Gerät finden</string>
+    <string name="ring_title">Gerät finden</string>
+    <string name="ring_text">„%1$s“ lässt dieses Gerät klingeln.</string>
+    <string name="ring_stop">Stopp</string>
     <plurals name="drop_files">
         <item quantity="one">%d Datei</item>
         <item quantity="other">%d Dateien</item>

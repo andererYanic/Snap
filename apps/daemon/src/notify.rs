@@ -82,6 +82,8 @@ async fn serve(daemon: Daemon) -> anyhow::Result<()> {
     // Mitteilung → Angebot
     let mut shown: HashMap<u32, u64> = HashMap::new();
     let mut by_offer: HashMap<u64, u32> = HashMap::new();
+    // Mitteilung „Gerät finden“ (höchstens eine)
+    let mut ring_nid: Option<u32> = None;
     loop {
         tokio::select! {
             ev = events.next() => {
@@ -127,6 +129,28 @@ async fn serve(daemon: Daemon) -> anyhow::Result<()> {
                         hints.insert("desktop-entry", Value::from("de.snap.desktop"));
                         let _ = proxy.notify("Snap", 0, "de.snap.desktop", &plain(&name, 64), body, &[], hints, 10_000).await;
                     }
+                    // Gerät finden: laute Mitteilung mit „Stopp“ (die geöffnete App klingelt selbst)
+                    Event::Ring { name, secs, .. } if secs > 0 && daemon.ui_clients() == 0 => {
+                        let (title, stop) = if de { ("Gerät finden", "Stopp") } else { ("Find device", "Stop") };
+                        let body = if de {
+                            format!("'{}' lässt dieses Gerät klingeln.", plain(&name, 64))
+                        } else {
+                            format!("'{}' is ringing this device.", plain(&name, 64))
+                        };
+                        let mut hints = HashMap::new();
+                        hints.insert("urgency", Value::from(2u8));
+                        hints.insert("sound-name", Value::from("alarm-clock-elapsed"));
+                        hints.insert("desktop-entry", Value::from("de.snap.desktop"));
+                        let replace = ring_nid.unwrap_or(0);
+                        if let Ok(nid) = proxy.notify("Snap", replace, "de.snap.desktop", title, &body, &["stop", stop], hints, secs as i32 * 1000).await {
+                            ring_nid = Some(nid);
+                        }
+                    }
+                    Event::Ring { secs: 0, .. } => {
+                        if let Some(nid) = ring_nid.take() {
+                            let _ = proxy.close_notification(nid).await;
+                        }
+                    }
                     Event::DropOfferClosed { id, .. } => {
                         if let Some(nid) = by_offer.remove(&id) {
                             shown.remove(&nid);
@@ -153,6 +177,11 @@ async fn serve(daemon: Daemon) -> anyhow::Result<()> {
             sig = actions.next() => {
                 let Some(sig) = sig else { return Ok(()) };
                 let Ok(args) = sig.args() else { continue };
+                if ring_nid == Some(args.id) && args.action_key == "stop" {
+                    ring_nid = None;
+                    let _ = daemon.request(Request::RingStop).await;
+                    continue;
+                }
                 // Nur Antworten auf eigene Mitteilungen – andere Programme senden auf demselben Bus.
                 let Some(id) = shown.remove(&args.id) else { continue };
                 let accept = match args.action_key.as_str() {
