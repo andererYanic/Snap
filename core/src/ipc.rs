@@ -540,6 +540,44 @@ pub enum Request {
     },
     /// Klingeln auf diesem Gerät beenden (alle Oberflächen hören auf).
     RingStop,
+    /// Tresor: Zustand (gibt es ihn, entsperrt, Anzahl Dateien).
+    VaultStatus,
+    /// Tresor anlegen; Antwort enthält den Wiederherstellungscode (nur dieses eine Mal).
+    VaultCreate {
+        password: crate::fileops::archive::Password,
+    },
+    VaultUnlock {
+        password: crate::fileops::archive::Password,
+    },
+    /// Mit dem Wiederherstellungscode entsperren und ein neues Passwort setzen.
+    VaultRecover {
+        code: crate::fileops::archive::Password,
+        new_password: crate::fileops::archive::Password,
+    },
+    VaultChangePassword {
+        old: crate::fileops::archive::Password,
+        new: crate::fileops::archive::Password,
+    },
+    VaultLock,
+    VaultList,
+    /// Dateien/Ordner aufnehmen; `remove`: Originale danach löschen (nicht in den Papierkorb).
+    VaultAdd {
+        paths: Vec<PathBuf>,
+        #[serde(default)]
+        remove: bool,
+    },
+    /// Zum Ansehen entschlüsseln (privat, beim Sperren gelöscht).
+    VaultOpen {
+        id: String,
+    },
+    /// Entschlüsselt in einen Ordner holen (bleibt im Tresor).
+    VaultExport {
+        id: String,
+        dest_dir: PathBuf,
+    },
+    VaultRemove {
+        id: String,
+    },
     /// Laufende Übertragung oder offenes Angebot abbrechen.
     DropCancel {
         id: u64,
@@ -907,6 +945,17 @@ pub enum Response {
     },
     ContentHits {
         hits: Vec<crate::content::ContentHit>,
+    },
+    VaultStatus(crate::vault::VaultStatus),
+    /// Nur beim Anlegen: zum Aufschreiben anzeigen, nie speichern.
+    VaultCreated {
+        recovery_code: String,
+    },
+    VaultEntries {
+        entries: Vec<crate::vault::VaultEntry>,
+    },
+    VaultPath {
+        path: PathBuf,
     },
     Metadata(crate::media::MediaInfo),
     FileOpDone {

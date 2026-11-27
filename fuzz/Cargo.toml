@@ -185,3 +185,10 @@ path = "fuzz_targets/content_pdf.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "vault_object"
+path = "fuzz_targets/vault_object.rs"
+test = false
+doc = false
+bench = false

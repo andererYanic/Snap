@@ -211,6 +211,11 @@ enum Commands {
         #[arg(short, long, default_value_t = 20)]
         limit: u32,
     },
+    /// Tresor: Dateien mit Passwort verschlüsselt aufbewahren (Passwörter werden verdeckt abgefragt)
+    Vault {
+        #[command(subcommand)]
+        action: Option<VaultAction>,
+    },
     /// Gerät finden: ein eigenes Gerät 30 Sekunden klingeln lassen (dort muss „Klingeln lassen“
     /// erlaubt sein). Ohne Gerät: Klingeln auf diesem Gerät beenden
     Ring {
@@ -633,6 +638,33 @@ enum PinAction {
     Remove { id: i64 },
 }
 
+#[derive(Subcommand)]
+enum VaultAction {
+    /// Tresor anlegen (zeigt einmalig den Wiederherstellungscode)
+    Create,
+    /// Entsperren
+    Unlock,
+    /// Sperren (geöffnete Dateien werden gelöscht)
+    Lock,
+    /// Inhalt anzeigen
+    List,
+    /// Dateien oder Ordner aufnehmen
+    Add {
+        paths: Vec<PathBuf>,
+        /// Originale danach löschen (nicht in den Papierkorb – dort lägen sie unverschlüsselt)
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Datei entschlüsselt in einen Ordner holen (bleibt im Tresor)
+    Export { id: String, dest: PathBuf },
+    /// Datei aus dem Tresor löschen
+    Remove { id: String },
+    /// Passwort ändern
+    Password,
+    /// Passwort vergessen: mit dem Wiederherstellungscode ein neues setzen
+    Recover,
+}
+
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum OnOff {
     On,
@@ -948,6 +980,34 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Drop { action: Some(DropAction::Forget { key }) } => Request::DropRemoveContact { key },
         Commands::Drop { action: Some(DropAction::Blocked) } => Request::DropBlocked,
         Commands::Drop { action: Some(DropAction::Unblock { key }) } => Request::DropUnblock { key },
+        Commands::Vault { action } => {
+            use space_core::fileops::archive::Password as Pw;
+            let new_pw = || -> Result<Pw> {
+                let a = read_secret("Neues Passwort (mind. 8 Zeichen): ")?;
+                let b = read_secret("Passwort wiederholen: ")?;
+                anyhow::ensure!(a == b, "Die Passwörter stimmen nicht überein.");
+                Ok(Pw(a))
+            };
+            match action {
+                None => Request::VaultStatus,
+                Some(VaultAction::Create) => Request::VaultCreate { password: new_pw()? },
+                Some(VaultAction::Unlock) => Request::VaultUnlock { password: Pw(read_secret("Tresor-Passwort: ")?) },
+                Some(VaultAction::Lock) => Request::VaultLock,
+                Some(VaultAction::List) => Request::VaultList,
+                Some(VaultAction::Add { paths, remove }) => {
+                    Request::VaultAdd { paths: paths.iter().map(|p| absolute(p)).collect::<Result<_>>()?, remove }
+                }
+                Some(VaultAction::Export { id, dest }) => Request::VaultExport { id, dest_dir: absolute(&dest)? },
+                Some(VaultAction::Remove { id }) => Request::VaultRemove { id },
+                Some(VaultAction::Password) => {
+                    Request::VaultChangePassword { old: Pw(read_secret("Bisheriges Passwort: ")?), new: new_pw()? }
+                }
+                Some(VaultAction::Recover) => Request::VaultRecover {
+                    code: Pw(read_secret("Wiederherstellungscode: ")?),
+                    new_password: new_pw()?,
+                },
+            }
+        }
         Commands::Ring { device: Some(device), stop } => Request::Ring { device, stop },
         Commands::Ring { device: None, .. } => Request::RingStop,
         Commands::Usage { path, limit } => Request::SpaceUsage { path: absolute(&path)?, limit },
@@ -1090,6 +1150,7 @@ fn describe_event(e: &Event) -> String {
         Event::DevicePaired { name, .. } => format!("🔗 Gerät '{name}' gekoppelt"),
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
         Event::ClipboardReceived { name, .. } => format!("📋 Zwischenablage von '{name}' empfangen"),
+        Event::VaultLocked => "🔒 Tresor gesperrt".to_string(),
         Event::SyncHeld { pin_id, share, deletes } => format!(
             "⚠️  Zwei-Wege-Sync '{share}': {deletes} Löschungen angehalten – `space-daemon pin deletes {pin_id} yes|no`"
         ),
@@ -1657,6 +1718,37 @@ fn print_response(res: Response) -> ExitCode {
                 println!("📄 {}\n   {}", h.path, h.snippet);
             }
         }
+        Response::VaultStatus(s) => {
+            if !s.exists {
+                println!("Noch kein Tresor. Anlegen: space-daemon vault create");
+            } else if s.unlocked {
+                println!(
+                    "🔓 Entsperrt · {} Datei(en) · sperrt nach {} min ohne Benutzung",
+                    s.entries.unwrap_or(0),
+                    s.auto_lock_secs / 60
+                );
+            } else {
+                println!("🔒 Gesperrt. Entsperren: space-daemon vault unlock");
+            }
+            if s.retry_after_secs > 0 {
+                println!("⏳ Nach falschen Versuchen: {} s warten", s.retry_after_secs);
+            }
+        }
+        Response::VaultCreated { recovery_code } => {
+            println!("✅ Tresor angelegt und entsperrt.\n");
+            println!("   Wiederherstellungscode:  {recovery_code}\n");
+            println!("   Jetzt aufschreiben und sicher aufbewahren – er wird nie wieder angezeigt.");
+            println!("   Ohne Passwort und ohne diesen Code ist der Inhalt verloren.");
+        }
+        Response::VaultEntries { entries } => {
+            if entries.is_empty() {
+                println!("Der Tresor ist leer. Aufnehmen: space-daemon vault add <datei>…");
+            }
+            for e in &entries {
+                println!("{}  {:>10}  {}", e.id, human_size(e.size), e.name);
+            }
+        }
+        Response::VaultPath { path } => println!("✅ {}", path.display()),
         Response::UploadRules { rules } => {
             if rules.is_empty() {
                 println!("Keine Regeln. Anlegen: space-daemon upload rule-add <ordner> <gerät>:<Freigabe>");
