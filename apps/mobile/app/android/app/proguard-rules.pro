@@ -16,3 +16,9 @@
 # Hermes/React Native bringen eigene Regeln mit (consumer rules); Warnungen aus optionalen
 # Abhängigkeiten nicht als Fehler werten.
 -dontwarn com.facebook.**
+
+# WorkManager nutzt Room: die erzeugte Datenbank-Klasse wird per Reflexion über ihren leeren
+# Konstruktor angelegt (Emulator-Test: NoSuchMethodException WorkDatabase_Impl.<init>).
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+-keep class androidx.work.impl.WorkDatabase_Impl { *; }
+-keep class androidx.work.** { *; }
