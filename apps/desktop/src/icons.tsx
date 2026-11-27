@@ -38,6 +38,7 @@ export const Icon: Record<string, (p: P) => JSX.Element> = {
   restore: ({ size }) => <svg {...s(size)}><path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5v3h3" /></svg>,
   devices: ({ size }) => <svg {...s(size)}><rect x="1.5" y="3" width="9" height="7" rx="1" /><path d="M4 12.5h4" /><rect x="11" y="5" width="3.5" height="8" rx="1" /></svg>,
   backup: ({ size }) => <svg {...s(size)}><path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8 0 3 3 0 0 1-.4 6M8 8v5.5M6 10l2-2 2 2" /></svg>,
+  shield: ({ size }) => <svg {...s(size)}><path d="M8 1.8 13 3.6v4c0 3.2-2.1 5.6-5 6.6-2.9-1-5-3.4-5-6.6v-4Z" /><path d="m5.8 8 1.6 1.6 3-3" /></svg>,
   vault: ({ size }) => <svg {...s(size)}><rect x="2.5" y="7" width="11" height="7.5" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2M8 10v2" /></svg>,
   link: ({ size }) => <svg {...s(size)}><path d="M6.5 9.5a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-.8.8M9.5 6.5a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l.8-.8" /></svg>,
   chart: ({ size }) => <svg {...s(size)}><path d="M3 13.5h10M4.5 11V7M8 11V3.5M11.5 11V8" /></svg>,
