@@ -186,6 +186,28 @@ jobs:
       - run: npm audit --omit=dev --audit-level=moderate
         working-directory: apps/mobile/app
 
+  docker:
+    name: Docker-Image (Server ohne Oberfläche)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - run: docker build -f packaging/docker/Dockerfile -t snap-test .
+      # Startet wie in der Anleitung (schreibgeschützt, ohne Zusatzrechte) und prüft, dass der
+      # Dienst läuft, als Nicht-root arbeitet und einen Einladungscode erzeugt.
+      - run: |
+          docker run -d --name snap --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges:true -v snap-data:/data -e SNAP_NAME=CI snap-test
+          for i in $(seq 1 30); do docker exec snap space-daemon info && break; sleep 2; done
+          docker exec snap space-daemon info
+          test "$(docker exec snap id -u)" = "10001"
+          docker exec snap sh -c 'test "$(stat -c %a /data/state)" = "700"'
+          docker exec snap timeout 5 space-daemon pair invite | grep -q "snap1-" || true
+          docker logs snap | tail -20
+          docker rm -f snap
+
   fuzz-smoke:
     name: Fuzzing (Kurzlauf)
     runs-on: ubuntu-latest
