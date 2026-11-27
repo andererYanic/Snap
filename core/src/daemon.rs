@@ -416,6 +416,25 @@ impl Daemon {
     }
 
     /// Ereignisse abonnieren (eingebettete Nutzung, z. B. Mobile per FFI).
+    /// Für Tests und die Kommandozeile: die nächste Kopplungsanfrage bestätigen (wie der Nutzer
+    /// nach dem Vergleich des Prüfcodes). Wartet höchstens zwei Minuten.
+    #[doc(hidden)]
+    pub fn confirm_next_pairing(&self) {
+        let mut sub = self.inner.db.events().subscribe();
+        let state = self.inner.pairing.state.clone();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(crate::pairing::CONFIRM_TIMEOUT, async {
+                while let Some(ev) = sub.next().await {
+                    if matches!(ev, crate::events::Event::PairConfirm { .. }) {
+                        state.answer(true);
+                        return;
+                    }
+                }
+            })
+            .await;
+        });
+    }
+
     /// Zahl der Oberflächen, die gerade Ereignisse abonniert haben (z. B. die Desktop-App).
     pub fn ui_clients(&self) -> usize {
         self.inner.ui_clients.load(std::sync::atomic::Ordering::Relaxed)

@@ -124,6 +124,17 @@ pub(crate) async fn handle_request(
         Request::TrashEmpty => fileops::trash_empty(inner).await,
         Request::RemoteOp { device, op } => crate::remote_ops::send(inner, &device, op).await,
         Request::ClipboardSend { device, text } => crate::clipboard::send(inner, &device, text).await,
+        Request::PairConfirm { accept } => {
+            if inner.pairing.state.answer(accept) {
+                Ok(Response::Success { message: if accept { "Bestätigt".into() } else { "Abgelehnt".into() } })
+            } else {
+                Err(crate::api::error::ApiError::new(
+                    crate::api::error::ErrorCode::NotFound,
+                    "Keine Kopplung wartet auf Bestätigung",
+                )
+                .into())
+            }
+        }
         Request::ClipboardPending => {
             let p = inner.clipboard.take_pending();
             Ok(Response::ClipboardPending { name: p.as_ref().map(|x| x.0.clone()), text: p.map(|x| x.1) })
@@ -364,6 +375,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropSetRemote { .. } => "drop.remote",
         Request::DropCancel { .. } => "drop.cancel",
         Request::ClipboardSend { .. } => "clipboard.send",
+        Request::PairConfirm { .. } => "pair.confirm",
         Request::ClipboardPending => "clipboard.pending",
         Request::DropHistory => "drop.history",
         Request::DropHistoryClear => "drop.history.clear",

@@ -23,6 +23,7 @@ async fn pair(host: &Daemon, guest: &Daemon) {
         Response::PairInvite { code, .. } => code,
         other => panic!("{other:?}"),
     };
+    host.confirm_next_pairing();
     assert!(matches!(guest.request(Request::PairJoin { code }).await, Response::Paired { .. }));
 }
 

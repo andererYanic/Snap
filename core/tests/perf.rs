@@ -319,6 +319,7 @@ fn pin_mirror() {
             Response::PairInvite { code, .. } => code,
             other => panic!("{other:?}"),
         };
+        pc.confirm_next_pairing();
         assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
         const N: usize = 2000;
         let share = dir.path().join("Fotos");
@@ -568,6 +569,7 @@ fn file_ops() {
             Response::PairInvite { code, .. } => code,
             other => panic!("{other:?}"),
         };
+        pc.confirm_next_pairing();
         assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
         let share = std::fs::canonicalize(root.join("quelle")).unwrap();
         pc.request(Request::ShareAdd { path: share.clone(), name: Some("Q".into()), devices: None }).await;
@@ -679,6 +681,7 @@ fn streaming() {
             Response::PairInvite { code, .. } => code,
             other => panic!("{other:?}"),
         };
+        pc.confirm_next_pairing();
         assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
         pc.request(Request::ShareAdd { path: share.clone(), name: Some("Filme".into()), devices: None }).await;
         loop {
@@ -761,6 +764,7 @@ fn upload() {
             Response::PairInvite { code, .. } => code,
             other => panic!("{other:?}"),
         };
+        pc.confirm_next_pairing();
         assert!(matches!(phone.request(Request::PairJoin { code }).await, Response::Paired { .. }));
         pc.request(Request::ShareAdd { path: share.clone(), name: Some("Fotos".into()), devices: None }).await;
         let share = std::fs::canonicalize(&share).unwrap();
