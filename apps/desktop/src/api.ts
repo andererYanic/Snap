@@ -277,10 +277,10 @@ export async function applyFont(): Promise<void> {
 // ---------------------------------------------------------------- Snap Drop
 
 export type DropMode = "off" | "contacts" | "everyone";
-export interface DropStatus { mode: DropMode; until: number | null; name: string; default_name: string; custom_name: boolean; fingerprint: string; dir: string; code: string | null }
-export interface NearbyPeer { id: string; name: string | null; kind: "phone" | "tablet" | "laptop" | "desktop" | null; contact: string | null; via: string; offline: boolean }
+export interface DropStatus { mode: DropMode; until: number | null; name: string; default_name: string; custom_name: boolean; fingerprint: string; dir: string; code: string | null; remote?: boolean }
+export interface NearbyPeer { id: string; name: string | null; kind: "phone" | "tablet" | "laptop" | "desktop" | null; contact: string | null; contact_key?: string | null; via: string; offline: boolean }
 export interface IncomingOffer { id: number; name: string; contact: string | null; code: string; files: { name: string; size: number; mime: string }[]; total: number; preview: boolean; expires_at: number; text?: string | null; link?: string | null }
-export interface DropContact { key: string; name: string; device_name: string; renamed: boolean; fingerprint: string; added_at: number; last_seen: number }
+export interface DropContact { key: string; name: string; device_name: string; renamed: boolean; fingerprint: string; added_at: number; last_seen: number; remote?: boolean; remote_ok?: boolean }
 export interface DropBlocked { key: string; name: string; blocked_at: number }
 export interface DropSent { id: number; ok: boolean; error: string | null; code: string | null }
 
@@ -291,6 +291,9 @@ export const drop = {
   nearby: () => invoke<{ peers: NearbyPeer[] }>("drop_nearby").then((r) => r.peers),
   addCode: (code: string) => invoke<NearbyPeer>("drop_add_code", { code }),
   send: (peer: string, paths: string[]) => invoke<DropSent>("drop_send", { peer, paths }),
+  sendToContact: (contact: string, paths: string[]) => invoke<DropSent>("drop_send_contact", { contact, paths }),
+  setRemote: (enabled: boolean) => invoke<DropStatus>("drop_set_remote", { enabled }),
+  setContactRemote: (key: string, ok: boolean) => invoke<DropContact>("drop_contact_remote", { key, ok }),
   offers: () => invoke<{ offers: IncomingOffer[] }>("drop_offers").then((r) => r.offers),
   respond: (id: number, accept: boolean, block = false) => invoke<unknown>("drop_respond", { id, accept, block }),
   preview: (id: number) => invoke<{ png: string | null }>("drop_preview", { id }).then((r) => r.png),

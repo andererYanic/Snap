@@ -54,6 +54,11 @@ pub(crate) async fn handle(inner: &Arc<DaemonInner>, req: Request) -> Result<Res
         }
         Request::DropPreview { id } => Response::DropPreview { png: d.offer_preview(id).map(|p| BASE64.encode(&p)) },
         Request::DropContacts => Response::DropContacts { contacts: d.contacts()? },
+        Request::DropSetRemote { enabled } => Response::DropStatus(d.set_remote(enabled).await?),
+        Request::DropContactRemote { key, ok } => Response::DropContact(d.set_contact_remote(&key, ok)?),
+        Request::DropSendContact { contact, paths, text } => {
+            Response::DropSent(d.send_to_contact(&contact, paths, text).await?)
+        }
         Request::DropWakeExport { enable } => {
             d.set_wake_export(enable)?;
             Response::Success { message: if enable { "Wecken eingerichtet".into() } else { "Wecken aus".into() } }

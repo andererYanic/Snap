@@ -131,6 +131,13 @@ export function DropPage({ notify }: { notify: Notify }) {
 
       <section className="panel">
         <h2>{t("Kontakte")}</h2>
+        <label className="line toggle">
+          <input type="checkbox" checked={!!st?.remote} onChange={(e) => drop.setRemote(e.target.checked).then(setSt).catch(fail(notify))} />
+          <span className="grow">
+            <span className="strong">{t("Von überall empfangen")}</span>
+            <span className="muted small">{t("Kontakte können dir auch senden, wenn ihr nicht in der Nähe seid – Ende-zu-Ende-verschlüsselt, Annehmen bleibt Pflicht. Je Kontakt abschaltbar.")}</span>
+          </span>
+        </label>
         {people.length === 0 && (
           <p className="muted small">{t("Nach einem Tausch kannst du das Gegenüber als Kontakt speichern. Kontakte erkennt Snap am Schlüssel, nicht am Namen.")}</p>
         )}
@@ -144,6 +151,17 @@ export function DropPage({ notify }: { notify: Notify }) {
                 <div className="strong">{c.name}</div>
                 <div className="muted small mono">{c.renamed ? `${c.device_name} · ${c.fingerprint}` : c.fingerprint}</div>
               </div>
+              {st?.remote && (
+                <label className="small" title={t("{name} darf von überall senden", { name: c.name })}>
+                  <input
+                    type="checkbox"
+                    checked={c.remote_ok !== false}
+                    onChange={(e) => drop.setContactRemote(c.key, e.target.checked).then(load).catch(fail(notify))}
+                    aria-label={t("{name} darf von überall senden", { name: c.name })}
+                  />{" "}
+                  {t("von überall")}
+                </label>
+              )}
               <button className="btn" onClick={() => { setDraft(c.renamed ? c.name : ""); setEditing(c.key); }}>{t("Umbenennen")}</button>
               <button className="btn" onClick={() => drop.removeContact(c.key).then(() => { notify({ text: t("Kontakt entfernt.") }); load(); }).catch(fail(notify))}>
                 {t("Entfernen")}
@@ -182,6 +200,11 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [code, setCode] = useState("");
+  const [people, setPeople] = useState<DropContact[]>([]);
+
+  useEffect(() => {
+    drop.contacts().then(setPeople).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -213,6 +236,22 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
       .catch(fail(notify))
       .finally(() => setBusy(null));
   };
+
+  const sendRemote = (c: DropContact) => {
+    const id = `contact:${c.key}`;
+    setBusy(id);
+    setProgress(null);
+    drop
+      .sendToContact(c.key, paths)
+      .then((r) => {
+        if (r.ok) onClose();
+        else notify({ text: r.error ?? t("Fehlgeschlagen"), error: true });
+      })
+      .catch(fail(notify))
+      .finally(() => setBusy(null));
+  };
+  const nearbyKeys = new Set(peers.map((p) => p.contact_key).filter(Boolean));
+  const far = people.filter((c) => c.remote && !nearbyKeys.has(c.key));
 
   const connect = () =>
     drop
@@ -258,6 +297,25 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
               );
             })
           )}
+          {far.length > 0 && <div className="muted small group">{t("Kontakte, nicht in der Nähe")}</div>}
+          {far.map((c) => {
+            const mine = busy === `contact:${c.key}`;
+            return (
+              <button key={c.key} className="peer" disabled={!!busy} onClick={() => sendRemote(c)} aria-label={t("An {name} senden", { name: c.name })}>
+                <Avatar name={c.name} contact size={40} />
+                <span className="grow">
+                  <span className="strong">{c.name}</span>
+                  <span className="muted small">
+                    {mine
+                      ? progress && progress.total > 0
+                        ? `${humanSize(progress.done)} / ${humanSize(progress.total)}`
+                        : t("Wartet auf Annahme …")
+                      : t("Von überall senden – verschlüsselt, auch übers Internet")}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
         </div>
         <div className="line">
           <input className="field grow" placeholder={t("Code (snapdrop1-…)")} value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && code.trim() && connect()} />

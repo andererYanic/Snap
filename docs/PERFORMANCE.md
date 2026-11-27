@@ -734,3 +734,17 @@ Messung `core/tests/perf.rs::drop_wake` (Release):
 - **Sender:** Weck-Werbung nur nach Antippen eines Kontakts (90 s) bzw. beim Öffnen des
   Sende-Fensters ohne Tag (30 s), danach Ende.
 - Messung auf dem Gerät (Akkuverbrauch über 24 h mit eingeschaltetem Wecken) steht aus.
+
+## Review 39 – Snap Drop von überall (2026-11-27)
+
+Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
+
+| Fall | Zeit |
+|---|---|
+| Erster Tausch in der Nähe inkl. Start des Fern-Endpunkts | 6,4 ms |
+| Senden an einen Kontakt über seinen Fern-Endpunkt (Verbindung, Probe, Angebot, Annahme, Datei) | 2,4 ms je Sendung |
+
+- Der Fern-Endpunkt startet erst, wenn es Kontakte gibt bzw. beim ersten Tausch, und hält dann eine
+  Relais-Verbindung (wie der Geräte-Endpunkt). Auf Android läuft er nur, solange der Kern läuft
+  (App offen oder „Auch über WLAN“) – keine zusätzliche Dauerlast.
+- Zusätzliche Prüfung je Probe: Abgleich der Kontakt-Tags wie in der Nähe (gemessen in Review 34).

@@ -9,8 +9,8 @@
 use super::discovery::{Advert, Browser, Found};
 use super::identity::{self, DropIdentity};
 use super::wire::{
-    hex, Card, ConnectInfo, DeviceKind, Offer, OfferFile, Probe, Proof, Received, Reply, ValidOffer, DROP_ALPN,
-    MAX_FRAME, MAX_TAGS, TOKEN_LEN, VERSION,
+    hex, Card, ConnectInfo, DeviceKind, Offer, OfferFile, Probe, Proof, Received, RemoteAddr, Reply, ValidOffer,
+    DROP_ALPN, MAX_FRAME, MAX_TAGS, TOKEN_LEN, VERSION,
 };
 use crate::api::error::{ApiError, ErrorCode};
 use crate::api_bail;
@@ -57,6 +57,8 @@ const SETTING_BASE_MODE: &str = "drop_visibility";
 const SETTING_EVERYONE_UNTIL: &str = "drop_everyone_until";
 /// Wecken im Hintergrund eingeschaltet (Weck-Schlüssel-Datei wird gepflegt).
 const SETTING_WAKE_EXPORT: &str = "drop_wake_export";
+/// Von überall empfangen (0 = aus; Standard: an, nur für Kontakte).
+const SETTING_REMOTE: &str = "drop_remote";
 /// Längstes Empfangsfenster im Hintergrund (der Dienst verlängert bei Bedarf).
 const BACKGROUND_MAX_SECS: u32 = 3600;
 const META_NAME: &str = "name";
@@ -124,6 +126,9 @@ pub struct DropStatus {
     pub dir: String,
     /// Code für QR/Abtippen, solange man sichtbar ist.
     pub code: Option<String>,
+    /// Kontakte dürfen von überall senden.
+    #[serde(default)]
+    pub remote: bool,
 }
 
 /// Ein Gerät in der Nähe.
@@ -195,6 +200,12 @@ pub struct ContactInfo {
     pub fingerprint: String,
     pub added_at: i64,
     pub last_seen: i64,
+    /// Fern-Adresse bekannt (Senden von überall möglich).
+    #[serde(default)]
+    pub remote: bool,
+    /// Darf von überall an dieses Gerät senden.
+    #[serde(default)]
+    pub remote_ok: bool,
 }
 
 /// Gesperrter Absender.
@@ -295,6 +306,15 @@ struct Exchange {
     name: String,
     secret: [u8; 32],
     at: Instant,
+    /// Fern-Adresse des Gegenübers (JSON), falls mitgeschickt.
+    remote: Option<String>,
+}
+
+/// Fern-Endpunkt: dauerhafte Kennung, nimmt nur Kontakte an.
+struct RemoteNode {
+    endpoint: Endpoint,
+    router: Router,
+    addrs: Vec<SocketAddr>,
 }
 
 #[derive(Default)]
@@ -350,6 +370,7 @@ pub struct DropService {
     pre_accept: Mutex<Option<PreAccept>>,
     /// Generation der Sichtbarkeit, die `background` gesetzt hat (zum Zurücknehmen).
     background_gen: Mutex<Option<u64>>,
+    remote: tokio::sync::Mutex<Option<RemoteNode>>,
 }
 
 impl DropService {
@@ -379,6 +400,7 @@ impl DropService {
             browser: Mutex::new(None),
             pre_accept: Mutex::new(None),
             background_gen: Mutex::new(None),
+            remote: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -390,6 +412,11 @@ impl DropService {
     /// „Alle“ nie – das gilt immer nur 10 Minuten).
     pub async fn restore(&self) -> Result<()> {
         self.wake_export_changed();
+        if self.remote_enabled() && !self.db.drop_contacts()?.is_empty() {
+            if let Err(e) = self.ensure_remote().await {
+                tracing::warn!("Drop: Fern-Endpunkt nicht gestartet: {e:#}");
+            }
+        }
         let base = self.base_mode();
         if base == Mode::Contacts {
             self.set_visibility(Mode::Contacts).await?;
@@ -593,6 +620,121 @@ impl DropService {
         self.status()
     }
 
+    // --- Von überall (Kontakte) ---
+
+    fn remote_enabled(&self) -> bool {
+        !self.db.settings().ok().into_iter().flatten().any(|(k, v)| k == SETTING_REMOTE && v == 0)
+    }
+
+    /// Von überall empfangen ein- oder ausschalten.
+    pub async fn set_remote(&self, enabled: bool) -> Result<DropStatus> {
+        self.db.put_setting(SETTING_REMOTE, Some(i64::from(enabled)))?;
+        if enabled {
+            self.ensure_remote().await?;
+        } else if let Some(r) = self.remote.lock().await.take() {
+            let _ = r.router.shutdown().await;
+        }
+        self.status()
+    }
+
+    /// Darf ein Kontakt von überall senden?
+    pub fn set_contact_remote(&self, key: &str, ok: bool) -> Result<ContactInfo> {
+        if !self.db.set_drop_contact_remote_ok(key, ok)? {
+            api_bail!(NotFound, "Kein solcher Kontakt");
+        }
+        match self.contact_by_key(key)? {
+            Some(c) => Ok(contact_info(c)),
+            None => api_bail!(NotFound, "Kein solcher Kontakt"),
+        }
+    }
+
+    /// Startet den Fern-Endpunkt (dauerhafte Kennung aus einer eigenen Schlüsseldatei).
+    async fn ensure_remote(&self) -> Result<()> {
+        let mut guard = self.remote.lock().await;
+        if guard.is_some() {
+            return Ok(());
+        }
+        let key_path = self.opts.identity_path.with_file_name("drop-remote.key");
+        if let Some(dir) = key_path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let key = crate::secure_fs::load_or_create_secret_key(&key_path)?;
+        let endpoint = self
+            .endpoint_builder_with(key)?
+            .alpns(vec![DROP_ALPN.to_vec()])
+            .bind()
+            .await
+            .context("Fern-Endpunkt konnte nicht gestartet werden")?;
+        let router = Router::builder(endpoint.clone())
+            .accept(DROP_ALPN, DropReceiver { svc: self.me.clone(), remote: true })
+            .spawn();
+        let addrs = wait_for_addrs(&endpoint).await;
+        *guard = Some(RemoteNode { endpoint, router, addrs });
+        Ok(())
+    }
+
+    /// Eigene Fern-Adresse zum Mitschicken (startet den Endpunkt bei Bedarf).
+    async fn remote_addr(&self) -> Option<RemoteAddr> {
+        if !self.remote_enabled() {
+            return None;
+        }
+        if let Err(e) = self.ensure_remote().await {
+            tracing::warn!("Drop: Fern-Endpunkt nicht gestartet: {e:#}");
+            return None;
+        }
+        let guard = self.remote.lock().await;
+        guard.as_ref().map(|r| RemoteAddr::new(&r.endpoint.id(), &r.addrs))
+    }
+
+    /// Nur für Tests: gespeicherte Fern-Adresse eines Kontakts lesen bzw. setzen.
+    #[doc(hidden)]
+    pub fn contact_remote_for_tests(&self, key: &str) -> Option<RemoteAddr> {
+        self.contact_by_key(key).ok().flatten()?.remote.and_then(|j| serde_json::from_str(&j).ok())
+    }
+
+    #[doc(hidden)]
+    pub fn set_contact_remote_for_tests(&self, key: &str, remote: &RemoteAddr) {
+        if let Ok(Some(c)) = self.contact_by_key(key) {
+            let _ = self.db.upsert_drop_contact(&DropContactRow { remote: serde_json::to_string(remote).ok(), ..c });
+        }
+    }
+
+    /// An einen gespeicherten Kontakt senden, egal wo er ist (über seinen Fern-Endpunkt; das
+    /// Relais sieht nur verschlüsselte Daten). Die Gegenseite muss wie immer annehmen.
+    pub async fn send_to_contact(&self, key: &str, paths: Vec<PathBuf>, text: Option<String>) -> Result<SendResult> {
+        let Some(c) = self.contact_by_key(key)? else {
+            api_bail!(NotFound, "Kein solcher Kontakt");
+        };
+        let Some((endpoint, addrs)) =
+            c.remote.as_deref().and_then(|j| serde_json::from_str::<RemoteAddr>(j).ok()).and_then(|r| r.validate())
+        else {
+            api_bail!(
+                NotFound,
+                "Für „{}“ ist noch keine Adresse bekannt – einmal in der Nähe tauschen, dann geht es von überall",
+                label(&c)
+            );
+        };
+        let target = Target { endpoint, addrs };
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let r = self.send_to(id, &target, paths, text, Some(&c.key)).await;
+        let (ok, error, code, can_save) = match r {
+            Ok((code, can_save)) => (true, None, Some(code), can_save),
+            Err(e) => (false, Some(format!("{e:#}")), None, false),
+        };
+        self.db.events().emit(Event::DropFinished {
+            id,
+            incoming: false,
+            ok,
+            peer: label(&c),
+            files: vec![],
+            error: error.clone(),
+            can_save_contact: can_save,
+            text: None,
+            link: None,
+        });
+        Ok(SendResult { id, ok, error, code })
+    }
+
     pub fn status(&self) -> Result<DropStatus> {
         let (mode, until) = {
             let v = self.vis.lock().unwrap_or_else(|e| e.into_inner());
@@ -608,6 +750,7 @@ impl DropService {
             fingerprint: identity::fingerprint(&self.identity.public()),
             dir: self.opts.dir.display().to_string(),
             code: if mode == Mode::Off { None } else { code },
+            remote: self.remote_enabled(),
         })
     }
 
@@ -646,6 +789,10 @@ impl DropService {
     }
 
     fn endpoint_builder(&self) -> Result<iroh::endpoint::Builder> {
+        self.endpoint_builder_with(SecretKey::generate())
+    }
+
+    fn endpoint_builder_with(&self, key: SecretKey) -> Result<iroh::endpoint::Builder> {
         let mut b = if self.opts.use_relay {
             let b = Endpoint::builder(presets::N0);
             match crate::network::relay_mode(&self.opts.relay_urls, self.opts.relay_fallback_n0)? {
@@ -655,7 +802,7 @@ impl DropService {
         } else {
             Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
         };
-        b = b.secret_key(SecretKey::generate());
+        b = b.secret_key(key);
         if self.opts.loopback_only {
             b = b.bind_addr("127.0.0.1:0")?;
         }
@@ -673,7 +820,9 @@ impl DropService {
             .bind()
             .await
             .context("Drop-Endpunkt konnte nicht gestartet werden")?;
-        let router = Router::builder(endpoint.clone()).accept(DROP_ALPN, DropReceiver { svc: self.me.clone() }).spawn();
+        let router = Router::builder(endpoint.clone())
+            .accept(DROP_ALPN, DropReceiver { svc: self.me.clone(), remote: false })
+            .spawn();
         let mut token = [0u8; TOKEN_LEN];
         getrandom::fill(&mut token).map_err(|e| anyhow::anyhow!("Zufall nicht verfügbar: {e}"))?;
         let addrs = wait_for_addrs(&endpoint).await;
@@ -746,6 +895,9 @@ impl DropService {
     pub async fn shutdown(&self) {
         self.browse_stop();
         self.stop_session().await;
+        if let Some(r) = self.remote.lock().await.take() {
+            let _ = r.router.shutdown().await;
+        }
         if let Some((ep, _)) = self.sender.lock().await.take() {
             ep.close().await;
         }
@@ -753,12 +905,21 @@ impl DropService {
 
     // --- Empfangen ---
 
-    async fn handle_incoming(&self, conn: &Connection) -> Result<()> {
+    async fn handle_incoming(&self, conn: &Connection, remote: bool) -> Result<()> {
         let Ok(_permit) = self.slots.clone().try_acquire_owned() else {
             conn.close(VarInt::from_u32(1), b"busy");
             return Ok(());
         };
-        let mode = self.mode();
+        // Von überall gilt immer „nur Kontakte“ – unabhängig von der Sichtbarkeit in der Nähe.
+        let mode = if remote {
+            if self.remote_enabled() {
+                Mode::Contacts
+            } else {
+                Mode::Off
+            }
+        } else {
+            self.mode()
+        };
         if mode == Mode::Off || !self.limiter.lock().unwrap_or_else(|e| e.into_inner()).probe() {
             conn.close(VarInt::from_u32(1), b"busy");
             return Ok(());
@@ -771,6 +932,8 @@ impl DropService {
         let probe: Probe = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME)).await??;
         let tags: HashSet<[u8; 8]> = probe.tag_bytes()?.into_iter().collect();
         let contact = self.match_contact(&tags, &session)?;
+        // Von überall nur Kontakte, denen das erlaubt ist
+        let contact = contact.filter(|c| !remote || c.remote_ok);
         if mode == Mode::Contacts && contact.is_none() {
             write_frame_max(&mut send, &Card::Hidden, MAX_FRAME).await?;
             let _ = send.finish();
@@ -883,10 +1046,12 @@ impl DropService {
                 let fin = Received {
                     ok: true,
                     proof: Some(Proof::new(&self.identity.public(), &self.identity.sign_session(&session))),
+                    remote: self.remote_addr().await,
                 };
                 let _ = write_frame_max(&mut send, &fin, MAX_FRAME).await;
                 let _ = send.finish();
-                let can_save = self.remember_exchange(id, offer.sender, &offer.name, &session)?;
+                let remote = offer.remote.as_ref().map(|(k, a)| RemoteAddr::new(k, a));
+                let can_save = self.remember_exchange(id, offer.sender, &offer.name, &session, remote)?;
                 self.db.events().emit(Event::DropFinished {
                     id,
                     incoming: true,
@@ -901,7 +1066,7 @@ impl DropService {
                 let _ = tokio::time::timeout(IO_TIMEOUT, conn.closed()).await;
             }
             Err(e) => {
-                let _ = write_frame_max(&mut send, &Received { ok: false, proof: None }, MAX_FRAME).await;
+                let _ = write_frame_max(&mut send, &Received { ok: false, proof: None, remote: None }, MAX_FRAME).await;
                 self.db.events().emit(Event::DropFinished {
                     id,
                     incoming: true,
@@ -979,14 +1144,23 @@ impl DropService {
 
     /// Merkt sich einen erfolgreichen Tausch zum späteren Speichern als Kontakt. Ist das Gegenüber
     /// schon Kontakt, wird sein Geheimnis gleich auf den neuesten Stand gebracht.
-    fn remember_exchange(&self, id: u64, key: PublicKey, name: &str, session: &[u8; 32]) -> Result<bool> {
+    fn remember_exchange(
+        &self,
+        id: u64,
+        key: PublicKey,
+        name: &str,
+        session: &[u8; 32],
+        remote: Option<RemoteAddr>,
+    ) -> Result<bool> {
         let secret = identity::contact_secret(session);
         let key_hex = hex(key.as_bytes());
+        let remote = remote.and_then(|r| serde_json::to_string(&r).ok());
         if let Some(c) = self.contact_by_key(&key_hex)? {
             self.db.upsert_drop_contact(&DropContactRow {
                 secret: secret.to_vec(),
                 last_seen: Self::now(),
                 name: super::wire::display_name(name),
+                remote: remote.or(c.remote.clone()),
                 ..c
             })?;
             self.wake_export_changed(); // neues Geheimnis → neuer Weck-Schlüssel
@@ -994,7 +1168,7 @@ impl DropService {
         }
         let mut ex = self.exchanges.lock().unwrap_or_else(|e| e.into_inner());
         ex.retain(|_, e| e.at.elapsed() < EXCHANGE_TTL);
-        ex.insert(id, Exchange { key, name: super::wire::display_name(name), secret, at: Instant::now() });
+        ex.insert(id, Exchange { key, name: super::wire::display_name(name), secret, at: Instant::now(), remote });
         Ok(true)
     }
 
@@ -1052,6 +1226,8 @@ impl DropService {
             secret: ex.secret.to_vec(),
             added_at: now,
             last_seen: now,
+            remote: ex.remote,
+            remote_ok: true,
         };
         self.db.upsert_drop_contact(&row)?;
         let _ = self.db.unblock_drop(&row.key);
@@ -1245,7 +1421,7 @@ impl DropService {
         let target = self.target_of(peer)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let peer_name = self.peer_label(&target);
-        let r = self.send_to(id, &target, paths, text).await;
+        let r = self.send_to(id, &target, paths, text, None).await;
         let (ok, error, code, can_save) = match r {
             Ok((code, can_save)) => (true, None, Some(code), can_save),
             Err(e) => (false, Some(format!("{e:#}")), None, false),
@@ -1295,6 +1471,7 @@ impl DropService {
         target: &Target,
         paths: Vec<PathBuf>,
         text: Option<String>,
+        expect_contact: Option<&str>,
     ) -> Result<(String, bool)> {
         let text = text.filter(|t| !t.trim().is_empty());
         if text.as_ref().is_some_and(|t| t.len() > super::wire::MAX_TEXT) {
@@ -1307,9 +1484,15 @@ impl DropService {
         let (mut send, mut recv) = tokio::time::timeout(IO_TIMEOUT, conn.open_bi()).await??;
         write_frame_max(&mut send, &self.probe_for(&session)?, MAX_FRAME).await?;
         let card: Card = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME)).await??;
-        let Some((name, _, _)) = self.card_view(card, &session)? else {
+        let Some((name, _, contact)) = self.card_view(card, &session)? else {
             api_bail!(PermissionDenied, "Das Gerät empfängt gerade nur von Kontakten");
         };
+        // Von überall: Am anderen Ende muss genau dieser Kontakt sitzen (Beweis mit seinem Schlüssel).
+        if let Some(expected) = expect_contact {
+            if contact.as_ref().map(|c| c.1.as_str()) != Some(expected) {
+                api_bail!(PermissionDenied, "Das Gerät hat sich nicht als dieser Kontakt ausgewiesen");
+            }
+        }
         let offer = Offer {
             name: self.my_name(),
             kind: self.opts.kind,
@@ -1317,6 +1500,7 @@ impl DropService {
             files: files.iter().map(|f| f.offer.clone()).collect(),
             preview: files.iter().find_map(|f| f.preview.clone()),
             text,
+            remote: self.remote_addr().await,
         };
         write_frame_max(&mut send, &offer, MAX_FRAME).await?;
         let reply: Reply =
@@ -1344,8 +1528,9 @@ impl DropService {
             api_bail!(Internal, "Der Empfänger konnte die Dateien nicht speichern");
         }
         // Empfänger zeigt seinen Schlüssel erst nach dem Annehmen.
+        let remote = fin.remote.as_ref().and_then(|r| r.validate()).map(|(k, a)| RemoteAddr::new(&k, &a));
         let can_save = match fin.proof.map(|p| p.verify(&session)).transpose()? {
-            Some(key) => self.remember_exchange(id, key, &name, &session)?,
+            Some(key) => self.remember_exchange(id, key, &name, &session, remote)?,
             None => false,
         };
         Ok((code, can_save))
@@ -1571,18 +1756,22 @@ fn contact_info(c: DropContactRow) -> ContactInfo {
         key: c.key,
         added_at: c.added_at,
         last_seen: c.last_seen,
+        remote: c.remote.is_some(),
+        remote_ok: c.remote_ok,
     }
 }
 
 #[derive(Clone, Debug)]
 struct DropReceiver {
     svc: Weak<DropService>,
+    /// Fern-Endpunkt: nur Kontakte, unabhängig von der Sichtbarkeit.
+    remote: bool,
 }
 
 impl ProtocolHandler for DropReceiver {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         if let Some(svc) = self.svc.upgrade() {
-            if let Err(e) = svc.handle_incoming(&conn).await {
+            if let Err(e) = svc.handle_incoming(&conn, self.remote).await {
                 tracing::debug!("Drop: eingehende Verbindung beendet: {e:#}");
             }
             // Gegenseite die letzte Antwort lesen lassen, dann schließen.

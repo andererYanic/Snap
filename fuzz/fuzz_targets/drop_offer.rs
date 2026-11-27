@@ -7,10 +7,11 @@
 //! - Anzeigenamen: nicht leer, ≤ 64 Byte, ohne Steuerzeichen;
 //! - Vorschaubild: Ergebnis ist ein PNG mit höchstens 64 × 64 Pixeln;
 //! - geteilter Text: ohne Steuerzeichen außer \n/\t; als Link nur http(s) ohne Leerzeichen und
-//!   ohne Zugangsdaten, und die Erkennung ist stabil.
+//!   ohne Zugangsdaten, und die Erkennung ist stabil;
+//! - Fern-Adresse: höchstens 8 Adressen, und die geprüfte Fassung übersteht den Rundweg.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use space_core::drop::wire::{self, Card, OfferFile, Probe};
+use space_core::drop::wire::{self, Card, OfferFile, Probe, RemoteAddr};
 
 fn check_name(n: &str) {
     assert!(!n.is_empty() && n.len() <= wire::MAX_FILE_NAME, "{n:?}");
@@ -69,6 +70,13 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             let _ = serde_json::from_slice::<Card>(rest);
+            if let Ok(r) = serde_json::from_slice::<RemoteAddr>(rest) {
+                if let Some((id, addrs)) = r.validate() {
+                    assert!(addrs.len() <= wire::MAX_REMOTE_ADDRS);
+                    let again = RemoteAddr::new(&id, &addrs).validate().expect("Rundweg");
+                    assert_eq!((again.0, again.1), (id, addrs));
+                }
+            }
         }
     }
 });

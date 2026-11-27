@@ -190,6 +190,9 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropHotspotAccept { .. }
         | Request::DropHotspotRequest { .. }
         | Request::DropWakeExport { .. }
+        | Request::DropSetRemote { .. }
+        | Request::DropContactRemote { .. }
+        | Request::DropSendContact { .. }
         | Request::DropBackground { .. }
         | Request::LinkRevoke { .. }
         | Request::SpaceUsage { .. }
