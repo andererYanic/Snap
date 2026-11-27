@@ -1436,7 +1436,7 @@ test('Von überall: Kontakt mit Adresse direkt senden, ohne Adresse per Bluetoot
     expect(text).toContain('Antippen zum Wecken');
     await act(async () => { await byLabel(r, 'An Clara senden').props.onPress(); });
     await flush();
-    expect(calls).toContainEqual({ DropSendContact: { contact: 'aa'.repeat(32), paths: ['/storage/emulated/0/a.txt'], text: null } });
+    expect(calls).toContainEqual({ DropSendContact: { contact: 'aa'.repeat(32), paths: ['/storage/emulated/0/a.txt'], text: null, expire: null } });
     expect(allText(r)).toContain('Gesendet');
   } finally {
     NativeModules.SnapCore.request.mockImplementation(origRequest);

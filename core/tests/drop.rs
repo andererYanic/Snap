@@ -15,6 +15,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 struct Node {
+    db: Arc<DatabaseManager>,
     svc: Arc<DropService>,
     events: Subscription,
     inbox: PathBuf,
@@ -37,7 +38,7 @@ fn node(root: &Path, name: &str) -> Node {
         reserve_bytes: 0,
         can_join_hotspot: false,
     };
-    Node { svc: DropService::with_identity(opts, db, DropIdentity::ephemeral()), events, inbox }
+    Node { db: db.clone(), svc: DropService::with_identity(opts, db, DropIdentity::ephemeral()), events, inbox }
 }
 
 async fn next_event(sub: &mut Subscription, pred: impl Fn(&Event) -> bool) -> Event {
@@ -277,6 +278,7 @@ fn offer(id: &DropIdentity, session: &[u8; 32], files: Vec<OfferFile>) -> Offer 
         preview: None,
         text: None,
         remote: None,
+        expire: None,
     }
 }
 
@@ -591,7 +593,7 @@ async fn text_und_links_teilen() {
     let send = {
         let (svc, id) = (a.svc.clone(), peer.id.clone());
         tokio::spawn(async move {
-            svc.send_with_text(&id, vec![], Some("https://example.org/rezept".into())).await.unwrap()
+            svc.send_with_text(&id, vec![], Some("https://example.org/rezept".into()), None).await.unwrap()
         })
     };
     let ev = next_event(&mut b.events, |e| matches!(e, Event::DropOffer { .. })).await;
@@ -613,7 +615,7 @@ async fn text_und_links_teilen() {
     let send = {
         let (svc, id) = (a.svc.clone(), peer.id.clone());
         tokio::spawn(async move {
-            svc.send_with_text(&id, vec![], Some("javascript:alert(1)\u{202E}\u{7}".into())).await.unwrap()
+            svc.send_with_text(&id, vec![], Some("javascript:alert(1)\u{202E}\u{7}".into()), None).await.unwrap()
         })
     };
     answer(&mut b, true, false).await;
@@ -624,9 +626,9 @@ async fn text_und_links_teilen() {
     assert_eq!(link, None);
 
     // Zu langer oder leerer Text wird schon beim Sender abgewiesen
-    let r = a.svc.send_with_text(&peer.id, vec![], Some("x".repeat(70_000))).await.unwrap();
+    let r = a.svc.send_with_text(&peer.id, vec![], Some("x".repeat(70_000)), None).await.unwrap();
     assert!(!r.ok);
-    let r = a.svc.send_with_text(&peer.id, vec![], Some("   ".into())).await.unwrap();
+    let r = a.svc.send_with_text(&peer.id, vec![], Some("   ".into()), None).await.unwrap();
     assert!(!r.ok);
 }
 
@@ -760,7 +762,7 @@ async fn von_ueberall_an_kontakte() {
     let send = {
         let svc = a.svc.clone();
         let key = key_of(&b);
-        tokio::spawn(async move { svc.send_to_contact(&key, vec![f], None).await.unwrap() })
+        tokio::spawn(async move { svc.send_to_contact(&key, vec![f], None, None).await.unwrap() })
     };
     let Event::DropOffer { id, contact, .. } =
         next_event(&mut b.events, |e| matches!(e, Event::DropOffer { .. })).await
@@ -778,7 +780,7 @@ async fn von_ueberall_an_kontakte() {
     let send = {
         let svc = a.svc.clone();
         let key = key_of(&b);
-        tokio::spawn(async move { svc.send_to_contact(&key, vec![f], None).await.unwrap() })
+        tokio::spawn(async move { svc.send_to_contact(&key, vec![f], None, None).await.unwrap() })
     };
     answer(&mut b, false, false).await;
     assert!(!send.await.unwrap().ok);
@@ -786,16 +788,16 @@ async fn von_ueberall_an_kontakte() {
     // B erlaubt A nicht mehr von überall → abgewiesen, ohne Angebot
     b.svc.set_contact_remote(&key_of(&a), false).unwrap();
     let f = write(&src, "zu.txt", b"x");
-    let r = a.svc.send_to_contact(&key_of(&b), vec![f.clone()], None).await.unwrap();
+    let r = a.svc.send_to_contact(&key_of(&b), vec![f.clone()], None, None).await.unwrap();
     assert!(!r.ok);
     b.svc.set_contact_remote(&key_of(&a), true).unwrap();
 
     // B schaltet „von überall“ ganz aus → abgewiesen
     b.svc.set_remote(false).await.unwrap();
-    let r = a.svc.send_to_contact(&key_of(&b), vec![f], None).await.unwrap();
+    let r = a.svc.send_to_contact(&key_of(&b), vec![f], None, None).await.unwrap();
     assert!(!r.ok);
     // Unbekannter Kontakt
-    assert!(a.svc.send_to_contact(&"00".repeat(32), vec![], Some("x".into())).await.is_err());
+    assert!(a.svc.send_to_contact(&"00".repeat(32), vec![], Some("x".into()), None).await.is_err());
     a.svc.shutdown().await;
     b.svc.shutdown().await;
 }
@@ -841,7 +843,7 @@ async fn fern_endpunkt_nur_fuer_kontakte() {
     let (_, remote_c) = db_remote(&a, "Carla");
     a.svc.set_contact_remote_for_tests(&key_b, &remote_c.unwrap());
     let f = write(&src, "falsch.txt", b"x");
-    let r = a.svc.send_to_contact(&key_b, vec![f], None).await.unwrap();
+    let r = a.svc.send_to_contact(&key_b, vec![f], None, None).await.unwrap();
     assert!(!r.ok);
     assert!(r.error.unwrap().contains("nicht als dieser Kontakt"));
     assert!(tokio::time::timeout(Duration::from_millis(500), c.events.next())
@@ -996,4 +998,48 @@ async fn sender_sieht_den_pruefcode_vor_dem_annehmen() {
     assert_eq!(r.code.as_deref(), Some(sender_code.as_str()));
     a.svc.shutdown().await;
     b.svc.shutdown().await;
+}
+
+#[tokio::test]
+async fn ablaufende_sendung_vorschlag_und_eigene_frist() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let peer = a.svc.add_code(&code_of(&b)).await.unwrap();
+    let src = tmp.path().join("src");
+    let f = write(&src, "geheim.txt", b"nur fuer heute");
+
+    // Ungültige Frist: schon beim Sender abgelehnt
+    let r = a.svc.send_with_text(&peer.id, vec![f.clone()], None, Some(5)).await.unwrap();
+    assert!(!r.ok && r.error.as_deref().unwrap_or("").contains("Frist"), "{:?}", r.error);
+
+    // Vorschlag 1 Stunde: im Angebot sichtbar, nach dem Empfang vorgemerkt
+    let send = {
+        let (svc, id, f) = (a.svc.clone(), peer.id.clone(), f.clone());
+        tokio::spawn(async move { svc.send_with_text(&id, vec![f], None, Some(3600)).await.unwrap() })
+    };
+    let ev = next_event(&mut b.events, |e| matches!(e, Event::DropOffer { .. })).await;
+    let Event::DropOffer { id, expire, .. } = ev else { unreachable!() };
+    assert_eq!(expire, Some(3600));
+    b.svc.respond(id, true, false).unwrap();
+    assert!(send.await.unwrap().ok);
+    next_event(&mut b.events, |e| matches!(e, Event::DropFinished { .. })).await;
+    let now = space_core::database::now_unix();
+    assert!(b.db.take_expired_drops(now + 3000, 10).unwrap().is_empty(), "noch nicht fällig");
+    let due = b.db.take_expired_drops(now + 3700, 10).unwrap();
+    assert_eq!(due.len(), 1);
+    assert!(due[0].ends_with("geheim.txt"));
+
+    // Ohne Vorschlag gilt die eigene Frist des Empfängers (1 Tag)
+    b.svc.set_expire_days(1);
+    let send = {
+        let (svc, id, f) = (a.svc.clone(), peer.id.clone(), f.clone());
+        tokio::spawn(async move { svc.send_with_text(&id, vec![f], None, None).await.unwrap() })
+    };
+    answer(&mut b, true, false).await;
+    assert!(send.await.unwrap().ok);
+    next_event(&mut b.events, |e| matches!(e, Event::DropFinished { .. })).await;
+    assert!(b.db.take_expired_drops(now + 80_000, 10).unwrap().is_empty());
+    assert_eq!(b.db.take_expired_drops(now + 90_000, 10).unwrap().len(), 1);
 }

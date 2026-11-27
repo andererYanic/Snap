@@ -851,3 +851,11 @@ Thread), Deutsch + Englisch, LSTM (`tessdata_fast`):
 - Bilder werden vor der Erkennung auf höchstens 3000 px verkleinert (begrenzt Zeit und Speicher);
   PDF-Seiten werden mit 2400 px Breite gezeichnet.
 - Größe: `libsnap_ocr.so` 2,5 MB je Architektur (gestrippt), Sprachdaten 5,4 MB (einmal in der APK).
+
+## Review 49 – Ablaufende Sendungen (2026-11-27)
+
+- Beim Empfang: ein `INSERT` je Datei in `drop_expiry` (eine Transaktion), gemessen im Test
+  `core/tests/drop.rs` › `ablaufende_sendung_vorschlag_und_eigene_frist` ohne messbaren Unterschied
+  zur Übertragung ohne Frist (< 1 ms).
+- Aufräumen alle 5 Minuten in `spawn_blocking`: eine indizierte Abfrage (`idx_drop_expiry`) nach
+  höchstens 500 fälligen Pfaden; ohne fällige Einträge kein Plattenzugriff außer der Abfrage.
