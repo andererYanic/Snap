@@ -718,7 +718,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
                       theme={theme}
                       onPress={() => (f.dir ? go(f.path, 'forward') : openPath(f.path, f.name))}
                       onLongPress={() => places.toggleFavorite(f).then(loadPlaces)}
-                      style={s.placeRow}
+                      style={s.favRow}
                       label={f.name}
                     >
                       <Glyph name={f.name} dir={f.dir} theme={theme} />
@@ -736,7 +736,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
                 {recents.slice(0, 5).map((f, i) => (
                   <View key={f.path}>
                     {i > 0 && <View style={s.sep} />}
-                    <Tap theme={theme} onPress={() => openPath(f.path, f.name)} style={s.placeRow} label={f.name}>
+                    <Tap theme={theme} onPress={() => openPath(f.path, f.name)} style={s.favRow} label={f.name}>
                       <Glyph name={f.name} dir={false} theme={theme} />
                       <View style={s.grow}>
                         <Text style={s.placeName} numberOfLines={1}>{f.name}</Text>
@@ -1021,7 +1021,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
                 <View>
                   <SectionLabel theme={theme} style={s.section}>{t('Im Inhalt gefunden')}</SectionLabel>
                   {contentHits.map((c) => (
-                    <Tap key={c.path} theme={theme} onPress={() => openPath(c.path, c.name)} style={s.placeRow} label={c.name}>
+                    <Tap key={c.path} theme={theme} onPress={() => openPath(c.path, c.name)} style={s.favRow} label={c.name}>
                       <Glyph name={c.name} dir={false} theme={theme} />
                       <View style={s.grow}>
                         <Text style={s.placeName} numberOfLines={1}>{c.name}</Text>
@@ -1386,7 +1386,8 @@ const styles = themed((th: Theme) =>
     section: { marginTop: 28, marginBottom: 10, marginLeft: 4 },
     group: { borderRadius: 12, backgroundColor: th.surface, overflow: 'hidden' },
     sep: { height: StyleSheet.hairlineWidth, backgroundColor: th.surface2, marginLeft: 56 },
-    placeRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, minHeight: 56 },
+    placeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, paddingHorizontal: 16, paddingVertical: 14 },
+    favRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, minHeight: 56 },
     placeName: { color: th.text, fontSize: 15, lineHeight: 20 },
     groupLine: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 56 },
     placeText: { flex: 1 },
