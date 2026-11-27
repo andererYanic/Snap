@@ -87,7 +87,9 @@ impl Skip {
         if depth == 0 {
             return false;
         }
-        if self.dirs.iter().any(|d| path.starts_with(d)) {
+        // Nur Snap-Ordner *innerhalb* der Freigabe auslassen – wer einen Snap-Ordner selbst
+        // freigibt (z. B. die Spiegel auf dem Server), will genau dessen Inhalt teilen.
+        if self.dirs.iter().any(|d| path.starts_with(d) && !root.starts_with(d)) {
             return true;
         }
         if self.whole_device {
@@ -411,6 +413,24 @@ mod tests {
         let (cands, deleted, _) = walk(&root, Some(&["unter".to_string()]), &known, &Skip::default());
         assert_eq!(cands.len(), 1);
         assert!(deleted.is_empty());
+    }
+
+    #[test]
+    fn snap_ordner_nur_innerhalb_der_freigabe_auslassen() {
+        let dir = tempfile::tempdir().unwrap();
+        let pins = dir.path().join("Snap");
+        std::fs::create_dir_all(pins.join("PC/Fotos")).unwrap();
+        std::fs::write(pins.join("PC/Fotos/a.jpg"), b"a").unwrap();
+        std::fs::write(dir.path().join("eigen.txt"), b"e").unwrap();
+        let skip = Skip { dirs: vec![pins.clone()], whole_device: false };
+        // Freigabe enthält den Spiegel-Ordner -> ausgelassen
+        let (cands, _, _) = walk(dir.path(), None, &HashMap::new(), &skip);
+        let rels: Vec<&str> = cands.iter().map(|c| c.rel.as_str()).collect();
+        assert_eq!(rels, vec!["eigen.txt"]);
+        // Spiegel-Ordner selbst freigegeben (Server als Zentrale) -> Inhalt sichtbar
+        let (cands, _, _) = walk(&pins, None, &HashMap::new(), &skip);
+        let rels: Vec<&str> = cands.iter().map(|c| c.rel.as_str()).collect();
+        assert_eq!(rels, vec!["PC/Fotos/a.jpg"]);
     }
 
     #[test]
