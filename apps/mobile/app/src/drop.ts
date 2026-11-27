@@ -15,6 +15,8 @@ export interface DropStatus {
   fingerprint: string;
   dir: string;
   code: string | null;
+  /** Kontakte dürfen von überall senden. */
+  remote?: boolean;
 }
 
 export interface NearbyPeer {
@@ -56,6 +58,10 @@ export interface Contact {
   fingerprint: string;
   added_at: number;
   last_seen: number;
+  /** Adresse bekannt: Senden von überall möglich. */
+  remote?: boolean;
+  /** Darf von überall an dieses Gerät senden. */
+  remote_ok?: boolean;
 }
 
 export interface Blocked {
@@ -86,6 +92,11 @@ export const saveContact = (id: number) => request<Contact>({ DropSaveContact: {
 export const removeContact = (key: string) => request({ DropRemoveContact: { key } });
 export const renameContact = (key: string, alias: string | null) => request<Contact>({ DropRenameContact: { key, alias } });
 /** Eigener Anzeigename (`null` = Gerätename). */
+export const setRemote = (enabled: boolean) => request<DropStatus>({ DropSetRemote: { enabled } });
+export const setContactRemote = (key: string, ok: boolean) => request<Contact>({ DropContactRemote: { key, ok } });
+/** An einen gespeicherten Kontakt senden, egal wo er ist (Ende-zu-Ende verschlüsselt, ggf. über ein Relais). */
+export const sendToContact = (key: string, paths: string[], text: string | null = null) =>
+  request<SendResult>({ DropSendContact: { contact: key, paths, text } });
 export const setName = (name: string | null) => request<DropStatus>({ DropSetName: { name } });
 export const blocked = () => request<{ blocked: Blocked[] }>('DropBlocked').then((r) => r.blocked);
 export const unblock = (key: string) => request({ DropUnblock: { key } });

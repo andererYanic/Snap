@@ -206,6 +206,9 @@ pub(crate) async fn handle_request(
         | Request::DropHotspotAccept { .. }
         | Request::DropHotspotRequest { .. }
         | Request::DropWakeExport { .. }
+        | Request::DropSetRemote { .. }
+        | Request::DropContactRemote { .. }
+        | Request::DropSendContact { .. }
         | Request::DropBackground { .. } => drop_api::handle(inner, req).await,
         Request::LinkRevoke { id } => crate::links::revoke(inner, &id).await.map(Response::Link),
         Request::UploadRuleList => inner.db.upload_rules().map(|rules| Response::UploadRules { rules }),
@@ -350,6 +353,9 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropPreview { .. } => "drop.preview",
         Request::DropContacts => "drop.contacts",
         Request::DropWakeExport { .. } => "drop.wake_export",
+        Request::DropSetRemote { .. } => "drop.remote",
+        Request::DropContactRemote { .. } => "drop.contact_remote",
+        Request::DropSendContact { .. } => "drop.send_contact",
         Request::DropBackground { .. } => "drop.background",
         Request::DropSaveContact { .. } => "drop.contact.save",
         Request::DropRemoveContact { .. } => "drop.contact.remove",

@@ -486,6 +486,23 @@ pub enum Request {
     DropUnblock {
         key: String,
     },
+    /// Von überall empfangen (nur Kontakte) ein- oder ausschalten.
+    DropSetRemote {
+        enabled: bool,
+    },
+    /// Darf ein Kontakt von überall senden?
+    DropContactRemote {
+        key: String,
+        ok: bool,
+    },
+    /// An einen gespeicherten Kontakt senden, egal wo er ist.
+    DropSendContact {
+        contact: String,
+        #[serde(default)]
+        paths: Vec<PathBuf>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     /// Weck-Schlüssel der Kontakte in eine private Datei (0600) im Datenordner schreiben und bei
     /// jeder Kontaktänderung aktuell halten (`enable`) bzw. löschen. Nur für das Wecken im
     /// Hintergrund auf Android – die Schlüssel gehen nie über die API.

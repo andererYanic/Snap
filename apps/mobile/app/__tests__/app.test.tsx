@@ -1403,3 +1403,40 @@ test('Snap Drop im Hintergrund: Einstellungen, Schlüssel-Datei, Akku-Hinweis, w
     delete NativeModules.SnapDrop;
   }
 });
+
+test('Von überall: Kontakt mit Adresse direkt senden, ohne Adresse per Bluetooth wecken', async () => {
+  const { DropSendSheet } = require('../src/Drop');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'DropContacts') {
+      return JSON.stringify({ DropContacts: { contacts: [
+        { key: 'aa'.repeat(32), name: 'Clara', device_name: 'Clara', renamed: false, fingerprint: 'f', added_at: 0, last_seen: 0, remote: true, remote_ok: true },
+        { key: 'bb'.repeat(32), name: 'Dora', device_name: 'Dora', renamed: false, fingerprint: 'f', added_at: 0, last_seen: 0, remote: false, remote_ok: true },
+      ] } });
+    }
+    if (req === 'DropNearby' || req.DropBrowse) return JSON.stringify({ DropNearby: { peers: [] } });
+    if (req.DropSendContact) {
+      calls.push(req);
+      return JSON.stringify({ DropSent: { id: 4, ok: true, error: null, code: '111 222' } });
+    }
+    return origRequest(json);
+  });
+  const onClose = jest.fn();
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<DropSendSheet paths={['/storage/emulated/0/a.txt']} theme={snapTheme(false)} onClose={onClose} notify={() => {}} />); });
+    await flush();
+    const text = allText(r);
+    expect(text).toContain('Kontakte, nicht in der Nähe');
+    expect(text).toContain('Von überall senden – verschlüsselt, auch übers Internet');
+    expect(text).toContain('Antippen zum Wecken');
+    await act(async () => { await byLabel(r, 'An Clara senden').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ DropSendContact: { contact: 'aa'.repeat(32), paths: ['/storage/emulated/0/a.txt'], text: null } });
+    expect(allText(r)).toContain('Gesendet');
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

@@ -119,6 +119,37 @@ Sichtbarkeit“).
 | Weck-Schlüssel gestohlen (Root, Backup) | Datei 0600, kein Backup (`allowBackup=false`); Schlüssel erlaubt nur Wecken, nicht Senden ohne Prüfung |
 | Inhalte auf dem Sperrbildschirm | Mitteilung dort ohne Namen und Dateien |
 
+## Von überall (Kontakte)
+
+Entscheidung des Nutzers (2026-11-27): an gespeicherte Kontakte auch senden, wenn sie nicht in der
+Nähe sind.
+
+- **Fern-Endpunkt:** je Gerät ein eigener Endpunkt mit dauerhaftem Schlüssel (`drop-remote.key`,
+  0600) – getrennt von Geräte- und Drop-Schlüssel. Er nimmt **nur Kontakte** an (Kontakt-Tag in
+  der Probe, unabhängig von der Sichtbarkeit in der Nähe) und nur solche, denen „von überall“
+  erlaubt ist (je Kontakt abschaltbar, global: „Von überall empfangen“).
+- **Adresse:** Kennung und Adress-Hinweise (`RemoteAddr`) gehen nur an Gegenüber eines Tauschs:
+  der Sender im Angebot, der Empfänger erst im Abschluss **nach dem Annehmen**. Gespeichert wird sie
+  am Kontakt; jeder neue Tausch aktualisiert sie.
+- **Verbindung:** wie in der Nähe (QUIC/TLS, Ende-zu-Ende); ohne direkte Verbindung über ein Relais,
+  das nur verschlüsselte Daten, IP-Adressen und Zeitpunkte sieht. Der Sender bricht ab, wenn sich
+  am anderen Ende nicht genau dieser Kontakt mit seinem Drop-Schlüssel ausweist.
+- **Annehmen bleibt Pflicht**; Drosselung (6 Angebote je Minute), Sperrliste und Platzprüfung gelten
+  wie immer.
+- **Empfang:** Desktop, solange der Snap-Dienst läuft; Android, solange die App offen ist oder „Auch
+  über WLAN“ läuft. Ältere Snap-Versionen verstehen Angebote mit Fern-Adresse nicht (beide Geräte
+  aktualisieren).
+
+### Risiken
+
+| Risiko | Gegenmaßnahme |
+|---|---|
+| Wer die Kennung kennt, sieht, wann man online ist | Kennung nur an Tauschpartner (Empfänger erst nach Annehmen); „von überall“ abschaltbar |
+| Fremde verbinden sich mit dem Fern-Endpunkt | Ohne gültiges Kontakt-Tag nur `Hidden`, kein Angebot möglich (Angriffstest) |
+| Manipulierte gespeicherte Adresse (falsches Gerät) | Sender prüft den Drop-Schlüssel des Gegenübers gegen den Kontakt (Angriffstest) |
+| Verlorenes Gerät eines Kontakts | Kontakt entfernen, sperren oder „von überall“ für ihn abschalten |
+| Relais-Betreiber | sieht nur verschlüsselte Daten; eigenes Relais einstellbar (`relay_urls`) |
+
 ## Ablage beim Empfänger
 
 - `Downloads/Snap Drop/` (einstellbar). Nichts wird automatisch geöffnet.

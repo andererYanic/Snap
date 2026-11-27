@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 /// So lange merkt sich ein Gerät, wen es entkoppelt hat (um es der Gegenseite sagen zu können).
 pub const UNPAIRED_KEEP_SECS: i64 = 90 * 24 * 3600;
 
@@ -59,6 +59,10 @@ pub struct DropContactRow {
     pub secret: Vec<u8>,
     pub added_at: i64,
     pub last_seen: i64,
+    /// Fern-Adresse (JSON `RemoteAddr`), falls bekannt.
+    pub remote: Option<String>,
+    /// Darf dieser Kontakt von überall senden?
+    pub remote_ok: bool,
 }
 
 /// Ein Freigabelink (lokal gespeichert; `secret` ist der Schlüssel aus dem Link).
@@ -699,6 +703,22 @@ impl DatabaseManager {
                 );
                 ",
             )?;
+        }
+        if version < 15 {
+            // Migration -> 15: Snap Drop von überall – Fern-Adresse je Kontakt und Schalter.
+            for (col, ddl) in [
+                ("remote", "ALTER TABLE drop_contacts ADD COLUMN remote TEXT;"),
+                ("remote_ok", "ALTER TABLE drop_contacts ADD COLUMN remote_ok INTEGER NOT NULL DEFAULT 1;"),
+            ] {
+                let has: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('drop_contacts') WHERE name = ?1)",
+                    [col],
+                    |r| r.get(0),
+                )?;
+                if !has {
+                    conn.execute_batch(ddl)?;
+                }
+            }
         }
         if version > 0 && version < 3 {
             // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
@@ -1990,7 +2010,7 @@ impl DatabaseManager {
     pub fn drop_contacts(&self) -> Result<Vec<DropContactRow>> {
         let conn = self.read();
         let mut stmt = conn.prepare_cached(
-            "SELECT key, name, secret, added_at, last_seen, alias FROM drop_contacts ORDER BY COALESCE(alias, name)",
+            "SELECT key, name, secret, added_at, last_seen, alias, remote, remote_ok FROM drop_contacts ORDER BY COALESCE(alias, name)",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -2001,6 +2021,8 @@ impl DatabaseManager {
                     added_at: r.get(3)?,
                     last_seen: r.get(4)?,
                     alias: r.get(5)?,
+                    remote: r.get(6)?,
+                    remote_ok: r.get::<_, i64>(7)? != 0,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -2010,11 +2032,17 @@ impl DatabaseManager {
     /// Speichert oder aktualisiert einen Kontakt (neues Geheimnis ersetzt das alte).
     pub fn upsert_drop_contact(&self, c: &DropContactRow) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO drop_contacts (key, name, secret, added_at, last_seen) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(key) DO UPDATE SET name = excluded.name, secret = excluded.secret, last_seen = excluded.last_seen",
-            params![c.key, c.name, c.secret, c.added_at, c.last_seen],
+            "INSERT INTO drop_contacts (key, name, secret, added_at, last_seen, remote) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(key) DO UPDATE SET name = excluded.name, secret = excluded.secret, last_seen = excluded.last_seen,
+                remote = COALESCE(excluded.remote, drop_contacts.remote)",
+            params![c.key, c.name, c.secret, c.added_at, c.last_seen, c.remote],
         )?;
         Ok(())
+    }
+
+    /// Darf ein Kontakt von überall senden? `false`, wenn unbekannt.
+    pub fn set_drop_contact_remote_ok(&self, key: &str, ok: bool) -> Result<bool> {
+        Ok(self.conn().execute("UPDATE drop_contacts SET remote_ok = ?2 WHERE key = ?1", params![key, ok as i64])? > 0)
     }
 
     /// Lokalen Namen setzen (`None` = wieder den Namen des Geräts zeigen). `false`, wenn unbekannt.

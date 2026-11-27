@@ -276,6 +276,7 @@ fn offer(id: &DropIdentity, session: &[u8; 32], files: Vec<OfferFile>) -> Offer 
         files,
         preview: None,
         text: None,
+        remote: None,
     }
 }
 
@@ -698,6 +699,8 @@ async fn weck_schluessel_nur_als_private_datei() {
         secret: secret.to_vec(),
         added_at: 0,
         last_seen: 0,
+        remote: None,
+        remote_ok: true,
     })
     .unwrap();
     let file = svc.wake_file();
@@ -717,4 +720,135 @@ async fn weck_schluessel_nur_als_private_datei() {
     svc.set_wake_export(false).unwrap();
     assert!(!file.exists());
     svc.shutdown().await;
+}
+
+/// Tauscht einmal in der Nähe (A → B) und speichert beide als Kontakt.
+async fn befreunden(a: &mut Node, b: &mut Node, src: &Path) {
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let peer = a.svc.add_code(&code_of(b)).await.unwrap();
+    let f = write(src, "hallo.txt", b"hallo");
+    let send = {
+        let svc = a.svc.clone();
+        tokio::spawn(async move { svc.send(&peer.id, vec![f]).await.unwrap() })
+    };
+    let offer_id = answer(b, true, false).await;
+    let res = send.await.unwrap();
+    assert!(res.ok, "{:?}", res.error);
+    b.svc.save_contact(offer_id).unwrap();
+    a.svc.save_contact(res.id).unwrap();
+    b.svc.set_visibility(Mode::Off).await.unwrap();
+}
+
+fn key_of(n: &Node) -> String {
+    data_encoding::HEXLOWER.encode(n.svc.drop_key().as_bytes())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn von_ueberall_an_kontakte() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+    let src = tmp.path().join("src");
+    befreunden(&mut a, &mut b, &src).await;
+    let c = a.svc.contacts().unwrap().into_iter().find(|c| c.name == "Ben").unwrap();
+    assert!(c.remote && c.remote_ok, "Adresse nach dem Annehmen bekannt: {c:?}");
+    assert!(b.svc.contacts().unwrap()[0].remote, "auch umgekehrt (aus dem Angebot)");
+
+    // B ist unsichtbar – trotzdem kommt ein Angebot von Kontakt A an (Annehmen bleibt Pflicht)
+    assert_eq!(b.svc.status().unwrap().mode, Mode::Off);
+    let f = write(&src, "fern.txt", b"von weit weg");
+    let send = {
+        let svc = a.svc.clone();
+        let key = key_of(&b);
+        tokio::spawn(async move { svc.send_to_contact(&key, vec![f], None).await.unwrap() })
+    };
+    let Event::DropOffer { id, contact, .. } =
+        next_event(&mut b.events, |e| matches!(e, Event::DropOffer { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(contact.as_deref(), Some("Anna"));
+    b.svc.respond(id, true, false).unwrap();
+    let res = send.await.unwrap();
+    assert!(res.ok, "{:?}", res.error);
+    assert_eq!(std::fs::read(b.inbox.join("fern.txt")).unwrap(), b"von weit weg");
+
+    // Ablehnen wirkt wie immer
+    let f = write(&src, "nein.txt", b"x");
+    let send = {
+        let svc = a.svc.clone();
+        let key = key_of(&b);
+        tokio::spawn(async move { svc.send_to_contact(&key, vec![f], None).await.unwrap() })
+    };
+    answer(&mut b, false, false).await;
+    assert!(!send.await.unwrap().ok);
+
+    // B erlaubt A nicht mehr von überall → abgewiesen, ohne Angebot
+    b.svc.set_contact_remote(&key_of(&a), false).unwrap();
+    let f = write(&src, "zu.txt", b"x");
+    let r = a.svc.send_to_contact(&key_of(&b), vec![f.clone()], None).await.unwrap();
+    assert!(!r.ok);
+    b.svc.set_contact_remote(&key_of(&a), true).unwrap();
+
+    // B schaltet „von überall“ ganz aus → abgewiesen
+    b.svc.set_remote(false).await.unwrap();
+    let r = a.svc.send_to_contact(&key_of(&b), vec![f], None).await.unwrap();
+    assert!(!r.ok);
+    // Unbekannter Kontakt
+    assert!(a.svc.send_to_contact(&"00".repeat(32), vec![], Some("x".into())).await.is_err());
+    a.svc.shutdown().await;
+    b.svc.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fern_endpunkt_nur_fuer_kontakte() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+    let mut c = node(tmp.path(), "Carla");
+    let src = tmp.path().join("src");
+    befreunden(&mut a, &mut b, &src).await;
+    befreunden(&mut a, &mut c, &src).await;
+    let db_remote = |n: &Node, name: &str| {
+        let contacts = n.svc.contacts().unwrap();
+        let key = contacts.iter().find(|c| c.name == name).unwrap().key.clone();
+        (key, n.svc.contact_remote_for_tests(&contacts.iter().find(|c| c.name == name).unwrap().key))
+    };
+
+    // Fremder ohne Kontakt-Tag am Fern-Endpunkt von B: keine Karte, kein Angebot möglich
+    let (_, remote_b) = db_remote(&a, "Ben");
+    let (id, addrs) = remote_b.unwrap().validate().unwrap();
+    let ep = Endpoint::builder(presets::Minimal)
+        .relay_mode(RelayMode::Disabled)
+        .bind_addr("127.0.0.1:0")
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+    let mut addr = EndpointAddr::from(id);
+    for x in &addrs {
+        addr.addrs.insert(TransportAddr::Ip(*x));
+    }
+    let conn = ep.connect(addr, wire::DROP_ALPN).await.unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    write_frame_max(&mut send, &Probe { v: 1, tags: vec!["00".repeat(8)] }, wire::MAX_FRAME).await.unwrap();
+    let card: Card = read_frame_max(&mut recv, wire::MAX_FRAME).await.unwrap();
+    assert!(matches!(card, Card::Hidden), "Fremde sehen am Fern-Endpunkt nichts");
+
+    // Manipulierte Adresse: A's Eintrag für Ben zeigt auf Carlas Fern-Endpunkt → Carla weist
+    // sich aus, ist aber nicht Ben → A bricht ab, bevor irgendetwas gesendet wird
+    let (key_b, _) = db_remote(&a, "Ben");
+    let (_, remote_c) = db_remote(&a, "Carla");
+    a.svc.set_contact_remote_for_tests(&key_b, &remote_c.unwrap());
+    let f = write(&src, "falsch.txt", b"x");
+    let r = a.svc.send_to_contact(&key_b, vec![f], None).await.unwrap();
+    assert!(!r.ok);
+    assert!(r.error.unwrap().contains("nicht als dieser Kontakt"));
+    assert!(tokio::time::timeout(Duration::from_millis(500), c.events.next())
+        .await
+        .map_or(true, |e| !matches!(e, Some(Event::DropOffer { .. }))));
+    let _ = &mut b;
+    a.svc.shutdown().await;
+    b.svc.shutdown().await;
+    c.svc.shutdown().await;
 }

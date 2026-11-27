@@ -117,6 +117,45 @@ pub struct Offer {
     /// Geteilter Text oder Link (statt oder zusätzlich zu Dateien), höchstens [`MAX_TEXT`] Byte.
     #[serde(default)]
     pub text: Option<String>,
+    /// Fern-Adresse des Senders (damit ein Kontakt später auch von überall senden kann).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteAddr>,
+}
+
+/// Fern-Adresse eines Geräts: dauerhafte Kennung seines Fern-Endpunkts und Adress-Hinweise.
+/// Geht nur an Gegenüber eines Tauschs (Empfänger erst nach dem Annehmen); angenommen werden
+/// Verbindungen dort nur von gespeicherten Kontakten.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteAddr {
+    /// Kennung (64 Hex-Zeichen).
+    pub id: String,
+    /// Direkte Adressen als Hinweis (höchstens [`MAX_REMOTE_ADDRS`]).
+    #[serde(default)]
+    pub addrs: Vec<String>,
+}
+
+pub const MAX_REMOTE_ADDRS: usize = 8;
+
+impl RemoteAddr {
+    pub fn new(id: &PublicKey, addrs: &[std::net::SocketAddr]) -> Self {
+        Self {
+            id: data_encoding::HEXLOWER.encode(id.as_bytes()),
+            addrs: addrs.iter().take(MAX_REMOTE_ADDRS).map(|a| a.to_string()).collect(),
+        }
+    }
+
+    /// Prüft Kennung und Adressen; ungültige Adressen werden verworfen, eine ungültige Kennung
+    /// macht das Ganze ungültig.
+    pub fn validate(&self) -> Option<(PublicKey, Vec<std::net::SocketAddr>)> {
+        if self.id.len() != 64 {
+            return None;
+        }
+        let bytes: [u8; 32] = data_encoding::HEXLOWER.decode(self.id.as_bytes()).ok()?.try_into().ok()?;
+        let id = PublicKey::from_bytes(&bytes).ok()?;
+        let addrs = self.addrs.iter().take(MAX_REMOTE_ADDRS).filter_map(|a| a.parse().ok()).collect();
+        Some((id, addrs))
+    }
 }
 
 /// Geprüfte Fassung eines Angebots.
@@ -133,6 +172,8 @@ pub struct ValidOffer {
     pub text: Option<String>,
     /// Ist der Text genau ein Link (nur `http`/`https`), steht er hier normalisiert.
     pub link: Option<String>,
+    /// Geprüfte Fern-Adresse des Senders (ungültige werden verworfen).
+    pub remote: Option<(PublicKey, Vec<std::net::SocketAddr>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +210,7 @@ impl Offer {
             preview_png,
             text,
             link,
+            remote: self.remote.as_ref().and_then(RemoteAddr::validate),
         })
     }
 }
@@ -212,6 +254,9 @@ pub struct Reply {
 pub struct Received {
     pub ok: bool,
     pub proof: Option<Proof>,
+    /// Fern-Adresse des Empfängers – nur nach dem Annehmen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteAddr>,
 }
 
 /// Größter geteilter Text (Byte).
@@ -701,11 +746,25 @@ mod tests {
             files: vec![file.clone()],
             preview: None,
             text: None,
+            remote: None,
         };
         let v = offer.validate(&session).unwrap();
         assert_eq!(v.sender, id.public());
         assert_eq!(v.files[0].name, "b.txt");
         assert_eq!(v.total, 5);
+        // Fern-Adresse: ungültige Kennung → verworfen, Adressen begrenzt und geprüft
+        let mut o = offer.clone();
+        o.remote = Some(RemoteAddr { id: "zz".into(), addrs: vec![] });
+        assert!(o.validate(&session).unwrap().remote.is_none());
+        let key = super::super::identity::DropIdentity::ephemeral().public();
+        let mut ra = RemoteAddr::new(&key, &[]);
+        ra.addrs = (0..20).map(|i| format!("10.0.0.{i}:1")).chain(["kaputt".to_string()]).collect();
+        o.remote = Some(ra);
+        let (k, addrs) = o.validate(&session).unwrap().remote.unwrap();
+        assert_eq!(k, key);
+        assert_eq!(addrs.len(), MAX_REMOTE_ADDRS);
+        // Ohne Fern-Adresse bleibt das Format wie bisher (ältere Gegenstellen verstehen es)
+        assert!(!serde_json::to_string(&offer).unwrap().contains("remote"));
         // Beweis aus einer anderen Sitzung.
         assert!(offer.validate(&[4u8; 32]).is_err());
         // Überlauf der Gesamtgröße.

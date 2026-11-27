@@ -1218,6 +1218,8 @@ fn drop_wake() {
             secret: i.to_le_bytes().repeat(8),
             added_at: 0,
             last_seen: 0,
+            remote: None,
+            remote_ok: true,
         })
         .unwrap();
     }
@@ -1515,6 +1517,8 @@ async fn drop_transfer() {
             secret: blake3::hash(&i.to_be_bytes()).as_bytes().to_vec(),
             added_at: 0,
             last_seen: 0,
+            remote: None,
+            remote_ok: true,
         })
         .unwrap();
     }
@@ -1578,4 +1582,69 @@ async fn drop_transfer() {
         size >> 20,
         d.as_secs_f64()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn drop_remote() {
+    use space_core::drop::identity::DropIdentity;
+    use space_core::drop::wire::DeviceKind;
+    use space_core::drop::{DropOptions, DropService, Mode};
+    use space_core::events::Event;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let mk = |name: &str| {
+        let db = Arc::new(DatabaseManager::open_in_memory().unwrap());
+        let opts = DropOptions {
+            dir: tmp.path().join(name),
+            identity_path: tmp.path().join(name).join("drop.key"),
+            name: name.into(),
+            kind: DeviceKind::Laptop,
+            use_relay: false,
+            relay_urls: vec![],
+            relay_fallback_n0: false,
+            loopback_only: true,
+            mdns: false,
+            reserve_bytes: 0,
+            can_join_hotspot: false,
+        };
+        (DropService::with_identity(opts, db.clone(), DropIdentity::ephemeral()), db)
+    };
+    let (a, _) = mk("a");
+    let (b, bdb) = mk("b");
+    // Automatisch annehmen und als Kontakt speichern
+    let mut ev = bdb.events().subscribe();
+    let bb = b.clone();
+    tokio::spawn(async move {
+        while let Some(e) = ev.next().await {
+            match e {
+                Event::DropOffer { id, .. } => bb.respond(id, true, false).unwrap(),
+                Event::DropFinished { id, incoming: true, can_save_contact: true, .. } => {
+                    bb.save_contact(id).unwrap();
+                }
+                _ => {}
+            }
+        }
+    });
+    b.set_visibility(Mode::Everyone).await.unwrap();
+    let src = tmp.path().join("klein.txt");
+    std::fs::write(&src, b"hallo").unwrap();
+    let peer = a.add_code(&b.status().unwrap().code.unwrap()).await.unwrap();
+    let t = Instant::now();
+    let r = a.send(&peer.id, vec![src.clone()]).await.unwrap();
+    report("Drop: erster Tausch inkl. Fern-Endpunkt-Start", 1, t.elapsed());
+    a.save_contact(r.id).unwrap();
+    while b.contacts().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    b.set_visibility(Mode::Off).await.unwrap();
+    let key = data_encoding::HEXLOWER.encode(b.drop_key().as_bytes());
+    // Höchstens 6 Angebote je Minute (Drosselung beim Empfänger) – der erste Tausch zählt mit.
+    let n = 5;
+    let t = Instant::now();
+    for _ in 0..n {
+        let r = a.send_to_contact(&key, vec![src.clone()], None).await.unwrap();
+        assert!(r.ok, "{:?}", r.error);
+    }
+    report("Drop: von überall an Kontakt (Loopback, inkl. Annahme)", n, t.elapsed());
 }

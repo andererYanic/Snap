@@ -719,6 +719,44 @@ pub async fn drop_send(app: AppHandle, d: State<'_, Daemon>, peer: String, paths
     d.request(Request::DropSend { peer, paths: list, text: None }).await
 }
 
+/// An einen gespeicherten Kontakt senden, egal wo er ist – ebenfalls nur nach Bestätigung im
+/// nativen Dialog.
+#[tauri::command]
+pub async fn drop_send_contact(app: AppHandle, d: State<'_, Daemon>, contact: String, paths: Vec<String>) -> UiResult<Value> {
+    if !(contact.len() == 64 && contact.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return Err(UiError::new("InvalidInput", "Ungültiger Kontakt."));
+    }
+    let list = self::paths(paths)?;
+    if list.len() > 1000 {
+        return Err(UiError::new("InvalidInput", "Höchstens 1000 Dateien."));
+    }
+    let contacts = d.request(Request::DropContacts).await?;
+    let hit = contacts
+        .get("contacts")
+        .and_then(|p| p.as_array())
+        .and_then(|a| a.iter().find(|c| c.get("key").and_then(|k| k.as_str()) == Some(contact.as_str())).cloned())
+        .ok_or_else(|| UiError::new("NotFound", "Kein solcher Kontakt."))?;
+    let name = short_text(hit.get("name").and_then(|n| n.as_str()).unwrap_or("?"), 64);
+    let text = tr("An „{name}“ senden?\n\n{files}", &[("name", &name), ("files", &summary(&list))]);
+    if !confirm(&app, tr("Von überall senden", &[]), text, tr("Senden", &[])).await {
+        return Err(cancelled());
+    }
+    d.request(Request::DropSendContact { contact, paths: list, text: None }).await
+}
+
+#[tauri::command]
+pub async fn drop_set_remote(d: State<'_, Daemon>, enabled: bool) -> UiResult<Value> {
+    d.request(Request::DropSetRemote { enabled }).await
+}
+
+#[tauri::command]
+pub async fn drop_contact_remote(d: State<'_, Daemon>, key: String, ok: bool) -> UiResult<Value> {
+    if !(key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return Err(UiError::new("InvalidInput", "Ungültiger Kontakt."));
+    }
+    d.request(Request::DropContactRemote { key, ok }).await
+}
+
 #[tauri::command]
 pub async fn drop_offers(d: State<'_, Daemon>) -> UiResult<Value> {
     d.request(Request::DropOffers).await

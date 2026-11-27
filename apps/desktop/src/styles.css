@@ -405,6 +405,9 @@ label { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px;
 .avatar.contact { background: var(--accent-soft); color: var(--accent); }
 .dialog.drop { width: min(460px, 92vw); gap: 12px; }
 .dialog.drop .peers { display: flex; flex-direction: column; max-height: 340px; overflow: auto; margin: 0 -8px; }
+.dialog.drop .peers .group { padding: 10px 8px 4px; }
+.panel .toggle { align-items: flex-start; gap: 10px; cursor: pointer; margin-bottom: 8px; }
+.panel .toggle .grow { display: flex; flex-direction: column; gap: 2px; }
 .dialog.drop .peer { display: flex; align-items: center; gap: 12px; padding: 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .dialog.drop .peer:hover:not(:disabled) { background: var(--field); }
 .dialog.drop .peer:disabled { cursor: default; opacity: 0.6; }

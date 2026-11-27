@@ -152,8 +152,31 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
       return;
     }
     core.haptic('select');
+    const id = `contact:${c.key}`;
+    // Adresse bekannt: direkt von überall senden (die Gegenseite nimmt wie immer an)
+    if (c.remote) {
+      setState({ peer: id, phase: 'waiting', done: 0, total: 0 });
+      try {
+        const r = await drop.sendToContact(c.key, paths, text);
+        if (r.ok) {
+          setState({ peer: id, phase: 'done', done: 1, total: 1 });
+          core.haptic('confirm');
+          setTimeout(onClose, 900);
+          return;
+        }
+        setState({ peer: id, phase: 'failed', done: 0, total: 0, error: r.error ?? t('Fehlgeschlagen') });
+        if (/abgelehnt|declined/i.test(r.error ?? '')) {
+          return;
+        }
+      } catch (e: any) {
+        setState({ peer: id, phase: 'failed', done: 0, total: 0, error: String(e?.message ?? e) });
+      }
+    }
+    // Sonst (oder nicht erreichbar): per Bluetooth wecken, falls in der Nähe
     if (!(await drop.wakeContact(c.key))) {
-      notify(t('Bluetooth ist aus oder nicht erlaubt – „{name}“ lässt sich nicht wecken.', { name: c.name }));
+      if (!c.remote) {
+        notify(t('Bluetooth ist aus oder nicht erlaubt – „{name}“ lässt sich nicht wecken.', { name: c.name }));
+      }
       return;
     }
     setWaking(c.key);
@@ -248,24 +271,36 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
         )}
         {people.filter((c) => !peers.some((p) => p.contact_key === c.key)).length > 0 ? (
           <>
-            <Text style={[s.meta, s.groupLabel]}>{t('Kontakte, nicht gefunden')}</Text>
+            <Text style={[s.meta, s.groupLabel]}>{t('Kontakte, nicht in der Nähe')}</Text>
             {people
               .filter((c) => !peers.some((p) => p.contact_key === c.key))
               .map((c) => (
                 <Pressable
                   key={c.key}
                   onPress={() => wake(c)}
-                  disabled={busy || (!!waking && waking !== c.key)}
+                  disabled={busy || !!waking}
                   android_ripple={{ color: theme.accentSoft as string }}
-                  style={[s.peer, (busy || (!!waking && waking !== c.key)) && s.dim]}
+                  style={[s.peer, ((busy && state?.peer !== `contact:${c.key}`) || (!!waking && waking !== c.key)) && s.dim]}
                   accessibilityRole="button"
-                  accessibilityLabel={t('{name} wecken', { name: c.name })}
+                  accessibilityLabel={c.remote ? t('An {name} senden', { name: c.name }) : t('{name} wecken', { name: c.name })}
                 >
                   <Avatar name={c.name} contact theme={theme} />
                   <View style={s.grow}>
                     <Text style={s.label} numberOfLines={1}>{c.name}</Text>
-                    <Text style={s.meta} numberOfLines={2}>
-                      {waking === c.key ? t('Wird geweckt … (Bluetooth, in Reichweite)') : t('Antippen zum Wecken – Snap muss dort nicht offen sein')}
+                    <Text style={[s.meta, state?.peer === `contact:${c.key}` && state.phase === 'failed' && s.dangerText]} numberOfLines={2}>
+                      {state?.peer === `contact:${c.key}` && state.phase !== 'failed'
+                        ? state.phase === 'waiting'
+                          ? t('Wartet auf Annahme …')
+                          : state.phase === 'sending'
+                            ? `${size(state.done)} / ${size(state.total)}`
+                            : t('Gesendet')
+                        : waking === c.key
+                          ? t('Wird geweckt … (Bluetooth, in Reichweite)')
+                          : state?.peer === `contact:${c.key}` && state.phase === 'failed'
+                            ? state.error ?? t('Fehlgeschlagen')
+                            : c.remote
+                              ? t('Von überall senden – verschlüsselt, auch übers Internet')
+                              : t('Antippen zum Wecken – Snap muss dort nicht offen sein')}
                     </Text>
                   </View>
                 </Pressable>
@@ -695,6 +730,23 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
 
       <SectionLabel theme={theme} style={s.section}>{t('Kontakte')}</SectionLabel>
       <View style={s.card}>
+        <View style={s.row}>
+          <Icon name="globe" size={22} color={theme.text2 as string} />
+          <View style={s.grow}>
+            <Text style={s.label}>{t('Von überall empfangen')}</Text>
+            <Text style={s.meta}>
+              {t('Kontakte können dir auch senden, wenn ihr nicht in der Nähe seid – Ende-zu-Ende-verschlüsselt, Annehmen bleibt Pflicht. Je Kontakt abschaltbar.')}
+            </Text>
+          </View>
+          <Switch
+            value={!!st?.remote}
+            onValueChange={(v) => drop.setRemote(v).then(setSt).catch((e) => notify(String(e?.message ?? e)))}
+            trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+            thumbColor={theme.surface as string}
+            accessibilityLabel={t('Von überall empfangen')}
+          />
+        </View>
+        <View style={s.sep} />
         {people.length === 0 ? (
           <Text style={[s.meta, s.pad]}>{t('Nach einem Tausch kannst du das Gegenüber als Kontakt speichern. Kontakte erkennt Snap am Schlüssel, nicht am Namen.')}</Text>
         ) : (
@@ -715,6 +767,15 @@ export function DropPage({ theme, notify }: { theme: Theme; notify: (text: strin
                     <Text style={s.label} numberOfLines={1}>{c.name}</Text>
                     <Text style={s.meta} numberOfLines={1}>{c.renamed ? `${c.device_name} · ${c.fingerprint}` : c.fingerprint}</Text>
                   </Pressable>
+                  {st?.remote ? (
+                    <Switch
+                      value={c.remote_ok !== false}
+                      onValueChange={(v) => drop.setContactRemote(c.key, v).then(load).catch((e) => notify(String(e?.message ?? e)))}
+                      trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                      thumbColor={theme.surface as string}
+                      accessibilityLabel={t('{name} darf von überall senden', { name: c.name })}
+                    />
+                  ) : null}
                   <Pressable
                     onPress={() => drop.removeContact(c.key).then(() => { notify(t('Kontakt entfernt.')); load(); }).catch(() => {})}
                     style={s.iconBtn}
