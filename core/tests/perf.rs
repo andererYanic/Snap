@@ -346,7 +346,10 @@ fn pin_mirror() {
         let mirror = phone.config().pin_dir.join("PC/Fotos");
         let count = |p: &std::path::Path| walk_count(p);
         let t = Instant::now();
-        assert!(matches!(phone.request(Request::PinAdd { target: "Fotos".into() }).await, Response::PinAdded { .. }));
+        assert!(matches!(
+            phone.request(Request::PinAdd { target: "Fotos".into(), two_way: false }).await,
+            Response::PinAdded { .. }
+        ));
         while count(&mirror) < N {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
@@ -359,6 +362,35 @@ fn pin_mirror() {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         report("Einzeländerung -> Kopie aktualisiert", 1, t.elapsed());
+
+        // Zwei-Wege-Sync: Änderung am Handy → PC, und ein Abgleich ohne Änderungen
+        for cap in ["files.write", "files.delete"] {
+            let r = pc
+                .request(Request::PairGrant {
+                    device: "Handy".into(),
+                    capability: cap.into(),
+                    folder: Some(share.clone()),
+                })
+                .await;
+            assert!(matches!(r, Response::Success { .. }), "{r:?}");
+        }
+        let id = match phone.request(Request::PinList).await {
+            Response::Pins { pins, .. } => pins[0].id,
+            other => panic!("{other:?}"),
+        };
+        assert!(matches!(phone.request(Request::PinTwoWay { id, enabled: true }).await, Response::Success { .. }));
+        let t = Instant::now();
+        std::fs::write(mirror.join("o03/f010.bin"), b"vom handy geaendert").unwrap();
+        while std::fs::read(share.join("o03/f010.bin")).ok().as_deref() != Some(b"vom handy geaendert") {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        report("Zwei-Wege: Änderung am Handy -> PC", 1, t.elapsed());
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let t = Instant::now();
+        for _ in 0..10 {
+            assert!(matches!(phone.request(Request::PinTwoWay { id, enabled: true }).await, Response::Success { .. }));
+        }
+        report("Zwei-Wege-Abgleich ohne Änderungen (2000 Dateien)", 10, t.elapsed());
         pc.shutdown().await;
         phone.shutdown().await;
     });

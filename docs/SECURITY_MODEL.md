@@ -39,6 +39,15 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Ledger:** jeder Eintrag vom Ursprungsgerät signiert; strenge Prüfung relativer Pfade;
   ungültige Einträge werden einzeln verworfen.
 - **Freigaben:** Symlinks werden nie verfolgt; keine absoluten Pfade im Ledger.
+- **Zwei-Wege-Sync (Pins mit `two_way`):** lokale Änderungen am Spiegel gehen ausschließlich über
+  die Fernoperationen zum Ursprung und damit durch dessen Rechteprüfung (`files.write`, für Ersetzen
+  und Löschen zusätzlich `files.delete`, ordnergebunden, nie Standard), Massenschutz und Audit-Log.
+  Ersetzte und gelöschte Dateien landen auf beiden Seiten im Papierkorb, nie endgültig. Vor dem
+  Senden wird der Katalog des Ursprungs aufgefrischt; hat er inzwischen eine neuere Fassung, gewinnt
+  diese. Mehr als 20 Löschungen in einem Abgleich (in beide Richtungen) werden angehalten, bis der
+  Nutzer bestätigt; ein verschwundener Spiegel-Ordner (z. B. ausgehängter Speicher) löst nie
+  Löschungen beim Ursprung aus. Versteckte und temporäre Dateien werden nie gesendet. Tests:
+  `core/tests/twoway.rs` (u. a. ohne Rechte, Offline-Konflikt, Massenlöschung, Zentrale).
 - **Smart-Pinning:** Zielpfade aus fremden Einträgen werden streng geprüft (relativer Pfad,
   Freigabe- und Ordnername), es wird nie durch Symlinks geschrieben, Ziele müssen normale Dateien
   sein; lokal veränderte Kopien werden nie überschrieben oder gelöscht; Kontingent begrenzt den Platz.

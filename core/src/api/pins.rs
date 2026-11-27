@@ -27,10 +27,12 @@ fn info(inner: &DaemonInner, pin: &PinRow) -> Result<PinInfo> {
         files_pending: files.iter().filter(|f| f.state == "pending").count() as u64,
         conflicts: files.iter().filter(|f| f.state == "conflict").count() as u64,
         bytes: files.iter().filter(|f| f.state == "ok").map(|f| f.size).sum(),
+        two_way: pin.two_way,
+        held_deletes: inner.sync.held(pin.id) as u64,
     })
 }
 
-pub(crate) async fn pin_add(inner: &Arc<DaemonInner>, target: &str) -> Result<Response> {
+pub(crate) async fn pin_add(inner: &Arc<DaemonInner>, target: &str, two_way: bool) -> Result<Response> {
     let target = target.trim();
     let (device, rest) = match target.split_once(':') {
         Some((d, r)) if !d.contains('/') => (Some(d), r),
@@ -74,6 +76,10 @@ pub(crate) async fn pin_add(inner: &Arc<DaemonInner>, target: &str) -> Result<Re
         dir_name = format!("{dir_name}-{}", &origin[..6]);
     }
     let id = inner.db.add_pin(&origin, share, prefix, &dir_name)?;
+    if two_way {
+        inner.db.set_pin_two_way(id, true)?;
+        inner.pin_notify.notify_one();
+    }
     let stats = reconcile(inner).await?;
     let pin = inner.db.list_pins()?.into_iter().find(|p| p.id == id).expect("gerade angelegt");
     Ok(Response::PinAdded { pin: info(inner, &pin)?, queued: stats.queued })
@@ -98,5 +104,60 @@ pub(crate) fn pin_remove(inner: &Arc<DaemonInner>, id: i64) -> Result<Response> 
             "Pin {id} entfernt. Bereits gespiegelte Dateien bleiben unter {} liegen.",
             inner.config.pin_dir.display()
         ),
+    })
+}
+
+pub(crate) async fn pin_two_way(inner: &Arc<DaemonInner>, id: i64, enabled: bool) -> Result<Response> {
+    if !inner.db.set_pin_two_way(id, enabled)? {
+        api_bail!(NotFound, "Kein Pin mit ID {id}.");
+    }
+    inner.sync.unhold(id);
+    reconcile(inner).await?;
+    inner.pin_notify.notify_one(); // Beobachtung des Pin-Ordners starten bzw. beenden
+    Ok(Response::Success {
+        message: if enabled {
+            "Zwei-Wege-Sync eingeschaltet.".into()
+        } else {
+            "Nur noch Spiegeln (eine Richtung).".into()
+        },
+    })
+}
+
+pub(crate) async fn pin_allow_deletes(inner: &Arc<DaemonInner>, id: i64, allow: bool) -> Result<Response> {
+    let Some(pin) = inner.db.list_pins()?.into_iter().find(|p| p.id == id) else {
+        api_bail!(NotFound, "Kein Pin mit ID {id}.");
+    };
+    let held = inner.sync.held(id);
+    if allow {
+        inner.sync.allow(id);
+    } else {
+        // Behalten: die angehaltenen Dateien gelten als neu und gehen zum Ursprung zurück;
+        // lokal gelöschte lädt der nächste Abgleich wieder.
+        inner.sync.unhold(id);
+        let inner2 = inner.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            for rec in inner2.db.pinned_of_pin(pin.id)? {
+                let gone_at_origin = std::fs::symlink_metadata(&rec.path).is_ok()
+                    && !inner2.db.pin_targets(&pin)?.iter().any(|t| {
+                        !t.deleted
+                            && crate::pins::safe_target(&inner2.config.pin_dir, &pin.dir_name, &pin.share, &t.rel_path)
+                                .map(|p| p.to_string_lossy() == rec.path)
+                                .unwrap_or(false)
+                    });
+                if gone_at_origin {
+                    inner2.db.pinned_remove(&rec.path)?;
+                }
+            }
+            Ok(())
+        })
+        .await??;
+    }
+    reconcile(inner).await?;
+    Ok(Response::Success {
+        message: match (allow, held) {
+            (_, 0) => "Nichts angehalten.".into(),
+            (true, n) => format!("{n} Löschungen ausgeführt (in den Papierkorb)."),
+            (false, n) => format!("{n} Dateien behalten."),
+        },
     })
 }

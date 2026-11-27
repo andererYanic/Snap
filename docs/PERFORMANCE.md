@@ -801,3 +801,20 @@ Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
   keine GUI-Abfrage blockiert.
 - Drosselung je Gerät: höchstens 6 Zeitpunkte im Speicher; abgelaufene Einträge werden bei jeder
   Anfrage entfernt (kein Wachstum durch viele Geräte).
+
+## Review 45 – Zwei-Wege-Sync (2026-11-27)
+
+Gemessen (Release, Loopback, `core/tests/perf.rs` › `pin_mirror`, 2000 Dateien in 20 Ordnern):
+
+| Vorgang | Zeit |
+|---|---|
+| Änderung am Handy → beim PC angekommen | 4,7 s (davon 3 s bewusstes Abwarten, ob die Datei noch geschrieben wird) |
+| Abgleich ohne Änderungen (inkl. Suche nach neuen Dateien) | 29 ms je Durchlauf |
+
+- Der Abgleich läuft in `spawn_blocking`, nie im GUI-Pfad; Oberflächen lesen nur `PinList`.
+- Ausgelöst wird er durch Dateisystem-Ereignisse im Pin-Ordner (gebündelt, 300 ms) und höchstens
+  alle 5 Minuten zum Nachholen; die Beobachtung läuft nur, solange es Zwei-Wege-Pins gibt.
+- Vor dem Senden wird einmal je Ursprung der Katalog aufgefrischt (eine Verbindung, nur neue
+  Einträge), dann werden die Änderungen nacheinander gesendet – nie zwei Läufe gleichzeitig.
+- Hochrechnung: bei 100 000 Dateien etwa 1,5 s je Abgleich im Hintergrund. Falls das stört, wäre der
+  nächste Schritt, nur die vom Dateisystem gemeldeten Pfade zu prüfen.

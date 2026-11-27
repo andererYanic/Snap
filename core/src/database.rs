@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 16;
+const SCHEMA_VERSION: i64 = 17;
 /// So lange merkt sich ein Gerät, wen es entkoppelt hat (um es der Gegenseite sagen zu können).
 pub const UNPAIRED_KEEP_SECS: i64 = 90 * 24 * 3600;
 
@@ -736,6 +736,17 @@ impl DatabaseManager {
                 );
                 ",
             )?;
+        }
+        if version < 17 {
+            // Migration -> 17: Zwei-Wege-Sync je Pin (lokale Änderungen gehen zurück zum Ursprung).
+            let has: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('pins') WHERE name = 'two_way')",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has {
+                conn.execute_batch("ALTER TABLE pins ADD COLUMN two_way INTEGER NOT NULL DEFAULT 0;")?;
+            }
         }
         if version > 0 && version < 3 {
             // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
@@ -2887,6 +2898,9 @@ pub struct PinRow {
     /// Ordnername unter dem Pin-Verzeichnis (stabil, auch wenn das Gerät umbenannt wird).
     pub dir_name: String,
     pub created_at: i64,
+    /// Zwei-Wege-Sync: lokale Änderungen, neue Dateien und Löschungen gehen zum Ursprung zurück.
+    #[serde(default)]
+    pub two_way: bool,
 }
 
 /// Ein Ledger-Eintrag, der zu einem Pin gehört.
@@ -2897,6 +2911,8 @@ pub struct PinTarget {
     pub rel_path: String,
     pub size: u64,
     pub deleted: bool,
+    /// Zeitpunkt des Eintrags beim Ursprung (Stand dieser Version, für „Neuestes gewinnt“).
+    pub created_at: i64,
 }
 
 /// Eine gespiegelte Datei.
@@ -2945,7 +2961,7 @@ impl DatabaseManager {
     pub fn list_pins(&self) -> Result<Vec<PinRow>> {
         let conn = self.read();
         let mut stmt = conn.prepare_cached(
-            "SELECT id, origin, share, prefix, dir_name, created_at FROM pins ORDER BY share, prefix",
+            "SELECT id, origin, share, prefix, dir_name, created_at, two_way FROM pins ORDER BY share, prefix",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -2956,10 +2972,30 @@ impl DatabaseManager {
                     prefix: r.get(3)?,
                     dir_name: r.get(4)?,
                     created_at: r.get(5)?,
+                    two_way: r.get(6)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Aktueller Hash einer Datei im Katalog eines Geräts (`None`: unbekannt oder gelöscht).
+    pub fn ledger_live_hash(&self, origin: &str, share: &str, rel_path: &str) -> Result<Option<String>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached(
+            "SELECT hash FROM ledger_entries WHERE origin = ?1 AND share = ?2 AND rel_path = ?3 AND deleted = 0
+             ORDER BY seq DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![origin, share, rel_path])?;
+        Ok(match rows.next()? {
+            Some(r) => Some(r.get(0)?),
+            None => None,
+        })
+    }
+
+    /// Zwei-Wege-Sync eines Pins ein- oder ausschalten.
+    pub fn set_pin_two_way(&self, id: i64, on: bool) -> Result<bool> {
+        Ok(self.conn().execute("UPDATE pins SET two_way = ?2 WHERE id = ?1", params![id, on])? > 0)
     }
 
     /// Entfernt einen Pin und vergisst seine gespiegelten Dateien (die Dateien bleiben liegen).
@@ -2981,7 +3017,7 @@ impl DatabaseManager {
     pub fn pin_targets(&self, pin: &PinRow) -> Result<Vec<PinTarget>> {
         let conn = self.read();
         let mut stmt = conn.prepare_cached(
-            "SELECT entry_id, hash, rel_path, size, deleted FROM ledger_entries
+            "SELECT entry_id, hash, rel_path, size, deleted, created_at FROM ledger_entries
              WHERE origin = ?1 AND share = ?2 AND rel_path != ''
                AND (?3 = '' OR rel_path = ?3 OR substr(rel_path, 1, length(?3) + 1) = ?3 || '/')",
         )?;
@@ -2993,6 +3029,7 @@ impl DatabaseManager {
                     rel_path: r.get(2)?,
                     size: r.get::<_, i64>(3)? as u64,
                     deleted: r.get(4)?,
+                    created_at: r.get(5)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

@@ -60,6 +60,7 @@ export function Devices({ notify }: { notify: Notify }) {
   const [grantFor, setGrantFor] = useState<Device | null>(null);
   const [myShares, reloadShares] = useLoader(() => api.shareList(), notify);
   const allFiles = (myShares ?? []).some((x) => x.name === "Alle Dateien");
+  const [pins, reloadPins] = useLoader(() => api.pinList(), notify);
   // Beim Koppeln mit einem Code: Prüfcode, der auf dem anderen Gerät zu bestätigen ist
   const [joinCode, setJoinCode] = useState<string | null>(null);
   useEffect(() => {
@@ -179,6 +180,39 @@ export function Devices({ notify }: { notify: Notify }) {
           </div>
         ))}
       </section>
+      {(pins ?? []).length > 0 && (
+        <section className="panel">
+          <h2>{t("Synchron gehaltene Ordner")}</h2>
+          {(pins ?? []).map((p) => (
+            <div className="line" key={p.id}>
+              <div className="grow">
+                <div className="strong">{p.prefix ? `${p.share}/${p.prefix}` : p.share}</div>
+                <div className="muted small">
+                  {[
+                    p.origin_name ?? "",
+                    t("{n} Dateien", { n: p.files_ok }),
+                    p.files_pending ? t("{n} ausstehend", { n: p.files_pending }) : "",
+                    p.conflicts ? t("{n} Konflikte", { n: p.conflicts }) : "",
+                    p.held_deletes ? t("{n} Löschungen warten", { n: p.held_deletes }) : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              </div>
+              {p.held_deletes > 0 && (
+                <button className="btn" onClick={() => api.pinDeletesPrompt(p.id, p.share, p.held_deletes).then(reloadPins).catch(fail(notify))}>
+                  {t("Entscheiden …")}
+                </button>
+              )}
+              <label className="small">
+                <input type="checkbox" checked={p.two_way} onChange={(e) => api.pinTwoWay(p.id, e.target.checked).then(reloadPins).catch(fail(notify))} />{" "}
+                {t("Beide Richtungen")}
+              </label>
+              <button className="btn" onClick={() => api.pinRemove(p.id).then(reloadPins).catch(fail(notify))}>{t("Nicht mehr synchron halten")}</button>
+            </div>
+          ))}
+        </section>
+      )}
       <section className="panel">
         <label className="line toggle">
           <input

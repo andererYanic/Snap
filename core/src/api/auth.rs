@@ -121,6 +121,8 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::PinAdd { .. }
         | Request::PinList
         | Request::PinRemove { .. }
+        | Request::PinTwoWay { .. }
+        | Request::PinAllowDeletes { .. }
         // Lokaler Index und Dateisystem bleiben auf dem Gerät (kein Zugriff für Geräte).
         | Request::Search { .. }
         | Request::ListDir { .. }

@@ -107,6 +107,10 @@ export const api = {
   pairConfirmPrompt: (name: string, code: string) => invoke<unknown>("pair_confirm_prompt", { name, code }),
   shareList: () => invoke<{ shares: { name: string; root: string; file_count: number }[] }>("share_list").then((r) => r.shares ?? []),
   shareAll: (enabled: boolean) => invoke<unknown>("share_all", { enabled }),
+  pinList: () => invoke<{ pins: PinInfo[] }>("pin_list").then((r) => r.pins ?? []),
+  pinTwoWay: (id: number, enabled: boolean) => invoke<unknown>("pin_two_way", { id, enabled }),
+  pinRemove: (id: number) => invoke<unknown>("pin_remove", { id }),
+  pinDeletesPrompt: (id: number, share: string, count: number) => invoke<unknown>("pin_deletes_prompt", { id, share, count }),
   ring: (device: string, stop: boolean) => invoke<{ message: string }>("ring", { device, stop }),
   ringStop: () => invoke<unknown>("ring_stop"),
   clipboardPending: () => invoke<{ name: string | null; text: string | null }>("clipboard_pending"),
@@ -317,3 +321,17 @@ export const drop = {
   renameContact: (key: string, alias: string | null) => invoke<DropContact>("drop_rename_contact", { key, alias }),
   openLink: (url: string) => invoke<void>("open_link", { url }),
 };
+
+/** Gespiegelter Ordner eines anderen Geräts (Pin), auf Wunsch in beide Richtungen. */
+export interface PinInfo {
+  id: number;
+  origin_name: string | null;
+  share: string;
+  prefix: string;
+  path: string;
+  files_ok: number;
+  files_pending: number;
+  conflicts: number;
+  two_way: boolean;
+  held_deletes: number;
+}

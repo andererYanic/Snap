@@ -77,6 +77,31 @@ docker exec snap space-daemon pin add Fotos
 
 Der Platz dafür ist standardmäßig unbegrenzt (`pin_max_gb = 0` in `/data/config.toml`).
 
+### Ordner zwischen allen Geräten synchron halten
+
+Der Server hält die Ordner in **beide Richtungen** abgeglichen und reicht Änderungen weiter – auch
+wenn Handy und PC nie gleichzeitig online sind:
+
+```bash
+# 1. Auf dem PC dem Server erlauben, im Ordner zu ändern und zu löschen (Papierkorb):
+space-daemon pair grant Server files.write --folder ~/Dokumente
+space-daemon pair grant Server files.delete --folder ~/Dokumente
+# 2. Auf dem Server den Ordner in beide Richtungen spiegeln und den Spiegel freigeben:
+docker exec snap space-daemon pin add PC:Dokumente --two-way
+docker exec snap space-daemon share add /data/Snap --name Kopien
+docker exec snap space-daemon pair grant Handy files.write --folder /data/Snap
+docker exec snap space-daemon pair grant Handy files.delete --folder /data/Snap
+```
+
+Am Handy dann im Server unter *Kopien › PC › Dokumente* oben rechts „Ordner synchron halten“ ›
+„Beide Richtungen“. Regeln: Neuestes gewinnt (die ältere Fassung landet im Papierkorb), Gelöschtes
+landet im Papierkorb, und bei vielen Löschungen auf einmal (mehr als 20) fragt Snap nach:
+
+```bash
+docker exec snap space-daemon pin list              # ⇄ = beide Richtungen, angehaltene Löschungen
+docker exec snap space-daemon pin deletes 1 yes     # oder: no (Dateien behalten)
+```
+
 ## Netzwerk
 
 - **Keine offenen Ports nötig:** Verbindungen laufen ausgehend, notfalls über ein Relais, das nur

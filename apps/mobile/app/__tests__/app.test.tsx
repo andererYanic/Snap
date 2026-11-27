@@ -1683,3 +1683,36 @@ test('Fotos sichern: Freigabe wählen, Regel anlegen und wieder entfernen', asyn
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Synchron gehaltene Ordner: Liste, beide Richtungen umschalten', async () => {
+  const { Devices } = require('../src/Pages');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let twoWay = false;
+  const sent: any[] = [];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'PairList') return JSON.stringify({ Devices: { devices: [] } });
+    if (req === 'ShareList') return JSON.stringify({ Shares: { shares: [] } });
+    if (req === 'Peers') return JSON.stringify({ Peers: { peers: [] } });
+    if (req === 'PinList') return JSON.stringify({ Pins: { pins: [{ id: 3, origin_name: 'PC', share: 'Docs', prefix: '', files_ok: 4, files_pending: 0, conflicts: 0, two_way: twoWay, held_deletes: 2 }] } });
+    if (req.PinTwoWay) { sent.push(req); twoWay = req.PinTwoWay.enabled; return JSON.stringify({ Success: { message: 'ok' } }); }
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<Devices theme={snapTheme(false)} notify={() => {}} />); });
+    await flush();
+    const text = JSON.stringify(r.toJSON());
+    expect(text).toContain('Synchron gehaltene Ordner');
+    expect(text).toContain('2 Löschungen warten');
+    const sw = () => r.root.find((n) => n.props.accessibilityLabel === 'Beide Richtungen' && typeof n.props.onValueChange === 'function');
+    expect(sw().props.value).toBe(false);
+    await act(async () => { await sw().props.onValueChange(true); });
+    await flush();
+    expect(sent).toContainEqual({ PinTwoWay: { id: 3, enabled: true } });
+    expect(sw().props.value).toBe(true);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

@@ -52,6 +52,12 @@ pub struct PinInfo {
     pub files_pending: u64,
     pub conflicts: u64,
     pub bytes: u64,
+    /// Zwei-Wege-Sync eingeschaltet.
+    #[serde(default)]
+    pub two_way: bool,
+    /// Angehaltene Löschungen (warten auf Bestätigung).
+    #[serde(default)]
+    pub held_deletes: u64,
 }
 
 /// Seitenweise Abfrage des Katalogs (für Oberflächen).
@@ -192,6 +198,21 @@ pub enum Request {
     /// "Fotos", "Fotos/2024" oder eindeutig "PC:Fotos/2024".
     PinAdd {
         target: String,
+        /// Zwei-Wege-Sync: lokale Änderungen gehen zum Ursprung zurück (braucht dort
+        /// `files.write` und `files.delete`).
+        #[serde(default)]
+        two_way: bool,
+    },
+    /// Zwei-Wege-Sync eines Pins ein- oder ausschalten.
+    PinTwoWay {
+        id: i64,
+        enabled: bool,
+    },
+    /// Angehaltene Löschungen eines Zwei-Wege-Pins ausführen (`allow`) oder verwerfen (die
+    /// Dateien bleiben erhalten und werden wiederhergestellt).
+    PinAllowDeletes {
+        id: i64,
+        allow: bool,
     },
     PinList,
     /// Pin entfernen (die bereits gespiegelten Dateien bleiben liegen).

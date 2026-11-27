@@ -221,6 +221,24 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
     }
   };
 
+  /** Ordner dieses Geräts hier offline halten – auf Wunsch in beide Richtungen (Zwei-Wege-Sync). */
+  const keepInSync = () => {
+    const target = `${device.node_id}:${trail.join('/')}`;
+    const add = (twoWay: boolean) =>
+      request({ PinAdd: { target, two_way: twoWay } })
+        .then(() => notify(twoWay ? t('„{name}“ wird synchron gehalten.', { name: trail[trail.length - 1] }) : t('„{name}“ ist jetzt offline verfügbar.', { name: trail[trail.length - 1] })))
+        .catch((e) => notify(String(e?.message ?? e)));
+    Alert.alert(
+      t('Ordner synchron halten'),
+      t('„{name}“ wird in Snap/{device} auf diesem Gerät gespiegelt.\n\nIn beide Richtungen: Änderungen hier gehen zurück zu {device} (dort „Dateien ändern“ und „In den Papierkorb“ erlauben). Gelöschtes landet im Papierkorb, bei vielen Löschungen fragt Snap nach.', { name: trail[trail.length - 1], device: device.name }),
+      [
+        { text: t('Abbrechen'), style: 'cancel' },
+        { text: t('Nur herunterladen'), onPress: () => add(false) },
+        { text: t('Beide Richtungen'), onPress: () => add(true) },
+      ],
+    );
+  };
+
   const title = trail.length ? trail[trail.length - 1] : device.name;
   const crumb = trail.length ? [device.name, ...trail.slice(0, -1)].join(' › ') : device.online ? t('Verbunden') : t('Nicht verbunden');
   const empty = useMemo(() => rows !== null && rows.length === 0, [rows]);
@@ -235,6 +253,11 @@ export default function RemoteBrowser({ device, theme, notify, onClose, onOpen, 
           <Text style={s.title} numberOfLines={1}>{title}</Text>
           <Text style={s.crumb} numberOfLines={1}>{crumb}</Text>
         </View>
+        {trail.length > 0 && (
+          <Pressable onPress={keepInSync} style={s.backBtn} accessibilityLabel={t('Ordner synchron halten')} android_ripple={{ color: theme.accentSoft as string, borderless: true }}>
+            <Icon name="restore" color={theme.text2 as string} />
+          </Pressable>
+        )}
       </View>
       {error ? (
         <Text style={s.note}>{error}</Text>

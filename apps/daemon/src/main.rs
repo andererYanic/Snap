@@ -609,11 +609,33 @@ enum IndexAction {
 #[derive(Subcommand)]
 enum PinAction {
     /// Spiegeln: "Fotos", "Fotos/2024" oder eindeutig "PC:Fotos/2024"
-    Add { target: String },
+    Add {
+        target: String,
+        /// Zwei-Wege-Sync: Änderungen hier gehen zurück (dort „Dateien ändern“ und
+        /// „In den Papierkorb“ erlauben)
+        #[arg(long)]
+        two_way: bool,
+    },
+    /// Zwei-Wege-Sync ein- (`on`) oder ausschalten (`off`)
+    TwoWay { id: i64, state: OnOff },
+    /// Angehaltene Löschungen ausführen (`yes`) oder Dateien behalten (`no`)
+    Deletes { id: i64, answer: YesNo },
     /// Pins mit Fortschritt, Konflikten und Platzbedarf
     List,
     /// Pin entfernen (gespiegelte Dateien bleiben liegen)
     Remove { id: i64 },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum YesNo {
+    Yes,
+    No,
 }
 
 #[derive(Subcommand)]
@@ -730,7 +752,13 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             Request::ShareAdd { path: absolute(&path)?, name, devices }
         }
         Commands::Share { action: ShareAction::List } => Request::ShareList,
-        Commands::Pin { action: PinAction::Add { target } } => Request::PinAdd { target },
+        Commands::Pin { action: PinAction::Add { target, two_way } } => Request::PinAdd { target, two_way },
+        Commands::Pin { action: PinAction::TwoWay { id, state } } => {
+            Request::PinTwoWay { id, enabled: matches!(state, OnOff::On) }
+        }
+        Commands::Pin { action: PinAction::Deletes { id, answer } } => {
+            Request::PinAllowDeletes { id, allow: matches!(answer, YesNo::Yes) }
+        }
         Commands::Pin { action: PinAction::List } => Request::PinList,
         Commands::Pin { action: PinAction::Remove { id } } => Request::PinRemove { id },
         Commands::Share { action: ShareAction::Remove { name } } => Request::ShareRemove { name },
@@ -1047,6 +1075,9 @@ fn describe_event(e: &Event) -> String {
         Event::DevicePaired { name, .. } => format!("🔗 Gerät '{name}' gekoppelt"),
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
         Event::ClipboardReceived { name, .. } => format!("📋 Zwischenablage von '{name}' empfangen"),
+        Event::SyncHeld { pin_id, share, deletes } => format!(
+            "⚠️  Zwei-Wege-Sync '{share}': {deletes} Löschungen angehalten – `space-daemon pin deletes {pin_id} yes|no`"
+        ),
         Event::Ring { secs: 0, .. } => "🔕 Klingeln beendet".to_string(),
         Event::Ring { name, secs, .. } => format!("🔔 '{name}' lässt dieses Gerät {secs} s klingeln"),
         Event::DropSending { code, .. } => format!("🔐 Prüfcode der Sendung: {code}"),
@@ -1971,7 +2002,8 @@ fn print_pins(pins: &[PinInfo], pin_dir: &Path, used: u64, max: u64) {
     for p in pins {
         let from = p.origin_name.clone().unwrap_or_else(|| short(&p.origin, 10).to_string());
         let what = if p.prefix.is_empty() { p.share.clone() } else { format!("{}/{}", p.share, p.prefix) };
-        println!("[{}] {from}:{what} → {}", p.id, p.path.display());
+        let dir = if p.two_way { "⇄" } else { "→" };
+        println!("[{}] {from}:{what} {dir} {}", p.id, p.path.display());
         let mut line = format!("     {} Dateien, {}", p.files_ok, human_size(p.bytes));
         if p.files_pending > 0 {
             line.push_str(&format!(", {} ausstehend", p.files_pending));
@@ -1980,6 +2012,12 @@ fn print_pins(pins: &[PinInfo], pin_dir: &Path, used: u64, max: u64) {
             line.push_str(&format!(
                 ", ⚠️  {} Konflikt(e) – lokal geänderte Kopien werden nicht überschrieben",
                 p.conflicts
+            ));
+        }
+        if p.held_deletes > 0 {
+            line.push_str(&format!(
+                ", ⚠️  {} Löschungen angehalten – `space-daemon pin deletes {} yes|no`",
+                p.held_deletes, p.id
             ));
         }
         println!("{line}");

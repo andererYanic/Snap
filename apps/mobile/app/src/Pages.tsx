@@ -29,6 +29,19 @@ interface UploadRule {
   dest_dir: string;
 }
 
+/** Gespiegelter Ordner eines anderen Geräts (Pin), auf Wunsch in beide Richtungen. */
+interface PinInfo {
+  id: number;
+  origin_name: string | null;
+  share: string;
+  prefix: string;
+  files_ok: number;
+  files_pending: number;
+  conflicts: number;
+  two_way: boolean;
+  held_deletes: number;
+}
+
 /** Name der Freigabe für den ganzen Speicher (wie im Kern). */
 const ALL_FILES = 'Alle Dateien';
 
@@ -51,12 +64,14 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
   // Foto-Sicherung: Upload-Regeln (Kamera-Ordner → Freigabe eines Geräts) und Auswahl der Freigabe
   const [rules, setRules] = useState<UploadRule[]>([]);
   const [pick, setPick] = useState<{ device: string; shares: string[] } | null>(null);
+  const [pins, setPins] = useState<PinInfo[]>([]);
 
   const load = useCallback(async () => {
     try {
       setDevices((await request<{ devices: Device[] }>('PairList')).devices);
       setShares((await request<{ shares: { name: string; root: string; file_count: number }[] }>('ShareList')).shares ?? []);
       setRules((await request<{ rules: UploadRule[] }>('UploadRuleList').catch(() => ({ rules: [] }))).rules ?? []);
+      setPins((await request<{ pins: PinInfo[] }>('PinList').catch(() => ({ pins: [] }))).pins ?? []);
       const peers = (await request<{ peers: { node_id: string; status: string }[] }>('Peers')).peers;
       setOnline(new Set(peers.filter((p) => p.status === 'online').map((p) => p.node_id)));
     } catch (e: any) {
@@ -119,6 +134,13 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
       notify(e?.message ?? String(e));
     }
   };
+  const setTwoWay = (p: PinInfo, on: boolean) =>
+    request({ PinTwoWay: { id: p.id, enabled: on } }).then(load).catch((e) => notify(e?.message ?? String(e)));
+  const stopPin = (p: PinInfo) =>
+    Alert.alert(t('Nicht mehr synchron halten'), t('Die Dateien bleiben auf diesem Gerät, werden aber nicht mehr abgeglichen.'), [
+      { text: t('Abbrechen'), style: 'cancel' },
+      { text: t('Beenden'), style: 'destructive', onPress: () => request({ PinRemove: { id: p.id } }).then(load).catch((e) => notify(e.message)) },
+    ]);
   const toggleAuto = async (d: Device, on: boolean) => {
     await clip.setAuto(d.node_id, on);
     setAuto(new Set(await clip.autoDevices()));
@@ -291,6 +313,41 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
             );
           })}
         </View>
+      )}
+
+      {pins.length > 0 && (
+        <>
+          <SectionLabel theme={theme} style={s.label}>{t('Synchron gehaltene Ordner')}</SectionLabel>
+          <View style={s.group}>
+            {pins.map((p, i) => (
+              <View key={p.id}>
+                {i > 0 && <View style={s.sep} />}
+                <Pressable style={s.row} onLongPress={() => stopPin(p)} accessibilityHint={t('Lange drücken zum Beenden')}>
+                  <Icon name="restore" size={24} color={theme.text2 as string} />
+                  <View style={s.grow}>
+                    <Text style={s.strong} numberOfLines={1}>{p.prefix ? `${p.share}/${p.prefix}` : p.share}</Text>
+                    <Text style={s.muted} numberOfLines={2}>
+                      {[
+                        p.origin_name ?? '',
+                        t('{n} Dateien', { n: p.files_ok }),
+                        p.files_pending ? t('{n} ausstehend', { n: p.files_pending }) : '',
+                        p.conflicts ? t('{n} Konflikte', { n: p.conflicts }) : '',
+                        p.held_deletes ? t('{n} Löschungen warten', { n: p.held_deletes }) : '',
+                      ].filter(Boolean).join(' · ')}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={p.two_way}
+                    onValueChange={(v) => setTwoWay(p, v)}
+                    trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                    thumbColor={theme.surface as string}
+                    accessibilityLabel={t('Beide Richtungen')}
+                  />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        </>
       )}
 
       <SectionLabel theme={theme} style={s.label}>{t('Meine Freigaben')}</SectionLabel>

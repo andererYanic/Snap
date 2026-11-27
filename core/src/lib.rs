@@ -34,6 +34,7 @@ pub mod settings;
 pub mod shares;
 pub mod stream;
 pub mod sync;
+pub mod twoway;
 pub mod upload;
 pub mod worker;
 
