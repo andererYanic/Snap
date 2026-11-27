@@ -208,6 +208,8 @@ enum Commands {
         #[arg(short, long, default_value_t = 20)]
         limit: u32,
     },
+    /// Sicherheitsübersicht: wer darf was, was ist sichtbar, was ist offen
+    Security,
     /// Tresor: Dateien mit Passwort verschlüsselt aufbewahren (Passwörter werden verdeckt abgefragt)
     Vault {
         #[command(subcommand)]
@@ -976,6 +978,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Drop { action: Some(DropAction::Forget { key }) } => Request::DropRemoveContact { key },
         Commands::Drop { action: Some(DropAction::Blocked) } => Request::DropBlocked,
         Commands::Drop { action: Some(DropAction::Unblock { key }) } => Request::DropUnblock { key },
+        Commands::Security => Request::SecurityOverview,
         Commands::Vault { action } => {
             use space_core::fileops::archive::Password as Pw;
             let new_pw = || -> Result<Pw> {
@@ -1705,6 +1708,41 @@ fn print_response(res: Response) -> ExitCode {
                     println!("         {e} (Versuche: {})", u.attempts);
                 }
             }
+        }
+        Response::SecurityOverview(r) => {
+            for h in &r.hints {
+                println!("{} {}", if h.level == "warn" { "⚠️ " } else { "ℹ️ " }, h.text);
+            }
+            if !r.hints.is_empty() {
+                println!();
+            }
+            println!("Geräte ({}):", r.devices.len());
+            for d in &r.devices {
+                let mark = if d.strong { "‼️" } else { "  " };
+                println!("  {mark} {} {}", d.name, if d.online { "(verbunden)" } else { "" });
+                for right in &d.rights {
+                    println!("       · {right}");
+                }
+            }
+            println!("Freigaben ({}):", r.shares.len());
+            for s in &r.shares {
+                println!("     {} → {}{}", s.name, s.root, if s.all_devices { " (alle Geräte)" } else { "" });
+            }
+            println!("Aktive Freigabelinks: {}", r.links_active);
+            println!("Snap Drop: {}", r.drop_mode);
+            println!(
+                "Tresor: {}",
+                match (r.vault_exists, r.vault_unlocked) {
+                    (false, _) => "nicht eingerichtet",
+                    (true, true) => "entsperrt",
+                    (true, false) => "gesperrt",
+                }
+            );
+            println!("Abgewiesene Zugriffe (7 Tage): {}", r.denied_7d);
+            println!(
+                "Relais: {}",
+                if r.relay_public { "öffentlich (sieht nur verschlüsselte Daten)" } else { "eigenes oder aus" }
+            );
         }
         Response::VaultStatus(s) => {
             if !s.exists {

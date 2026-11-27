@@ -836,6 +836,22 @@ Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP
 - Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
   Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.
 
+## Review 47 – Texterkennung (OCR) (2026-11-27)
+
+Gemessen mit denselben Commits von Tesseract/Leptonica, für den Linux-Host gebaut (4 Kerne, ein
+Thread), Deutsch + Englisch, LSTM (`tessdata_fast`):
+
+| Eingabe | Zeit | Ergebnis |
+|---|---|---|
+| A4-Seite, 300 dpi (2480 × 3508), 30 Textzeilen | 1,25 s | alle Zeilen korrekt, inkl. ä/ö/ü/ß und € |
+
+- Auf Handys ist mit etwa dem 2- bis 3-Fachen zu rechnen. Die Erkennung läuft nur auf Knopfdruck,
+  in `Dispatchers.Default` (nie im UI-Thread), höchstens eine gleichzeitig; die Oberfläche zeigt
+  einen Fortschritt und bleibt bedienbar.
+- Bilder werden vor der Erkennung auf höchstens 3000 px verkleinert (begrenzt Zeit und Speicher);
+  PDF-Seiten werden mit 2400 px Breite gezeichnet.
+- Größe: `libsnap_ocr.so` 2,5 MB je Architektur (gestrippt), Sprachdaten 5,4 MB (einmal in der APK).
+
 ## Review 48 – Tresor (2026-11-27)
 
 Gemessen (Release, Host, `core/tests/perf.rs` › `vault_crypto`):
@@ -882,3 +898,9 @@ Tempo im Vergleich (Host, gleiche Perf-Tests, Profil `release` → `mobile`):
 
 Alles innerhalb der Messschwankung außer dem Entsperren (+25 ms) – dort ist Langsamkeit Absicht
 (bremst Passwort-Raten); die Oberfläche zeigt währenddessen einen Fortschritt.
+
+## Review 52 – Sicherheitsübersicht (2026-11-27)
+
+- Eine Anfrage in `spawn_blocking`: Geräte mit Rechten (indizierte Abfragen je Gerät), Freigaben,
+  Links, die letzten 1000 Audit-Einträge und Zustandsabfragen im Speicher – im Test
+  (`core/tests/security.rs`) im einstelligen Millisekundenbereich. Nur beim Öffnen der Seite.

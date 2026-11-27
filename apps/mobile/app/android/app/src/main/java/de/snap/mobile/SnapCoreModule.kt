@@ -154,6 +154,31 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /** Texterkennung (offline, Deutsch + Englisch) in einem Bild. Text oder null. */
+  @ReactMethod
+  fun ocrImage(path: String, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(Ocr.recognize(ctx.applicationContext, path))
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** Texterkennung auf einer PDF-Seite (für eingescannte Seiten ohne Textschicht). */
+  @ReactMethod
+  fun ocrPdfPage(path: String, page: Double, promise: Promise) {
+    scope.launch {
+      try {
+        val img = PdfPages.page(ctx.applicationContext, path, page.toInt(), 2400)
+        promise.resolve(img?.let { Ocr.recognize(ctx.applicationContext, it) })
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
   /** PDF: Seitenzahl und Seitenverhältnisse (Höhe/Breite) oder null, wenn nicht lesbar. */
   @ReactMethod
   fun pdfInfo(path: String, promise: Promise) {

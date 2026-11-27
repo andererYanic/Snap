@@ -801,6 +801,12 @@ pub async fn clipboard_send(d: State<'_, Daemon>, device: String, text: String) 
     d.request(Request::ClipboardSend { device, text }).await
 }
 
+/// Sicherheitsübersicht (nur lesend).
+#[tauri::command]
+pub async fn security_overview(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::SecurityOverview).await
+}
+
 // ---------------------------------------------------------------- Tresor
 
 fn pw(s: String) -> space_core::fileops::archive::Password {

@@ -39,12 +39,20 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Ledger:** jeder Eintrag vom Ursprungsgerät signiert; strenge Prüfung relativer Pfade;
   ungültige Einträge werden einzeln verworfen.
 - **Freigaben:** Symlinks werden nie verfolgt; keine absoluten Pfade im Ledger.
+- **Texterkennung (OCR):** läuft vollständig auf dem Gerät (Tesseract, keine Netzverbindung, keine
+  Google-Dienste). Android dekodiert das Bild (höchstens 3000 px Kantenlänge), an Tesseract gehen nur
+  Pixel – Tesseract/Leptonica lesen selbst keine Dateien von außen. Die Sprachdaten kommen aus der
+  App (beim Bau per Prüfsumme gesichert). Der erkannte Text wird nicht gespeichert.
 - **Bildformate von außen:** RAW-Fotos werden nicht entwickelt; ein eigener Parser sucht nur die
   eingebettete JPEG-Vorschau (jeder Versatz gegen die Dateigröße geprüft, höchstens 64 IFDs, 1024
   Einträge je IFD, Verschachtelung 4, Schleifen erkannt, Vorschau ≤ 64 MB) und gibt sie an den
   JPEG-Decoder mit dessen Grenzen. Fuzz-Ziel `raw_preview`. SVGs zeigt Android erst nach Bereinigung
   (keine Skripte, Fremdinhalte, Ereignis-Attribute, Entitäten oder Verweise nach außen – nur `#id`
   und eingebettete Bilder), damit eine Grafik beim Ansehen nichts nachlädt.
+- **Sicherheitsübersicht:** nur lesend und nur lokal (für Geräte `admin`, also gesperrt). Zeigt Rechte
+  je Gerät (über das Übliche hinausgehende hervorgehoben), Freigaben, „Alle Dateien“, aktive Links,
+  Snap-Drop-Sichtbarkeit, Tresor, abgewiesene Zugriffe der letzten 7 Tage und das Relais – mit
+  Hinweisen als Code und Werten, damit die Oberflächen sie übersetzen. Test: `core/tests/security.rs`.
 - **Tresor:** Argon2id (64 MiB, 3 Durchläufe) → AES-256-GCM-verpackter 256-Bit-Tresorschlüssel;
   Dateien blockweise AES-256-GCM mit Reihenfolge und Ende im AAD, Namen nur im verschlüsselten
   Verzeichnis; Schlüssel nur im Speicher, Sperre nach 5 min bzw. beim Verlassen der App, wachsende

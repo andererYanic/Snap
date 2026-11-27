@@ -1,0 +1,27 @@
+// Texterkennung (Tesseract 5) als eigenes Bibliotheksmodul: Die App selbst nutzt ihre
+// CMake-Einstellung für React Natives libappmodules.so – die darf hier nicht überschrieben werden.
+apply plugin: "com.android.library"
+
+android {
+    namespace "de.snap.ocr"
+    compileSdk rootProject.ext.compileSdkVersion
+    ndkVersion rootProject.ext.ndkVersion
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+        externalNativeBuild {
+            cmake {
+                // Gleiche C++-Laufzeit wie React Native (libc++_shared.so liegt ohnehin in der App)
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
+        ndk {
+            abiFilters(*((findProperty("reactNativeArchitectures") ?: "arm64-v8a,x86_64").split(",")*.trim()))
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+}
