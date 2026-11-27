@@ -47,7 +47,12 @@ async fn uebersicht_zeigt_rechte_sichtbarkeit_und_auffaelliges() {
     pair(&a, &b).await;
     let folder = tmp.path().join("a/speicher/DCIM");
     let ok = |r: Response| assert!(!matches!(r, Response::Error { .. }), "{r:?}");
-    ok(a.request(Request::PairGrant { device: "Handy".into(), capability: "files.purge".into(), folder: Some(folder.clone()) }).await);
+    ok(a.request(Request::PairGrant {
+        device: "Handy".into(),
+        capability: "files.purge".into(),
+        folder: Some(folder.clone()),
+    })
+    .await);
     ok(a.request(Request::ShareAll { enabled: true }).await);
     match a.request(Request::VaultCreate { password: Password("ein-gutes-passwort".into()) }).await {
         Response::VaultCreated { .. } => {}

@@ -1739,7 +1739,10 @@ fn print_response(res: Response) -> ExitCode {
                 }
             );
             println!("Abgewiesene Zugriffe (7 Tage): {}", r.denied_7d);
-            println!("Relais: {}", if r.relay_public { "öffentlich (sieht nur verschlüsselte Daten)" } else { "eigenes oder aus" });
+            println!(
+                "Relais: {}",
+                if r.relay_public { "öffentlich (sieht nur verschlüsselte Daten)" } else { "eigenes oder aus" }
+            );
         }
         Response::VaultStatus(s) => {
             if !s.exists {
