@@ -28,7 +28,9 @@ async fn start(root: &Path, name: &str, port: u16) -> Daemon {
     for _ in 0..50 {
         match Daemon::start_loopback(config(root, name, port)).await {
             Ok(d) => return d,
-            Err(e) if format!("{e:#}").contains("bind") => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+            Err(e) if format!("{e:#}").contains("bind") => {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await
+            }
             Err(e) => panic!("{e:#}"),
         }
     }
