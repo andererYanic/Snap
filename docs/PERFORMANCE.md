@@ -835,3 +835,19 @@ Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP
 - SVG: Bereinigung per regulären Ausdrücken über höchstens 2 MB Text, einmal je Öffnen.
 - Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
   Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.
+
+## Review 48 – Tresor (2026-11-27)
+
+Gemessen (Release, Host, `core/tests/perf.rs` › `vault_crypto`):
+
+| Vorgang | Zeit |
+|---|---|
+| Tresor anlegen (2 × Argon2id 64 MiB) | 342 ms |
+| Entsperren (Argon2id 64 MiB, t = 3) | 153 ms |
+| Verschlüsseln | 1,1 GB/s |
+| Entschlüsseln | 1,3 GB/s |
+
+- Argon2 ist bewusst langsam (bremst Passwort-Raten); auf Handys ca. 0,5–1 s je Entsperren. Alles
+  Rechenintensive läuft in `spawn_blocking`, die Oberfläche zeigt währenddessen einen Fortschritt.
+- Speicher beim Ver-/Entschlüsseln: zwei Blöcke à 64 KiB, unabhängig von der Dateigröße.
+- Der automatische Sperr-Takt prüft alle 20 s eine Zeitmarke (kein Plattenzugriff).

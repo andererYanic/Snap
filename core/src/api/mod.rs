@@ -127,6 +127,17 @@ pub(crate) async fn handle_request(
         Request::RemoteOp { device, op } => crate::remote_ops::send(inner, &device, op).await,
         Request::ClipboardSend { device, text } => crate::clipboard::send(inner, &device, text).await,
         Request::Ring { device, stop } => crate::ring::send(inner, &device, stop).await,
+        Request::VaultStatus
+        | Request::VaultCreate { .. }
+        | Request::VaultUnlock { .. }
+        | Request::VaultRecover { .. }
+        | Request::VaultChangePassword { .. }
+        | Request::VaultLock
+        | Request::VaultList
+        | Request::VaultAdd { .. }
+        | Request::VaultOpen { .. }
+        | Request::VaultExport { .. }
+        | Request::VaultRemove { .. } => vault(inner, req).await,
         Request::RingStop => {
             inner.db.events().emit(crate::events::Event::Ring { node_id: String::new(), name: String::new(), secs: 0 });
             Ok(Response::Success { message: "Klingeln beendet.".into() })
@@ -260,6 +271,10 @@ pub(crate) async fn handle_request(
         Request::RemoteThumbnail { device, share, path, size } => {
             crate::remote_thumbs::fetch(inner, &device, &share, &path, size).await.map(Response::Thumbnail)
         }
+        // Nie Vorschaubilder aus dem Tresor (sie lägen unverschlüsselt im Cache)
+        Request::Thumbnail { path, .. } if path.starts_with(inner.vault.dir()) => {
+            Ok(Response::error(error::ErrorCode::InvalidInput, "Keine Vorschaubilder für Tresor-Dateien."))
+        }
         Request::Thumbnail { path, size } => inner.thumbs.get(&path, size).await.map(Response::Thumbnail),
         Request::Metadata { path } => tokio::task::spawn_blocking(move || crate::media::metadata(&path))
             .await
@@ -387,6 +402,17 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::ClipboardSend { .. } => "clipboard.send",
         Request::Ring { .. } => "device.ring",
         Request::RingStop => "device.ring_stop",
+        Request::VaultStatus => "vault.status",
+        Request::VaultCreate { .. } => "vault.create",
+        Request::VaultUnlock { .. } => "vault.unlock",
+        Request::VaultRecover { .. } => "vault.recover",
+        Request::VaultChangePassword { .. } => "vault.password",
+        Request::VaultLock => "vault.lock",
+        Request::VaultList => "vault.list",
+        Request::VaultAdd { .. } => "vault.add",
+        Request::VaultOpen { .. } => "vault.open",
+        Request::VaultExport { .. } => "vault.export",
+        Request::VaultRemove { .. } => "vault.remove",
         Request::PairConfirm { .. } => "pair.confirm",
         Request::ShareAll { .. } => "share.all",
         Request::ClipboardPending => "clipboard.pending",
@@ -458,4 +484,51 @@ async fn read_docx(path: std::path::PathBuf, image_dir: Option<std::path::PathBu
         .await
         .map_err(|e| anyhow::anyhow!("Lesen abgebrochen: {e}"))??;
     Ok(Response::Docx(doc))
+}
+
+/// Tresor: alles Rechenintensive (Argon2, Verschlüsseln) außerhalb der Laufzeit-Threads.
+async fn vault(inner: &std::sync::Arc<DaemonInner>, req: Request) -> Result<Response> {
+    let inner2 = inner.clone();
+    let res = tokio::task::spawn_blocking(move || -> Result<Response> {
+        let v = &inner2.vault;
+        let now = crate::database::now_unix();
+        Ok(match req {
+            Request::VaultStatus => Response::VaultStatus(v.status()),
+            Request::VaultCreate { password } => Response::VaultCreated { recovery_code: v.create(&password.0, now)? },
+            Request::VaultUnlock { password } => {
+                v.unlock(&password.0)?;
+                Response::VaultStatus(v.status())
+            }
+            Request::VaultRecover { code, new_password } => {
+                v.recover(&code.0, &new_password.0)?;
+                Response::VaultStatus(v.status())
+            }
+            Request::VaultChangePassword { old, new } => {
+                v.change_password(&old.0, &new.0)?;
+                Response::Success { message: "Passwort geändert.".into() }
+            }
+            Request::VaultLock => {
+                v.lock();
+                inner2.db.events().emit(crate::events::Event::VaultLocked);
+                Response::Success { message: "Tresor gesperrt.".into() }
+            }
+            Request::VaultList => Response::VaultEntries { entries: v.list()? },
+            Request::VaultAdd { paths, remove } => {
+                if paths.iter().any(|p| !p.is_absolute() || inner2.protected_paths().iter().any(|x| p.starts_with(x))) {
+                    crate::api_bail!(InvalidInput, "Diese Dateien lassen sich nicht aufnehmen.");
+                }
+                let n = v.add(&paths, remove, now)?;
+                Response::Success { message: format!("{n} Datei(en) im Tresor.") }
+            }
+            Request::VaultOpen { id } => Response::VaultPath { path: v.open(&id)? },
+            Request::VaultExport { id, dest_dir } => Response::VaultPath { path: v.export(&id, &dest_dir)? },
+            Request::VaultRemove { id } => {
+                v.remove(&id)?;
+                Response::Success { message: "Aus dem Tresor gelöscht.".into() }
+            }
+            _ => unreachable!("nur Tresor-Anfragen"),
+        })
+    })
+    .await?;
+    res
 }

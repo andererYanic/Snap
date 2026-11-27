@@ -205,6 +205,17 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::ClipboardSend { .. }
         | Request::Ring { .. }
         | Request::RingStop
+        | Request::VaultStatus
+        | Request::VaultCreate { .. }
+        | Request::VaultUnlock { .. }
+        | Request::VaultRecover { .. }
+        | Request::VaultChangePassword { .. }
+        | Request::VaultLock
+        | Request::VaultList
+        | Request::VaultAdd { .. }
+        | Request::VaultOpen { .. }
+        | Request::VaultExport { .. }
+        | Request::VaultRemove { .. }
         | Request::PairConfirm { .. }
         | Request::ShareAll { .. }
         | Request::ClipboardPending

@@ -45,6 +45,13 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   JPEG-Decoder mit dessen Grenzen. Fuzz-Ziel `raw_preview`. SVGs zeigt Android erst nach Bereinigung
   (keine Skripte, Fremdinhalte, Ereignis-Attribute, Entitäten oder Verweise nach außen – nur `#id`
   und eingebettete Bilder), damit eine Grafik beim Ansehen nichts nachlädt.
+- **Tresor:** Argon2id (64 MiB, 3 Durchläufe) → AES-256-GCM-verpackter 256-Bit-Tresorschlüssel;
+  Dateien blockweise AES-256-GCM mit Reihenfolge und Ende im AAD, Namen nur im verschlüsselten
+  Verzeichnis; Schlüssel nur im Speicher, Sperre nach 5 min bzw. beim Verlassen der App, wachsende
+  Wartezeit nach falschen Versuchen; Wiederherstellungscode (160 Bit) nur beim Anlegen sichtbar.
+  Nie in Freigaben, Sync, Suche oder Vorschaubildern; Passwörter erscheinen nie in Protokollen.
+  Einzelheiten und Grenzen: `docs/VAULT_FORMAT.md`. Tests: `core/tests/vault.rs`, Fuzz-Ziel
+  `vault_object`.
 - **Zwei-Wege-Sync (Pins mit `two_way`):** lokale Änderungen am Spiegel gehen ausschließlich über
   die Fernoperationen zum Ursprung und damit durch dessen Rechteprüfung (`files.write`, für Ersetzen
   und Löschen zusätzlich `files.delete`, ordnergebunden, nie Standard), Massenschutz und Audit-Log.

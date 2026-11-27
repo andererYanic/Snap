@@ -36,6 +36,7 @@ pub struct DaemonInner {
     pub(crate) clipboard: crate::clipboard::ClipState,
     pub(crate) ring: crate::ring::RingState,
     pub(crate) sync: crate::twoway::SyncState,
+    pub(crate) vault: crate::vault::Vault,
     /// Zwei-Wege-Sync: Änderungen nacheinander senden (nie zwei Läufe gleichzeitig).
     pub(crate) sync_push: tokio::sync::Mutex<()>,
     /// Verbundene Oberflächen, die Ereignisse abonniert haben.
@@ -308,6 +309,7 @@ impl Daemon {
             clipboard: crate::clipboard::ClipState::default(),
             ring: crate::ring::RingState::default(),
             sync: crate::twoway::SyncState::default(),
+            vault: crate::vault::Vault::new(&config.data_dir),
             sync_push: tokio::sync::Mutex::new(()),
             ui_clients: std::sync::atomic::AtomicUsize::new(0),
             config,
@@ -357,6 +359,19 @@ impl Daemon {
         let backups = tokio::spawn(crate::backup::run_scheduler(inner.clone()));
         let photos = tokio::spawn(crate::photos::run_refresher(inner.clone()));
         let upload_rules = tokio::spawn(crate::upload::run_rules(inner.clone()));
+        // Tresor nach längerer Nichtbenutzung sperren
+        let vault_lock = {
+            let weak = Arc::downgrade(&inner);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    let Some(inner) = weak.upgrade() else { return };
+                    if inner.vault.auto_lock() {
+                        inner.db.events().emit(crate::events::Event::VaultLocked);
+                    }
+                }
+            })
+        };
         let streamer = match (stream, stream_listener) {
             (Some(s), Some(l)) => tokio::spawn(crate::stream::serve(s, l, Arc::downgrade(&inner))),
             _ => tokio::spawn(async {}),
@@ -391,6 +406,7 @@ impl Daemon {
             stream_cache,
             uploads,
             upload_rules,
+            vault_lock,
             links,
             backups,
             photos,

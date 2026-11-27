@@ -69,6 +69,8 @@ pub enum Event {
         share: String,
         deletes: usize,
     },
+    /// Der Tresor wurde gesperrt (automatisch oder auf Wunsch).
+    VaultLocked,
     /// Ein eigenes Gerät lässt dieses klingeln (Gerät finden); `secs == 0` heißt: aufhören.
     Ring {
         node_id: String,

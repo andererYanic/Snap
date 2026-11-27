@@ -1745,3 +1745,46 @@ test('Untertitel neben dem Video werden gefunden', () => {
   expect(tracks[1]).toMatchObject({ title: 'DE', language: 'de', type: 'application/x-subrip' });
   expect(tracks[2].type).toBe('text/vtt');
 });
+
+test('Tresor: einrichten mit einmaligem Code, entsperren, öffnen', async () => {
+  const { VaultPage } = require('../src/Vault');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let st = { exists: false, unlocked: false, entries: null, auto_lock_secs: 300, retry_after_secs: 0 };
+  const sent: any[] = [];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'VaultStatus') return JSON.stringify({ VaultStatus: st });
+    if (req === 'VaultList') return JSON.stringify({ VaultEntries: { entries: [{ id: 'a'.repeat(32), name: 'Ausweise/pass.pdf', size: 1200, added: 0 }] } });
+    if (req === 'VaultLock') { st = { ...st, unlocked: false }; return JSON.stringify({ Success: { message: 'ok' } }); }
+    if (req.VaultCreate) { sent.push(req); st = { ...st, exists: true, unlocked: true }; return JSON.stringify({ VaultCreated: { recovery_code: 'ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2345-6789' } }); }
+    if (req.VaultUnlock) { sent.push(req); st = { ...st, unlocked: true }; return JSON.stringify({ VaultStatus: st }); }
+    if (req.VaultOpen) { sent.push(req); return JSON.stringify({ VaultPath: { path: '/data/vault/open/1/pass.pdf' } }); }
+    return origRequest(json);
+  });
+  const opened: string[] = [];
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<VaultPage theme={snapTheme(false)} notify={() => {}} onOpen={(p: string) => opened.push(p)} />); });
+    await flush();
+    const input = (label: string) => r.root.find((n) => n.props.accessibilityLabel === label && typeof n.props.onChangeText === 'function');
+    await act(async () => { input('Passwort (mind. 8 Zeichen)').props.onChangeText('sehr-geheim'); input('Passwort wiederholen').props.onChangeText('sehr-geheim'); });
+    await act(async () => { await pressable(r, 'Einrichten').props.onPress(); });
+    await flush();
+    expect(sent).toContainEqual({ VaultCreate: { password: 'sehr-geheim' } });
+    expect(JSON.stringify(r.toJSON())).toContain('ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2345-6789');
+    await act(async () => { pressable(r, 'Ich habe ihn aufgeschrieben').props.onPress(); });
+    expect(r.root.findAll((n) => typeof n.props.children === 'string' && n.props.children.includes('ABCD-EFGH'))).toHaveLength(0);
+    // Sperren und wieder entsperren
+    await act(async () => { await pressable(r, 'Sperren').props.onPress(); });
+    await flush();
+    await act(async () => { input('Passwort').props.onChangeText('sehr-geheim'); });
+    await act(async () => { await pressable(r, 'Entsperren').props.onPress(); });
+    await flush();
+    await act(async () => { await pressable(r, 'Ausweise/pass.pdf').props.onPress(); });
+    await flush();
+    expect(opened).toEqual(['/data/vault/open/1/pass.pdf']);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
