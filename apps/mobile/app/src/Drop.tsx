@@ -73,6 +73,43 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
   const [people, setPeople] = useState<drop.Contact[]>([]);
   // Kontakt, der gerade geweckt wird (wird gesendet, sobald er erscheint)
   const [waking, setWaking] = useState<string | null>(null);
+  // An mehrere senden: `p:<Gerät>` (in der Nähe) bzw. `c:<Kontakt>` (von überall)
+  const [multi, setMulti] = useState(false);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [group, setGroup] = useState<{ done: number; ok: number; total: number } | null>(null);
+  const choose = (k: string) => {
+    const n = new Set(chosen);
+    n.has(k) ? n.delete(k) : n.add(k);
+    setChosen(n);
+    core.haptic('tick');
+  };
+  const sendGroup = async () => {
+    const targets = [...chosen];
+    setGroup({ done: 0, ok: 0, total: targets.length });
+    let ok = 0;
+    let done = 0;
+    // Gleichzeitig: jede Person nimmt für sich an
+    await Promise.all(
+      targets.map(async (k) => {
+        try {
+          const r = k.startsWith('p:')
+            ? await drop.send(peers.find((p) => p.id === k.slice(2)) ?? ({ id: k.slice(2) } as drop.NearbyPeer), paths, text)
+            : await drop.sendToContact(k.slice(2), paths, text);
+          if (r.ok) {
+            ok++;
+          }
+        } catch {
+          // zählt als nicht gesendet
+        }
+        done++;
+        setGroup({ done, ok, total: targets.length });
+      }),
+    );
+    notify(t('An {ok} von {n} gesendet.', { ok, n: targets.length }));
+    if (ok === targets.length) {
+      setTimeout(onClose, 600);
+    }
+  };
   const [codeOpen, setCodeOpen] = useState(false);
   const [code, setCode] = useState('');
   const [codeBusy, setCodeBusy] = useState(false);
@@ -213,9 +250,23 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
   return (
     <Sheet theme={theme} onClose={onClose}>
       <View style={s.sheetHead}>
-        <Text style={s.sheetTitle}>{t('In der Nähe senden')}</Text>
+        <View style={s.rowInline}>
+          <Text style={[s.sheetTitle, s.grow]}>{t('In der Nähe senden')}</Text>
+          {!busy && !group ? (
+            <Pressable onPress={() => { setMulti(!multi); setChosen(new Set()); }} style={s.textBtn} accessibilityRole="button">
+              <Text style={s.link}>{multi ? t('Einzeln') : t('Mehrere')}</Text>
+            </Pressable>
+          ) : null}
+        </View>
         <Text style={s.meta} numberOfLines={1}>{subtitle}</Text>
       </View>
+      {multi && chosen.size > 0 ? (
+        <Pressable onPress={sendGroup} disabled={!!group} style={[s.primaryBtn, !!group && s.dim]} accessibilityRole="button">
+          <Text style={s.primaryText}>
+            {group ? t('{done} von {n} fertig …', { done: group.done, n: group.total }) : t('An {n} senden', { n: chosen.size })}
+          </Text>
+        </Pressable>
+      ) : null}
       {busy && state?.id !== undefined ? (
         <Pressable onPress={() => drop.cancel(state.id!).catch(() => {})} style={s.textBtn} accessibilityRole="button">
           <Text style={[s.link, s.dangerText]}>{t('Abbrechen')}</Text>
@@ -254,8 +305,8 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
             return (
               <Pressable
                 key={p.id}
-                onPress={() => sendTo(p)}
-                disabled={busy || unavailable}
+                onPress={() => (multi ? choose(`p:${p.id}`) : sendTo(p))}
+                disabled={busy || unavailable || !!group}
                 android_ripple={{ color: theme.accentSoft as string }}
                 style={[s.peer, ((busy && !mine) || unavailable) && s.dim]}
                 accessibilityRole="button"
@@ -274,7 +325,7 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
                     </View>
                   ) : null}
                 </View>
-                {mine?.phase === 'done' ? <Icon name="check" size={22} color={theme.accent as string} /> : null}
+                {mine?.phase === 'done' || (multi && chosen.has(`p:${p.id}`)) ? <Icon name="check" size={22} color={theme.accent as string} /> : null}
               </Pressable>
             );
           })
@@ -287,8 +338,8 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
               .map((c) => (
                 <Pressable
                   key={c.key}
-                  onPress={() => wake(c)}
-                  disabled={busy || !!waking}
+                  onPress={() => (multi ? (c.remote ? choose(`c:${c.key}`) : undefined) : wake(c))}
+                  disabled={busy || !!waking || !!group || (multi && !c.remote)}
                   android_ripple={{ color: theme.accentSoft as string }}
                   style={[s.peer, ((busy && state?.peer !== `contact:${c.key}`) || (!!waking && waking !== c.key)) && s.dim]}
                   accessibilityRole="button"
@@ -313,6 +364,7 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
                               : t('Antippen zum Wecken – Snap muss dort nicht offen sein')}
                     </Text>
                   </View>
+                  {multi && chosen.has(`c:${c.key}`) ? <Icon name="check" size={22} color={theme.accent as string} /> : null}
                 </Pressable>
               ))}
           </>
@@ -454,7 +506,7 @@ export function OfferSheet({ offer, theme, onDone }: { offer: drop.IncomingOffer
         <View style={s.fileBox}>
           {shown.map((f, i) => (
             <View key={i} style={s.fileRow}>
-              <Text style={s.fileName} numberOfLines={1}>{f.name}</Text>
+              <Text style={s.fileName} numberOfLines={1}>{f.mime === drop.FOLDER_MIME ? t('{name} (Ordner)', { name: f.name.replace(/\.zip$/i, '') }) : f.name}</Text>
               <Text style={s.fileSize}>{size(f.size)}</Text>
             </View>
           ))}
@@ -991,6 +1043,7 @@ const styles = themed((th: Theme) =>
     para: { marginTop: -4 },
     actions: { flexDirection: 'row', gap: 12, marginTop: 4 },
     primary: { minHeight: 48, borderRadius: 24, backgroundColor: th.accent, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
+    primaryBtn: { minHeight: 48, borderRadius: 24, backgroundColor: th.accent, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20, marginHorizontal: 20, marginBottom: 8 },
     primaryText: { color: th.onAccent, fontSize: 16, fontWeight: '700' },
     tonal: { minHeight: 48, borderRadius: 24, backgroundColor: th.surface2, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
     tonalText: { color: th.text, fontSize: 16, fontWeight: '600' },

@@ -92,6 +92,9 @@ export const saveContact = (id: number) => request<Contact>({ DropSaveContact: {
 export const removeContact = (key: string) => request({ DropRemoveContact: { key } });
 export const renameContact = (key: string, alias: string | null) => request<Contact>({ DropRenameContact: { key, alias } });
 /** Eigener Anzeigename (`null` = Gerätename). */
+/** Kennzeichen eines für die Übertragung gepackten Ordners (wird beim Empfang entpackt). */
+export const FOLDER_MIME = 'application/x-snap-folder+zip';
+
 export interface HistoryItem {
   id: number;
   at: number;

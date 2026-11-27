@@ -452,6 +452,15 @@ pub struct Packed {
 /// hinterlässt nichts. Blockierend – in `spawn_blocking` aufrufen.
 pub fn compress(sources: &[PathBuf], name: Option<&str>, p: &Progress) -> Result<Packed> {
     let Some(first) = sources.first() else { api_bail!(InvalidInput, "Nichts zum Packen ausgewählt.") };
+    let dir = first.parent().context("Quelle ohne übergeordneten Ordner")?.to_path_buf();
+    compress_into(sources, &dir, name, p)
+}
+
+/// Wie [`compress`], legt das ZIP aber in `dir` ab (z. B. einem privaten Arbeitsordner).
+pub fn compress_into(sources: &[PathBuf], dir: &Path, name: Option<&str>, p: &Progress) -> Result<Packed> {
+    if sources.is_empty() {
+        api_bail!(InvalidInput, "Nichts zum Packen ausgewählt.");
+    }
     for s in sources {
         if !s.is_absolute() {
             api_bail!(InvalidInput, "Pfad muss absolut sein: {}", s.display());
@@ -460,7 +469,7 @@ pub fn compress(sources: &[PathBuf], name: Option<&str>, p: &Progress) -> Result
             api_bail!(NotFound, "{} existiert nicht.", s.display());
         }
     }
-    let dir = first.parent().context("Quelle ohne übergeordneten Ordner")?.to_path_buf();
+    let dir = dir.to_path_buf();
     let name = match name {
         Some(n) => {
             validate_name(n)?;

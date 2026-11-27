@@ -910,3 +910,58 @@ async fn abbrechen_und_verlauf() {
     a.svc.shutdown().await;
     b.svc.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ordner_senden_kommt_als_ordner_an() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = node(tmp.path(), "Anna");
+    let mut b = node(tmp.path(), "Ben");
+    b.svc.set_visibility(Mode::Everyone).await.unwrap();
+    let peer = a.svc.add_code(&code_of(&b)).await.unwrap();
+    let dir = tmp.path().join("src").join("Urlaub");
+    write(&dir, "a.txt", b"eins");
+    write(&dir.join("Tag 2"), "b.txt", b"zwei");
+    let single = write(&tmp.path().join("src"), "einzeln.txt", b"x");
+    let send = {
+        let svc = a.svc.clone();
+        let id = peer.id.clone();
+        let d = dir.clone();
+        tokio::spawn(async move { svc.send(&id, vec![d, single]).await.unwrap() })
+    };
+    answer(&mut b, true, false).await;
+    let Event::DropFinished { ok, files, .. } =
+        next_event(&mut b.events, |e| matches!(e, Event::DropFinished { incoming: true, .. })).await
+    else {
+        unreachable!()
+    };
+    assert!(ok);
+    assert!(send.await.unwrap().ok);
+    // Der Ordner liegt als Ordner da (kein ZIP mehr), Unterordner inklusive
+    let folder = files.iter().map(PathBuf::from).find(|p| p.is_dir()).expect("Ordner im Ergebnis");
+    let walk: Vec<String> = walkdir_names(&folder);
+    assert!(folder.file_name().unwrap().to_string_lossy().starts_with("Urlaub"), "{folder:?}");
+    assert_eq!(std::fs::read(folder.join("a.txt")).unwrap(), b"eins", "nicht doppelt verschachtelt: {walk:?}");
+    assert_eq!(std::fs::read(folder.join("Tag 2/b.txt")).unwrap(), b"zwei");
+    assert!(!inbox_files(&b).iter().any(|f| f.ends_with(".zip")), "{:?}", inbox_files(&b));
+    // Der Arbeitsordner des Senders ist wieder leer
+    let pack = tmp.path().join("Anna").join("drop-pack");
+    assert!(std::fs::read_dir(&pack).map(|d| d.count()).unwrap_or(0) == 0);
+    a.svc.shutdown().await;
+    b.svc.shutdown().await;
+}
+
+fn walkdir_names(root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                out.push(p.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    out
+}

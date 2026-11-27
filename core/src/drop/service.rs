@@ -1115,8 +1115,11 @@ impl DropService {
         reply(&mut send, true, "").await?;
 
         self.transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, conn.clone());
-        let result = self.receive_files(conn, id, &offer).await;
+        let mut result = self.receive_files(conn, id, &offer).await;
         self.transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        if let Ok(saved) = &mut result {
+            unpack_folders(saved, &offer).await;
+        }
         let peer = contact_name.clone().unwrap_or_else(|| offer.name.clone());
         match result {
             Ok(saved) => {
@@ -1565,7 +1568,76 @@ impl DropService {
         if text.as_ref().is_some_and(|t| t.len() > super::wire::MAX_TEXT) {
             api_bail!(InvalidInput, "Text ist zu lang (höchstens 64 KB)");
         }
-        let files = if paths.is_empty() && text.is_some() { Vec::new() } else { prepare_files(paths).await? };
+        // Ordner werden für die Übertragung gepackt (privater Arbeitsordner, danach gelöscht)
+        let (paths, packed) = self.pack_folders(paths).await?;
+        let prepared = if paths.is_empty() && text.is_some() { Ok(Vec::new()) } else { prepare_files(paths).await };
+        let mut files = match prepared {
+            Ok(f) => f,
+            Err(e) => {
+                remove_all(&packed);
+                return Err(e);
+            }
+        };
+        for f in files.iter_mut().filter(|f| packed.contains(&f.path)) {
+            f.offer.mime = super::wire::FOLDER_MIME.into();
+        }
+        let r = self.send_files(id, target, files, text, expect_contact).await;
+        remove_all(&packed);
+        r
+    }
+
+    /// Ordner in ZIPs packen (je Ordner eines, im privaten Arbeitsordner). Liefert die neue
+    /// Pfadliste und die angelegten ZIPs.
+    async fn pack_folders(&self, paths: Vec<PathBuf>) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+        if !paths.iter().any(|p| p.is_dir()) {
+            return Ok((paths, Vec::new()));
+        }
+        let work = self.opts.identity_path.with_file_name("drop-pack");
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&work)?;
+            let mut out = Vec::with_capacity(paths.len());
+            let mut packed = Vec::new();
+            for p in paths {
+                if !p.is_dir() {
+                    out.push(p);
+                    continue;
+                }
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("Ordner").to_string();
+                // Inhalt ohne den Ordner selbst packen: Der Empfänger entpackt in einen Ordner
+                // mit dem Namen des ZIPs (sonst stünde alles doppelt verschachtelt da).
+                let mut children: Vec<PathBuf> =
+                    std::fs::read_dir(&p)?.filter_map(|e| e.ok().map(|e| e.path())).collect();
+                children.sort();
+                if children.is_empty() {
+                    remove_all(&packed);
+                    api_bail!(InvalidInput, "Der Ordner „{name}“ ist leer");
+                }
+                let progress = crate::fileops::ops::Progress::default();
+                match crate::fileops::archive::compress_into(&children, &work, Some(&name), &progress) {
+                    Ok(z) => {
+                        packed.push(z.archive.clone());
+                        out.push(z.archive);
+                    }
+                    Err(e) => {
+                        remove_all(&packed);
+                        return Err(e);
+                    }
+                }
+            }
+            Ok((out, packed))
+        })
+        .await
+        .context("Packen abgebrochen")?
+    }
+
+    async fn send_files(
+        &self,
+        id: u64,
+        target: &Target,
+        files: Vec<Prepared>,
+        text: Option<String>,
+        expect_contact: Option<&str>,
+    ) -> Result<(String, bool)> {
         let conn = self.connect(target).await?;
         let total: u64 = files.iter().map(|f| f.offer.size).sum();
         self.transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, conn.clone());
@@ -2070,6 +2142,36 @@ fn reserve_name(dir: &Path, name: &str) -> Result<PathBuf> {
         }
     }
     api_bail!(Rejected, "Kein freier Dateiname für {name}")
+}
+
+fn remove_all(paths: &[PathBuf]) {
+    for p in paths {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// Als Ordner gesendete ZIPs entpacken (gehärteter Entpacker mit Grenzen); das ZIP wird danach
+/// gelöscht. Schlägt das Entpacken fehl, bleibt das ZIP liegen.
+async fn unpack_folders(saved: &mut [PathBuf], offer: &ValidOffer) {
+    for (path, f) in saved.iter_mut().zip(&offer.files) {
+        if f.mime != super::wire::FOLDER_MIME || !f.name.to_ascii_lowercase().ends_with(".zip") {
+            continue;
+        }
+        let zip = path.clone();
+        let r = tokio::task::spawn_blocking(move || {
+            let limits = zip.parent().map(crate::fileops::archive::Limits::for_target).transpose()?;
+            crate::fileops::archive::extract(&zip, None, limits, &crate::fileops::ops::Progress::default())
+        })
+        .await;
+        match r {
+            Ok(Ok(x)) => {
+                let _ = std::fs::remove_file(&*path);
+                *path = x.dir;
+            }
+            Ok(Err(e)) => tracing::warn!("Drop: Ordner nicht entpackt (ZIP bleibt): {e:#}"),
+            Err(e) => tracing::warn!("Drop: Entpacken abgebrochen: {e}"),
+        }
+    }
 }
 
 struct Prepared {

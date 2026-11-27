@@ -417,7 +417,7 @@ export function OfferDialog({ offer, onDone }: { offer: IncomingOffer; onDone: (
         <div className="offerfiles">
           {shown.map((f, i) => (
             <div key={i} className="line">
-              <span className="grow ellipsis">{f.name}</span>
+              <span className="grow ellipsis">{f.mime === "application/x-snap-folder+zip" ? t("{name} (Ordner)", { name: f.name.replace(/\.zip$/i, "") }) : f.name}</span>
               <span className="muted small num">{humanSize(f.size)}</span>
             </div>
           ))}

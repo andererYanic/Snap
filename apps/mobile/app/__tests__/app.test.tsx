@@ -1485,3 +1485,64 @@ test('Empfang: Fortschritt mit Abbrechen, Verlauf „Zuletzt empfangen“ mit L�
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('An mehrere senden; Fotos auswählen und per Snap Drop senden', async () => {
+  const { DropSendSheet } = require('../src/Drop');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  const peers = [
+    { id: 'aa'.repeat(32), name: 'Ben', kind: 'phone', contact: null, via: 'lan', offline: false },
+    { id: 'bb'.repeat(32), name: 'Carla', kind: 'laptop', contact: null, via: 'lan', offline: false },
+  ];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'DropContacts') return JSON.stringify({ DropContacts: { contacts: [] } });
+    if (req === 'DropNearby' || req.DropBrowse) return JSON.stringify({ DropNearby: { peers } });
+    if (req.DropSend) { calls.push(req); return JSON.stringify({ DropSent: { id: 1, ok: true, error: null, code: '1' } }); }
+    return origRequest(json);
+  });
+  const messages: string[] = [];
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<DropSendSheet paths={['/x/a.jpg']} theme={snapTheme(false)} onClose={() => {}} notify={(m: string) => messages.push(m)} />); });
+    await flush();
+    await act(async () => { pressable(r, 'Mehrere').props.onPress(); });
+    await act(async () => { byLabel(r, 'An Ben senden').props.onPress(); });
+    await act(async () => { byLabel(r, 'An Carla senden').props.onPress(); });
+    expect(allText(r)).toContain('An 2 senden');
+    await act(async () => { await pressable(r, 'An 2 senden').props.onPress(); });
+    await flush();
+    const sent = calls.filter((c: any) => c.DropSend).map((c: any) => c.DropSend.peer).sort();
+    expect(sent).toEqual([peers[0].id, peers[1].id].sort());
+    expect(messages).toContain('An 2 von 2 gesendet.');
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+
+  // Fotos: lange drücken wählt aus, „In der Nähe senden“ übergibt die Auswahl
+  const Photos = require('../src/Photos').default;
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req.Timeline) {
+      return JSON.stringify({ Timeline: { items: [
+        { path: '/DCIM/1.jpg', taken: 1700000000, video: false },
+        { path: '/DCIM/2.jpg', taken: 1700000100, video: false },
+      ], next: null } });
+    }
+    return origRequest(json);
+  });
+  const onDrop = jest.fn();
+  try {
+    let p!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { p = mount(<Photos theme={snapTheme(false)} onDrop={onDrop} />); });
+    await flush();
+    const cells = p.root.findAll((n) => typeof n.props.onLongPress === 'function');
+    await act(async () => { cells[0].props.onLongPress(); });
+    await act(async () => { cells[1].props.onPress(); });
+    expect(allText(p)).toContain('2 ausgewählt');
+    await act(async () => { byLabel(p, 'In der Nähe senden').props.onPress(); });
+    expect(onDrop).toHaveBeenCalledWith(['/DCIM/1.jpg', '/DCIM/2.jpg']);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

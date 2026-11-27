@@ -707,7 +707,8 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         : { icon: 'devices' as const, label: t('Für Geräte freigeben'), onPress: () => shareFolder(single) }]
       : []),
     { icon: 'share', label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
-    ...(onDrop ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }] : []),
+    // Ordner werden für die Übertragung gepackt und beim Empfänger wieder entpackt
+    ...(onDrop ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }] : []),
     { icon: 'copy', label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { icon: 'move', label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { icon: 'rename', label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },

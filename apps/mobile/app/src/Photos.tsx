@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Dimensions, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from './text';
 import Animated, { FadeIn } from 'react-native-reanimated';
+import * as core from './core';
 import { monthYear, request, shortDate, type TimelineItem } from './core';
 import { locale, t } from './i18n';
 import type { Theme } from './theme';
@@ -18,12 +19,25 @@ const COLS = 4;
 
 type Row = { head: string; count: number } | { cells: TimelineItem[]; offset: number };
 
-export default function Photos({ theme, notify }: { theme: Theme; notify?: (text: string, undo?: () => void) => void }) {
+export default function Photos({ theme, notify, onDrop }: {
+  theme: Theme;
+  notify?: (text: string, undo?: () => void) => void;
+  /** Ausgewählte Fotos per Snap Drop senden. */
+  onDrop?: (paths: string[]) => void;
+}) {
   const [items, setItems] = useState<TimelineItem[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewer, setViewer] = useState<number | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
+  // Auswahl: lange drücken beginnt, danach Antippen fügt hinzu bzw. entfernt
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const toggle = (path: string) => {
+    const n = new Set(sel);
+    n.has(path) ? n.delete(path) : n.add(path);
+    setSel(n);
+    core.haptic('tick');
+  };
   const size = Math.floor((Dimensions.get('window').width - 4 - (COLS - 1) * 2) / COLS);
   const s = styles(theme);
 
@@ -104,11 +118,20 @@ export default function Photos({ theme, notify }: { theme: Theme; notify?: (text
               {r.cells.map((it, k) => (
                 <Pressable
                   key={it.path}
-                  onPress={() => setViewer(r.offset + k)}
+                  onPress={() => (sel.size ? toggle(it.path) : setViewer(r.offset + k))}
+                  onLongPress={() => toggle(it.path)}
                   style={({ pressed }) => [s.cell, { width: size, height: size, opacity: pressed ? 0.8 : 1 }]}
                   accessibilityLabel={shortDate(it.taken, locale(), true)}
+                  accessibilityState={{ selected: sel.has(it.path) }}
                 >
                   <Thumb path={it.path} edge={256} style={s.img} />
+                  {sel.has(it.path) && (
+                    <View style={s.picked}>
+                      <View style={s.check}>
+                        <Icon name="check" size={14} color="#fff" strokeWidth={2.4} />
+                      </View>
+                    </View>
+                  )}
                   {it.video && (
                     <View style={s.badge}>
                       <Icon name="play" size={12} color="#fff" fill="#fff" strokeWidth={1.2} />
@@ -120,6 +143,29 @@ export default function Photos({ theme, notify }: { theme: Theme; notify?: (text
           )
         }
       />
+      {sel.size > 0 && (
+        <Animated.View entering={m(FadeIn.duration(150))} style={s.selBar}>
+          <Pressable onPress={() => setSel(new Set())} style={s.selBtn} accessibilityLabel={t('Auswahl aufheben')}>
+            <Icon name="close" size={22} color={theme.text as string} />
+          </Pressable>
+          <Text style={s.selText}>{t('{n} ausgewählt', { n: sel.size })}</Text>
+          <Pressable onPress={() => core.shareFiles([...sel]).catch(() => {})} style={s.selBtn} accessibilityLabel={t('Teilen')}>
+            <Icon name="share" size={22} color={theme.text as string} />
+          </Pressable>
+          {onDrop && (
+            <Pressable
+              onPress={() => {
+                onDrop([...sel]);
+                setSel(new Set());
+              }}
+              style={s.selBtn}
+              accessibilityLabel={t('In der Nähe senden')}
+            >
+              <Icon name="nearby" size={22} color={theme.text as string} />
+            </Pressable>
+          )}
+        </Animated.View>
+      )}
       {viewer !== null && (
         <Viewer
           items={media}
@@ -159,5 +205,10 @@ const styles = themed((th: Theme) =>
     row: { flexDirection: 'row', gap: 2, marginBottom: 2 },
     cell: { overflow: 'hidden', backgroundColor: th.surface2 },
     img: { width: '100%', height: '100%' },
+    picked: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderWidth: 3, borderColor: th.accent, backgroundColor: 'rgba(0,0,0,0.18)' },
+    check: { position: 'absolute', right: 6, top: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: th.accent, justifyContent: 'center', alignItems: 'center' },
+    selBar: { position: 'absolute', left: 12, right: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, minHeight: 56, borderRadius: 28, backgroundColor: th.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: th.line, elevation: 6 },
+    selText: { flex: 1, color: th.text, fontSize: 15, fontWeight: '600', paddingLeft: 4 },
+    selBtn: { width: 48, height: 48, justifyContent: 'center', alignItems: 'center' },
     badge: { position: 'absolute', right: 6, bottom: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' },
   }));
