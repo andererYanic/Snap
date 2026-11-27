@@ -39,6 +39,12 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Ledger:** jeder Eintrag vom Ursprungsgerät signiert; strenge Prüfung relativer Pfade;
   ungültige Einträge werden einzeln verworfen.
 - **Freigaben:** Symlinks werden nie verfolgt; keine absoluten Pfade im Ledger.
+- **Bildformate von außen:** RAW-Fotos werden nicht entwickelt; ein eigener Parser sucht nur die
+  eingebettete JPEG-Vorschau (jeder Versatz gegen die Dateigröße geprüft, höchstens 64 IFDs, 1024
+  Einträge je IFD, Verschachtelung 4, Schleifen erkannt, Vorschau ≤ 64 MB) und gibt sie an den
+  JPEG-Decoder mit dessen Grenzen. Fuzz-Ziel `raw_preview`. SVGs zeigt Android erst nach Bereinigung
+  (keine Skripte, Fremdinhalte, Ereignis-Attribute, Entitäten oder Verweise nach außen – nur `#id`
+  und eingebettete Bilder), damit eine Grafik beim Ansehen nichts nachlädt.
 - **Zwei-Wege-Sync (Pins mit `two_way`):** lokale Änderungen am Spiegel gehen ausschließlich über
   die Fernoperationen zum Ursprung und damit durch dessen Rechteprüfung (`files.write`, für Ersetzen
   und Löschen zusätzlich `files.delete`, ordnergebunden, nie Standard), Massenschutz und Audit-Log.

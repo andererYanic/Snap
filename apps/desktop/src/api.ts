@@ -177,7 +177,9 @@ export function baseName(path: string): string {
   return p.slice(p.lastIndexOf("/") + 1) || "/";
 }
 
-const IMAGE = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff", "avif"];
+const IMAGE = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff", "avif",
+  // Kamera-Rohdaten: der Kern zeigt die eingebettete JPEG-Vorschau
+  "cr2", "nef", "nrw", "arw", "sr2", "srf", "dng", "orf", "rw2", "pef", "srw", "raf", "3fr", "erf", "kdc", "mos"];
 const VIDEO = ["mp4", "mkv", "mov", "webm", "avi", "m4v", "3gp"];
 export function extOf(name: string): string {
   const i = name.lastIndexOf(".");

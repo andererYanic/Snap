@@ -72,7 +72,9 @@ async fn serve(inner: &Arc<DaemonInner>, peer: &str, req: ThumbRequest) -> Resul
         Some(&path),
         "thumb.get",
     )?;
-    let thumb = inner.thumbs.get(&path, req.size).await?;
+    // Für andere Geräte höchstens „Large“ (die Datei selbst dürfen sie mit files.read ohnehin laden)
+    let size = if req.size == ThumbSize::Full { ThumbSize::Large } else { req.size };
+    let thumb = inner.thumbs.get(&path, size).await?;
     let bytes = tokio::fs::read(&thumb.path).await?;
     if bytes.len() > MAX_IMAGE as usize {
         api_bail!(Internal, "Vorschaubild zu groß");

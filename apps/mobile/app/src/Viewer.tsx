@@ -17,7 +17,7 @@ import Animated, {
 import Video from 'react-native-video';
 import * as core from './core';
 import { t } from './i18n';
-import { isAudio, isMedia, isVideo, useThumb } from './thumbs';
+import { isAudio, isMedia, isRaw, isVideo, useThumb } from './thumbs';
 import { m } from './motion';
 import { Icon } from './Icon';
 import { clampV, pinchBase, pinchStep, range, rubber, settle, settleTarget, type PinchState } from './zoom';
@@ -315,6 +315,8 @@ function ZoomImage({ item, active, s, tx, ty, onBox }: {
   onBox: (path: string, b: Box) => void;
 }) {
   const preview = useThumb(item.path, 1024);
+  // RAW kann Android nicht selbst zeigen: große Fassung der eingebetteten Vorschau
+  const raw = useThumb(isRaw(item.path) ? item.path : null, 2560);
   const [loaded, setLoaded] = useState(false);
   const style = useAnimatedStyle(() =>
     active
@@ -325,7 +327,7 @@ function ZoomImage({ item, active, s, tx, ty, onBox }: {
     <Animated.View style={[styles.page, styles.origin, style]}>
       {preview && !loaded && <Image source={{ uri: preview }} style={styles.media} resizeMode="contain" fadeDuration={0} />}
       <Image
-        source={{ uri: `file://${item.path}` }}
+        source={{ uri: isRaw(item.path) ? raw ?? undefined : `file://${item.path}` }}
         style={[styles.media, !loaded && styles.hidden]}
         resizeMode="contain"
         onLoad={(e: any) => {
@@ -438,9 +440,49 @@ function AudioPage({ item, active }: { item: MediaItem; active: boolean }) {
   );
 }
 
+/** Untertitel neben dem Video: „Film.srt“, „Film.de.srt“, „Film.en.vtt“ … (gleicher Name). */
+export function subtitleTracks(videoPath: string, names: string[]) {
+  const slash = videoPath.lastIndexOf('/');
+  const dir = videoPath.slice(0, slash);
+  const file = videoPath.slice(slash + 1);
+  const base = file.includes('.') ? file.slice(0, file.lastIndexOf('.')) : file;
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^${esc}(?:\\.([a-z]{2,3}))?\\.(srt|vtt)$`, 'i');
+  return names
+    .map((n) => ({ n, m: re.exec(n) }))
+    .filter((x): x is { n: string; m: RegExpExecArray } => !!x.m)
+    .slice(0, 8)
+    .map(({ n, m }) => ({
+      title: m[1] ? m[1].toUpperCase() : n,
+      language: (m[1] ?? 'und').toLowerCase() as any,
+      type: (m[2].toLowerCase() === 'vtt' ? 'text/vtt' : 'application/x-subrip') as any,
+      uri: `file://${dir}/${n}`,
+    }));
+}
+
+function useSubtitles(path: string | undefined) {
+  const [tracks, setTracks] = useState<ReturnType<typeof subtitleTracks>>([]);
+  useEffect(() => {
+    setTracks([]);
+    if (!path || !path.startsWith('/')) {
+      return;
+    }
+    let alive = true;
+    core
+      .request<{ entries: { name: string }[] }>({ ListDir: { path: path.slice(0, path.lastIndexOf('/')) || '/', show_hidden: false, offset: 0, limit: 2000 } })
+      .then((r) => alive && setTracks(subtitleTracks(path, (r.entries ?? []).map((e) => e.name))))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+  return tracks;
+}
+
 function VideoPage({ item, active }: { item: MediaItem; active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setError(null), [item.path]);
+  const subs = useSubtitles(item.uri ? undefined : item.path);
   return (
     <View style={styles.page}>
       {error ? (
@@ -452,7 +494,8 @@ function VideoPage({ item, active }: { item: MediaItem; active: boolean }) {
         </View>
       ) : (
         <Video
-          source={{ uri: item.uri ?? `file://${item.path}` }}
+          source={{ uri: item.uri ?? `file://${item.path}`, textTracks: subs.length ? subs : undefined }}
+          selectedTextTrack={subs.length ? { type: 'index' as any, value: 0 } : undefined}
           style={styles.media}
           resizeMode="contain"
           paused={!active}

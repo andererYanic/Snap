@@ -818,3 +818,20 @@ Gemessen (Release, Loopback, `core/tests/perf.rs` › `pin_mirror`, 2000 Dateien
   Einträge), dann werden die Änderungen nacheinander gesendet – nie zwei Läufe gleichzeitig.
 - Hochrechnung: bei 100 000 Dateien etwa 1,5 s je Abgleich im Hintergrund. Falls das stört, wäre der
   nächste Schritt, nur die vom Dateisystem gemeldeten Pfade zu prüfen.
+
+## Review 46 – RAW, SVG, GIF, Untertitel (2026-11-27)
+
+Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP-JPEG-Vorschau):
+
+| Vorgang | Zeit |
+|---|---|
+| Eingebettete Vorschau finden | 9 µs |
+| RAW → Vorschaubild 256 px | 48 ms |
+| RAW → Anzeige 2560 px | 325 ms |
+
+- Das Finden liest nur die IFD-Einträge (wenige KB), nie die Rohdaten. Decodiert wird nur die
+  Vorschau, beim kleinen Vorschaubild mit DCT-Verkleinerung. Alles läuft in `spawn_blocking` mit
+  höchstens zwei gleichzeitigen Vorschauen und landet im Vorschau-Cache (danach ohne Decodierung).
+- SVG: Bereinigung per regulären Ausdrücken über höchstens 2 MB Text, einmal je Öffnen.
+- Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
+  Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.

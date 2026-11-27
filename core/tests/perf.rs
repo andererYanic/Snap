@@ -1684,3 +1684,51 @@ async fn drop_remote() {
     }
     report("Drop: von überall an Kontakt (Loopback, inkl. Annahme)", n, t.elapsed());
 }
+
+#[test]
+#[ignore]
+fn raw_preview() {
+    use space_core::media::render_raw;
+    use space_core::raw::find_preview;
+    // RAW-ähnliche Datei: 25 MB „Rohdaten“, dahinter eine 12-MP-JPEG-Vorschau (wie bei vielen Kameras)
+    let img = image::RgbImage::from_fn(4000, 3000, |x, y| {
+        image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x + y) % 239) as u8])
+    });
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90).encode_image(&img).unwrap();
+    let data_off = 25 * 1024 * 1024u32;
+    let mut v = Vec::new();
+    v.extend_from_slice(b"II*\0");
+    v.extend_from_slice(&8u32.to_le_bytes());
+    v.extend_from_slice(&2u16.to_le_bytes());
+    for (tag, value) in [(0x0201u16, data_off), (0x0202, jpeg.len() as u32)] {
+        v.extend_from_slice(&tag.to_le_bytes());
+        v.extend_from_slice(&4u16.to_le_bytes());
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(&value.to_le_bytes());
+    }
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.resize(data_off as usize, 0x5a);
+    v.extend_from_slice(&jpeg);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("foto.cr2");
+    std::fs::write(&path, &v).unwrap();
+    let size = v.len() as u64;
+
+    let n = 200;
+    let t = Instant::now();
+    for _ in 0..n {
+        let mut f = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+        assert!(find_preview(&mut f, size).is_some());
+    }
+    report("RAW: Vorschau finden (25-MB-Datei)", n, t.elapsed());
+    for (edge, name) in [(256, "RAW → Vorschaubild 256 px"), (2560, "RAW → Anzeige 2560 px")] {
+        let n = 5;
+        let t = Instant::now();
+        for _ in 0..n {
+            let f = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+            render_raw(f, size, edge).unwrap();
+        }
+        report(name, n, t.elapsed());
+    }
+}

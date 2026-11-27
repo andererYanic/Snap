@@ -1716,3 +1716,32 @@ test('Synchron gehaltene Ordner: Liste, beide Richtungen umschalten', async () =
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('SVG: Skripte, Ereignisse und Verweise nach außen werden entfernt', () => {
+  const { sanitizeSvg } = require('../src/SvgViewer');
+  const evil = `<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "aaaa">]><svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">
+    <script>fetch('https://x.example/')</script><foreignObject><div>hi</div></foreignObject>
+    <image href="https://tracker.example/p.png"/><use xlink:href="#ok"/><image href="data:image/png;base64,AAAA"/>
+    <rect style="fill:url(https://x.example/f)" fill="url(#grad)"/></svg>`;
+  const out: string = sanitizeSvg(evil);
+  expect(out).toContain('<svg');
+  for (const bad of ['<script', 'foreignObject', 'onload', 'tracker.example', 'x.example', 'ENTITY']) {
+    expect(out).not.toContain(bad);
+  }
+  expect(out).toContain('xlink:href="#ok"');
+  expect(out).toContain('data:image/png;base64,AAAA');
+  expect(out).toContain('url(#grad)');
+  expect(sanitizeSvg('<html>kein svg</html>')).toBeNull();
+});
+
+test('Untertitel neben dem Video werden gefunden', () => {
+  const { subtitleTracks } = require('../src/Viewer');
+  const tracks = subtitleTracks('/sd/Filme/Mein Film (2024).mkv', [
+    'Mein Film (2024).mkv', 'Mein Film (2024).srt', 'Mein Film (2024).de.srt', 'Mein Film (2024).en.vtt', 'Anderer Film.srt', 'Mein Film (2024).txt',
+  ]);
+  expect(tracks.map((x: any) => x.uri)).toEqual([
+    'file:///sd/Filme/Mein Film (2024).srt', 'file:///sd/Filme/Mein Film (2024).de.srt', 'file:///sd/Filme/Mein Film (2024).en.vtt',
+  ]);
+  expect(tracks[1]).toMatchObject({ title: 'DE', language: 'de', type: 'application/x-subrip' });
+  expect(tracks[2].type).toBe('text/vtt');
+});
