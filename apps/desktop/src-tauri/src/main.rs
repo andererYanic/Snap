@@ -148,6 +148,8 @@ fn main() {
             commands::share_all,
             commands::pair_confirm_prompt,
             commands::clipboard_pending,
+            commands::ring,
+            commands::ring_stop,
             commands::drop_history,
             commands::drop_history_clear,
             commands::drop_contact_remote,

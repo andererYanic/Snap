@@ -75,6 +75,12 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   im Speicher. Automatisches Senden ist je Gerät und nur lokal einstellbar (Standard aus); Android
   liest die Zwischenablage nur, solange Snap im Vordergrund ist. Angriffstests: `core/tests/clipboard.rs`,
   Fuzz-Ziel `clip_request`.
+- **Gerät finden (`snap/ring/1`):** nur mit dem ausdrücklich vergebenen Recht `device.ring` („Klingeln
+  lassen“, nie Standard, in eine Richtung, sofort entziehbar); alle anderen werden vor dem ersten
+  Lesen abgewiesen. Die Nachricht kennt nur „klingeln“ oder „stoppen“ – Dauer (30 s) und Lautstärke
+  bestimmt allein das klingelnde Gerät; höchstens 6 Anfragen je Minute und Gerät, jede im Audit-Log.
+  Android stellt die Wecker-Lautstärke danach zurück. Angriffstests: `core/tests/ring.rs`, Fuzz-Ziel
+  `ring_request`.
 - **Entkoppeln in beide Richtungen:** Wer entkoppelt, schließt die Verbindung mit dem
   Anwendungscode 3 („unpaired“). Der Code kommt im verschlüsselten, per TLS als genau dieses Gerät
   ausgewiesenen QUIC-Kanal an und wirkt **nur auf den Absender selbst** – kein Gerät kann so ein

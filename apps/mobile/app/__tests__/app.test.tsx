@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { NativeModules } from 'react-native';
+import { Alert, NativeModules } from 'react-native';
 import { State } from 'react-native-gesture-handler';
 import { fireGestureHandler, getByGestureTestId } from 'react-native-gesture-handler/jest-utils';
 
@@ -1594,6 +1594,91 @@ test('Zwischenablage: Recht vergeben, senden, automatisch beim Öffnen, Empfang 
     NativeModules.SnapCore.readClipboard = jest.fn(async () => 'Vom Laptop');
     await clip.syncOnForeground();
     expect(calls.filter((c: any) => c.ClipboardSend)).toHaveLength(0);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
+
+test('Gerät finden: Recht vergeben, klingeln lassen und stoppen', async () => {
+  const { Devices } = require('../src/Pages');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let grants: { capability: string; folder: string | null }[] = [{ capability: 'catalog.read', folder: null }];
+  const sent: any[] = [];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'PairList') return JSON.stringify({ Devices: { devices: [{ node_id: 'n1', name: 'Handy', paired_at: 0, last_sync_at: null, grants }] } });
+    if (req === 'ShareList') return JSON.stringify({ Shares: { shares: [] } });
+    if (req === 'Peers') return JSON.stringify({ Peers: { peers: [] } });
+    if (req.PairGrant) { sent.push(req); grants = [...grants, { capability: req.PairGrant.capability, folder: null }]; return JSON.stringify({ Success: { message: 'ok' } }); }
+    if (req.Ring) { sent.push(req); return JSON.stringify({ Success: { message: "'Handy' klingelt 30 Sekunden lang." } }); }
+    return origRequest(json);
+  });
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<Devices theme={snapTheme(false)} notify={() => {}} />); });
+    await flush();
+    await act(async () => { pressable(r, 'Handy').props.onPress(); });
+    const may = r.root.find((n) => n.props.accessibilityLabel === 'Darf mein Gerät klingeln lassen' && typeof n.props.onValueChange === 'function');
+    expect(may.props.value).toBe(false); // nie Standard
+    await act(async () => { await may.props.onValueChange(true); });
+    await flush();
+    expect(sent).toContainEqual({ PairGrant: { device: 'n1', capability: 'device.ring', folder: null } });
+    await act(async () => { await pressable(r, 'Klingeln lassen').props.onPress(); });
+    await flush();
+    expect(sent).toContainEqual({ Ring: { device: 'n1', stop: false } });
+    const buttons = alert.mock.calls.at(-1)?.[2] as { text: string; onPress: () => void }[];
+    await act(async () => { buttons.find((b) => b.text === 'Stopp')!.onPress(); });
+    await flush();
+    expect(sent).toContainEqual({ Ring: { device: 'n1', stop: true } });
+  } finally {
+    alert.mockRestore();
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
+
+test('Fotos sichern: Freigabe wählen, Regel anlegen und wieder entfernen', async () => {
+  const { Devices } = require('../src/Pages');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let rules: any[] = [];
+  const sent: any[] = [];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'PairList') return JSON.stringify({ Devices: { devices: [{ node_id: 'srv', name: 'Server', paired_at: 0, last_sync_at: null, grants: [] }] } });
+    if (req === 'ShareList') return JSON.stringify({ Shares: { shares: [] } });
+    if (req === 'Peers') return JSON.stringify({ Peers: { peers: [] } });
+    if (req === 'UploadRuleList') return JSON.stringify({ UploadRules: { rules } });
+    if (req === 'Info') return JSON.stringify({ Info: { device_name: 'Mein/Handy' } });
+    if (req.RemoteDir) return JSON.stringify({ RemoteDir: { dirs: ['Fotos', 'Dokumente'], files: [], next: null } });
+    if (req.UploadRuleAdd) {
+      sent.push(req);
+      rules = [{ id: 7, local_dir: req.UploadRuleAdd.path, device: 'srv', share: req.UploadRuleAdd.share, dest_dir: req.UploadRuleAdd.dest_dir, created_at: 0 }];
+      return JSON.stringify({ UploadRules: { rules } });
+    }
+    if (req.UploadRuleRemove) { sent.push(req); rules = []; return JSON.stringify({ Success: { message: 'ok' } }); }
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<Devices theme={snapTheme(false)} notify={() => {}} />); });
+    await flush();
+    await act(async () => { pressable(r, 'Server').props.onPress(); });
+    const sw = () => r.root.find((n) => n.props.accessibilityLabel === 'Fotos hierhin sichern' && typeof n.props.onValueChange === 'function');
+    expect(sw().props.value).toBe(false);
+    await act(async () => { await sw().props.onValueChange(true); });
+    await flush();
+    // Zwei Freigaben → Auswahl
+    await act(async () => { await pressable(r, 'Fotos').props.onPress(); });
+    await flush();
+    const add = sent.find((c) => c.UploadRuleAdd)!.UploadRuleAdd;
+    expect(add.path).toMatch(/\/DCIM\/Camera$/);
+    expect(add).toMatchObject({ device: 'srv', share: 'Fotos', dest_dir: 'Mein Handy' });
+    expect(sw().props.value).toBe(true);
+    await act(async () => { await sw().props.onValueChange(false); });
+    await flush();
+    expect(sent).toContainEqual({ UploadRuleRemove: { id: 7 } });
   } finally {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }

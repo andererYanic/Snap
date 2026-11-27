@@ -43,6 +43,30 @@ Ordner in `compose.yml` einbinden (z. B. `/srv/fotos:/shares/Fotos`) und freigeb
 docker exec snap space-daemon share add /shares/Fotos
 ```
 
+## Fotos vom Handy sichern
+
+Ordner einbinden (z. B. `/srv/fotos:/shares/Fotos`), freigeben und dem Handy das Schreiben dort
+erlauben (Schreibrechte vergibt Snap nie von selbst):
+
+```bash
+docker exec snap space-daemon share add /shares/Fotos
+docker exec snap space-daemon pair grant Handy files.write --folder /shares/Fotos
+```
+
+Am Handy unter *Einstellungen › Geräte › Server* „Fotos hierhin sichern“ einschalten. Neue Fotos und
+Videos der Kamera landen dann in `Fotos/<Name des Handys>/` – nie überschreibend, auch nach
+Offline-Phasen (die App gleicht etwa stündlich im Hintergrund ab).
+
+## Gerät finden
+
+Damit der Server ein Handy klingeln lassen darf, muss das Handy es erlauben (*Geräte › Server ›
+„Darf mein Gerät klingeln lassen“*). Dann:
+
+```bash
+docker exec snap space-daemon ring Handy          # 30 Sekunden laut
+docker exec snap space-daemon ring Handy --stop
+```
+
 ## Als Zentrale für andere Geräte
 
 Ordner eines anderen Geräts auf dem Server vorhalten (vollständige Kopie unter `/data/Snap`):

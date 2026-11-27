@@ -106,6 +106,8 @@ object DropNotify {
           }
         }
       }
+      // Gerät finden: ein eigenes Gerät lässt dieses klingeln (secs == 0: aufhören)
+      "Ring" -> RingAlarm.handle(ctx, ev.optString("name"), ev.optInt("secs", 0))
       "DropOffer" -> {
         val contact = ev.optString("contact").takeIf { it.isNotEmpty() && it != "null" }
         val name = contact ?: ev.optString("name")

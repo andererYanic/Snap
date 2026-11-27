@@ -29,6 +29,7 @@ const CAPS: Record<string, string> = {
   "files.delete": t("In den Papierkorb"),
   "files.purge": t("Endgültig löschen"),
   "clipboard.write": t("Zwischenablage füllen"),
+  "device.ring": t("Klingeln lassen"),
   admin: t("Verwalten (alles)"),
 };
 /** Geräte, an die die Zwischenablage automatisch geht (nur lokal gespeichert). */
@@ -142,6 +143,20 @@ export function Devices({ notify }: { notify: Notify }) {
                 <input type="checkbox" checked={clipAuto().includes(d.node_id)} onChange={(e) => { setClipAuto(d.node_id, e.target.checked); reload(); }} />{" "}
                 {t("automatisch")}
               </label>
+              <button
+                className="btn"
+                title={t("Gerät finden: 30 Sekunden laut klingeln lassen")}
+                onClick={() =>
+                  api
+                    .ring(d.node_id, false)
+                    .then((r) =>
+                      notify({ text: r.message, action: { label: t("Stopp"), run: () => { api.ring(d.node_id, true).catch(fail(notify)); } } }),
+                    )
+                    .catch(fail(notify))
+                }
+              >
+                {t("Klingeln lassen")}
+              </button>
               <button className="btn" onClick={() => setGrantFor(grantFor?.node_id === d.node_id ? null : d)}>{t("Recht geben …")}</button>
               <button className="btn" onClick={() => api3.pairRemove(d.node_id, d.name).then(reload).catch(fail(notify))}>{t("Entkoppeln …")}</button>
             </div>

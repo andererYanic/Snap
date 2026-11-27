@@ -789,3 +789,15 @@ Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
 - Die Auslass-Regeln wirken schon beim Durchlaufen (`filter_entry`): ausgelassene Ordner werden
   nicht betreten – `Android/data` mit oft Hunderttausenden Cache-Dateien kostet damit nichts.
 - Katalog mit sehr vielen Einträgen: getestet bis 1 Mio. Einträge (Review „local_index_million“).
+
+## Review 44 – Gerät finden (2026-11-27)
+
+- Eine kurze QUIC-Verbindung je Anfrage mit einem Rahmen ≤ 256 Byte; die Rechteprüfung ist dieselbe
+  indizierte Abfrage wie bei der Zwischenablage (Review „auth_checks“). Gemessen (Release, Loopback, `core/tests/ring.rs`):
+  Rundlauf Anfrage → Ereignis beim klingelnden Gerät 2,3 ms, Stoppen 1,8 ms – jeweils mit neuem
+  Verbindungsaufbau.
+- Kein Dauerbetrieb und kein Abfragen: Der Ton läuft nur während eines Klingelns (höchstens 30 s,
+  danach wird alles freigegeben). Die Oberfläche fragt nichts ab – alle Aufrufe sind asynchron,
+  keine GUI-Abfrage blockiert.
+- Drosselung je Gerät: höchstens 6 Zeitpunkte im Speicher; abgelaufene Einträge werden bei jeder
+  Anfrage entfernt (kein Wachstum durch viele Geräte).

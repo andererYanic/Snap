@@ -21,6 +21,10 @@
     <string name="drop_popup_title">%1$s wants to send you something</string>
     <string name="drop_cancel">Cancel</string>
     <string name="clip_received">Clipboard updated</string>
+    <string name="ring_channel">Find device</string>
+    <string name="ring_title">Find device</string>
+    <string name="ring_text">“%1$s” is ringing this device.</string>
+    <string name="ring_stop">Stop</string>
     <plurals name="drop_files">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>

@@ -208,6 +208,15 @@ enum Commands {
         #[arg(short, long, default_value_t = 20)]
         limit: u32,
     },
+    /// Gerät finden: ein eigenes Gerät 30 Sekunden klingeln lassen (dort muss „Klingeln lassen“
+    /// erlaubt sein). Ohne Gerät: Klingeln auf diesem Gerät beenden
+    Ring {
+        /// Name oder Node-ID des Geräts
+        device: Option<String>,
+        /// Klingeln auf dem Gerät beenden
+        #[arg(long)]
+        stop: bool,
+    },
     /// Doppelte Dateien finden (nur anzeigen; löschen mit `rm`)
     Dupes {
         /// Nur in diesem Ordner (Standard: alle indexierten Orte)
@@ -896,6 +905,8 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Drop { action: Some(DropAction::Forget { key }) } => Request::DropRemoveContact { key },
         Commands::Drop { action: Some(DropAction::Blocked) } => Request::DropBlocked,
         Commands::Drop { action: Some(DropAction::Unblock { key }) } => Request::DropUnblock { key },
+        Commands::Ring { device: Some(device), stop } => Request::Ring { device, stop },
+        Commands::Ring { device: None, .. } => Request::RingStop,
         Commands::Usage { path, limit } => Request::SpaceUsage { path: absolute(&path)?, limit },
         Commands::Dupes { path, min_mb, limit } => Request::Duplicates {
             path: path.map(|p| absolute(&p)).transpose()?,
@@ -1036,6 +1047,8 @@ fn describe_event(e: &Event) -> String {
         Event::DevicePaired { name, .. } => format!("🔗 Gerät '{name}' gekoppelt"),
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
         Event::ClipboardReceived { name, .. } => format!("📋 Zwischenablage von '{name}' empfangen"),
+        Event::Ring { secs: 0, .. } => "🔕 Klingeln beendet".to_string(),
+        Event::Ring { name, secs, .. } => format!("🔔 '{name}' lässt dieses Gerät {secs} s klingeln"),
         Event::DropSending { code, .. } => format!("🔐 Prüfcode der Sendung: {code}"),
         Event::PairConfirm { code, name } => format!("🔐 '{name}' möchte sich koppeln – Prüfcode {code}"),
         Event::PairConfirmClosed => "🔐 Kopplung nicht bestätigt".to_string(),

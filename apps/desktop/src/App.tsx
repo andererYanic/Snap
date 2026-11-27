@@ -9,6 +9,7 @@ import { Backups, clipAuto, Devices, SettingsPage } from "./Pages";
 import { LinksPage, StoragePage } from "./Tools";
 import { DropPage, OfferDialog } from "./Drop";
 import { drop, type IncomingOffer } from "./api";
+import { startAlarm } from "./ring";
 
 /** Ein Tab: Ordner (mit Verlauf), Suche, Fotos oder Papierkorb. */
 export interface Tab {
@@ -57,6 +58,9 @@ export default function App() {
   const [events, setEvents] = useState<DaemonEvent | null>(null);
   const [starting, setStarting] = useState(false);
   const [incoming, setIncoming] = useState<IncomingOffer | null>(null);
+  // Gerät finden: wer gerade klingeln lässt, und wie der Ton zu stoppen ist
+  const [ringing, setRinging] = useState<string | null>(null);
+  const stopAlarm = useRef<(() => void) | null>(null);
   const toastTimer = useRef<number>(0);
   const home = places.find((p) => p.kind === "home")?.path ?? "/";
 
@@ -101,6 +105,19 @@ export default function App() {
       else if (ev.ok) notify({ text: t("An {name} gesendet.", { name: ev.peer }), action: save });
     } else if (ev.type === "PairConfirm") {
       api.pairConfirmPrompt(String(ev.name), String(ev.code)).catch(() => {});
+    } else if (ev.type === "Ring") {
+      stopAlarm.current?.();
+      stopAlarm.current = null;
+      const secs = Number(ev.secs) || 0;
+      if (secs > 0) {
+        stopAlarm.current = startAlarm(Math.min(secs, 60));
+        setRinging(String(ev.name));
+        const name = String(ev.name);
+        window.setTimeout(() => setRinging((cur) => (cur === name ? null : cur)), Math.min(secs, 60) * 1000);
+        getCurrentWindow().setFocus().catch(() => {});
+      } else {
+        setRinging(null);
+      }
     } else if (ev.type === "ClipboardReceived") {
       lastClip.current = String(ev.text);
       navigator.clipboard.writeText(String(ev.text)).catch(() => {});
@@ -331,6 +348,29 @@ export default function App() {
         </div>
       )}
       {incoming && <OfferDialog offer={incoming} onDone={() => setIncoming(null)} />}
+      {ringing && (
+        <div className="overlay dim">
+          <div className="dialog" role="alertdialog" aria-label={t("Gerät finden")}>
+            <div className="strong">{t("Gerät finden")}</div>
+            <p>{t("„{name}“ lässt dieses Gerät klingeln.", { name: ringing })}</p>
+            <div className="line">
+              <span className="grow" />
+              <button
+                className="btn primary"
+                autoFocus
+                onClick={() => {
+                  stopAlarm.current?.();
+                  stopAlarm.current = null;
+                  setRinging(null);
+                  api.ringStop().catch(() => {});
+                }}
+              >
+                {t("Stopp")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

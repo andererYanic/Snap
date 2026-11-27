@@ -210,6 +210,11 @@ export default function App() {
           ],
           { cancelable: false },
         );
+      } else if (ev.type === 'Ring' && ev.secs > 0) {
+        // Den Ton spielt Android (RingAlarm); hier nur der Knopf zum Stoppen
+        Alert.alert(t('Gerät finden'), t('„{name}“ lässt dieses Gerät klingeln.', { name: ev.name }), [
+          { text: t('Stopp'), onPress: () => core.request('RingStop').catch(() => {}) },
+        ]);
       } else if (ev.type === 'ClipboardReceived') {
         // Android hat den Text schon übernommen (DropNotify); hier nur merken und melden
         clip.remember(ev.text);

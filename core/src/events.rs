@@ -63,6 +63,12 @@ pub enum Event {
         name: String,
         text: String,
     },
+    /// Ein eigenes Gerät lässt dieses klingeln (Gerät finden); `secs == 0` heißt: aufhören.
+    Ring {
+        node_id: String,
+        name: String,
+        secs: u32,
+    },
     /// Die Gegenseite hat die Kopplung aufgehoben; hier wurde daraufhin ebenfalls entkoppelt.
     DeviceUnpairedByPeer {
         node_id: String,

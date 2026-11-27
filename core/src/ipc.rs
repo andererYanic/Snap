@@ -502,6 +502,15 @@ pub enum Request {
     },
     /// Zuletzt empfangene Zwischenablage abholen (einmalig, höchstens 5 Minuten alt).
     ClipboardPending,
+    /// Gerät finden: ein eigenes Gerät 30 Sekunden klingeln lassen (`stop`: Klingeln beenden).
+    /// Braucht dort das Recht `device.ring`.
+    Ring {
+        device: String,
+        #[serde(default)]
+        stop: bool,
+    },
+    /// Klingeln auf diesem Gerät beenden (alle Oberflächen hören auf).
+    RingStop,
     /// Laufende Übertragung oder offenes Angebot abbrechen.
     DropCancel {
         id: u64,
