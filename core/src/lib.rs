@@ -37,6 +37,7 @@ pub mod stream;
 pub mod sync;
 pub mod twoway;
 pub mod upload;
+pub mod vault;
 pub mod worker;
 
 pub use config::Config;

@@ -791,12 +791,42 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     { icon: 'trash' as const, label: t('Papierkorb'), danger: true, onPress: trash },
     { icon: 'more' as const, label: t('Mehr'), onPress: () => setSheet('selection') },
   ];
+  /** Ausgewähltes in den Tresor: verschlüsselt aufnehmen, Originale danach löschen. */
+  const toVault = async () => {
+    const paths = selected.map((e) => e.path);
+    try {
+      const st = await request<{ exists: boolean; unlocked: boolean }>('VaultStatus');
+      if (!st.exists || !st.unlocked) {
+        notify(st.exists ? t('Tresor erst entsperren (Einstellungen › Tresor).') : t('Tresor erst einrichten (Einstellungen › Tresor).'));
+        return;
+      }
+    } catch (e) {
+      return fail(e);
+    }
+    Alert.alert(
+      t('In den Tresor'),
+      t('{n} Element(e) verschlüsselt aufnehmen? Die Originale werden danach gelöscht (nicht in den Papierkorb) und sind nur noch im Tresor.', { n: paths.length }),
+      [
+        { text: t('Abbrechen'), style: 'cancel' },
+        {
+          text: t('Aufnehmen'),
+          onPress: () => {
+            setSel(new Set());
+            request<{ message: string }>({ VaultAdd: { paths, remove: true } })
+              .then((r) => { notify(r.message); load(); })
+              .catch(fail);
+          },
+        },
+      ],
+    );
+  };
   const selectionActions: SheetAction[] = [
     ...(onDrop && !selected.some((e) => e.kind === 'Dir')
       ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }]
       : []),
     ...(zips.length ? [{ label: zips.length === 1 ? t('Entpacken') : t('{n} Archive entpacken', { n: zips.length }), onPress: () => extractAll(zips) }] : []),
     { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
+    { label: t('In den Tresor'), onPress: toVault },
     { label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
     { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];

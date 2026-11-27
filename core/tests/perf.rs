@@ -1732,3 +1732,29 @@ fn raw_preview() {
         report(name, n, t.elapsed());
     }
 }
+
+#[test]
+#[ignore]
+fn vault_crypto() {
+    use space_core::vault::{create_keys, decrypt_stream, encrypt_stream, unlock_password};
+    let t = Instant::now();
+    let (file, _key, _code) = create_keys("ein-gutes-passwort", 0).unwrap();
+    report("Tresor anlegen (2 × Argon2id 64 MiB)", 1, t.elapsed());
+    let n = 3;
+    let t = Instant::now();
+    for _ in 0..n {
+        unlock_password(&file, "ein-gutes-passwort").unwrap();
+    }
+    report("Tresor entsperren (Argon2id 64 MiB, t=3)", n, t.elapsed());
+    let data = vec![0x5au8; 100 * 1024 * 1024];
+    let (key, id) = ([7u8; 32], [1u8; 16]);
+    let mut enc = Vec::with_capacity(data.len() + 4096);
+    let t = Instant::now();
+    encrypt_stream(&key, &id, &mut std::io::Cursor::new(&data), &mut enc).unwrap();
+    report("Verschlüsseln 100 MB (MB)", 100, t.elapsed());
+    let mut out = Vec::with_capacity(data.len());
+    let t = Instant::now();
+    decrypt_stream(&key, &id, &mut std::io::Cursor::new(&enc), enc.len() as u64, &mut out).unwrap();
+    report("Entschlüsseln 100 MB (MB)", 100, t.elapsed());
+    assert_eq!(out, data);
+}

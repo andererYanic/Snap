@@ -26,6 +26,8 @@ object Thumbnails {
   suspend fun get(context: Context, path: String, edge: Int): String? = withContext(Dispatchers.IO) {
     val src = File(path)
     if (!src.isAbsolute || path.split('/').contains("..") || !src.isFile) return@withContext null
+    // Nie Vorschaubilder geöffneter Tresor-Dateien (lägen sonst unverschlüsselt im Cache)
+    if (path.contains("/vault/open/")) return@withContext null
     val dir = File(context.cacheDir, "thumbs").apply { mkdirs() }
     val key = MessageDigest.getInstance("SHA-256")
       .digest("$path|${src.lastModified()}|${src.length()}|$edge".toByteArray())

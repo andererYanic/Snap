@@ -10,11 +10,12 @@ import { LinksPage, StoragePage } from "./Tools";
 import { DropPage, OfferDialog } from "./Drop";
 import { drop, type IncomingOffer } from "./api";
 import { startAlarm } from "./ring";
+import { VaultPage } from "./Vault";
 
 /** Ein Tab: Ordner (mit Verlauf), Suche, Fotos oder Papierkorb. */
 export interface Tab {
   id: number;
-  kind: "folder" | "photos" | "trash" | "devices" | "backups" | "settings" | "links" | "storage" | "drop";
+  kind: "folder" | "photos" | "trash" | "devices" | "backups" | "settings" | "links" | "storage" | "drop" | "vault";
   path: string;
   history: string[];
   index: number;
@@ -42,6 +43,7 @@ function tabTitle(tb: Tab, home: string): string {
   if (tb.kind === "backups") return t("Sicherungen");
   if (tb.kind === "settings") return t("Einstellungen");
   if (tb.kind === "links") return t("Freigabelinks");
+  if (tb.kind === "vault") return t("Tresor");
   if (tb.kind === "drop") return t("Snap Drop");
   if (tb.kind === "storage") return `${t("Speicher")}: ${baseName(tb.path)}`;
   if (tb.path === home) return t("Persönlicher Ordner");
@@ -283,7 +285,7 @@ export default function App() {
               title={tb.kind === "folder" ? tb.path : undefined}
             >
               {(() => {
-                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, links: Icon.link, storage: Icon.chart, drop: Icon.nearby, folder: Icon.home }[tb.kind];
+                const I = { photos: Icon.photos, trash: Icon.bin, devices: Icon.devices, backups: Icon.backup, settings: Icon.settings, links: Icon.link, storage: Icon.chart, drop: Icon.nearby, vault: Icon.vault, folder: Icon.home }[tb.kind];
                 return <I />;
               })()}
               <span className="label">{tabTitle(tb, home)}</span>
@@ -315,6 +317,8 @@ export default function App() {
             <SettingsPage notify={notify} />
           ) : tab?.kind === "links" ? (
             <LinksPage notify={notify} />
+          ) : tab?.kind === "vault" ? (
+            <VaultPage notify={notify} />
           ) : tab?.kind === "drop" ? (
             <DropPage notify={notify} />
           ) : tab?.kind === "storage" ? (
@@ -421,6 +425,10 @@ function Sidebar({ places, tab, onGo }: { places: Place[]; tab?: Tab; onGo: (k: 
       <button className={`navitem${is("backups", "") ? " active" : ""}`} onClick={() => onGo("backups", "backups:")}>
         <Icon.backup size={16} />
         <span>{t("Sicherungen")}</span>
+      </button>
+      <button className={`navitem${is("vault", "") ? " active" : ""}`} onClick={() => onGo("vault", "vault:")}>
+        <Icon.vault size={16} />
+        <span>{t("Tresor")}</span>
       </button>
       <button className={`navitem${is("links", "") ? " active" : ""}`} onClick={() => onGo("links", "links:")}>
         <Icon.link size={16} />
