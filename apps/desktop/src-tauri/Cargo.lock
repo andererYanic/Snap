@@ -5963,6 +5963,7 @@ dependencies = [
  "walkdir",
  "webpki-roots",
  "x509-cert",
+ "zeroize",
  "zip",
 ]
 
