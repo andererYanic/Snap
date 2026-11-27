@@ -93,6 +93,9 @@ export const pdfSelect = (path: string, index: number, x1: number, y1: number, x
 export const copyText = (text: string): Promise<void> => native().copyText(text);
 /** Druckdialog des Systems (PDF unverändert, Bilder auf eine Seite eingepasst). */
 export const printFile = (path: string): Promise<void> => native().printFile(path);
+/** Texterkennung (Tesseract, offline): Text oder null, wenn nicht möglich. */
+export const ocrImage = (path: string): Promise<string | null> => native().ocrImage(path);
+export const ocrPdfPage = (path: string, page: number): Promise<string | null> => native().ocrPdfPage(path, page);
 /** Textdatei für die Anzeige lesen (begrenzt; `truncated`, wenn die Datei länger ist). */
 export const readText = (path: string, maxBytes = 2 * 1024 * 1024): Promise<{ text: string; truncated: boolean }> =>
   native().readText(path, maxBytes);
