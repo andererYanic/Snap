@@ -87,7 +87,8 @@ android {
         // Texterkennung (Tesseract 5, siehe src/main/cpp/CMakeLists.txt)
         externalNativeBuild {
             cmake {
-                arguments "-DANDROID_STL=c++_static"
+                // Gleiche C++-Laufzeit wie React Native (libc++_shared.so liegt ohnehin in der App)
+                arguments "-DANDROID_STL=c++_shared"
             }
         }
         ndk {
