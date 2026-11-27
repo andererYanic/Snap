@@ -95,6 +95,15 @@ const SPECS: &[Spec] = &[
         default: |_| 12,
     },
     Spec {
+        key: "drop_expire_days",
+        unit: "Tage",
+        min: 0,
+        max: 3650,
+        help: "Snap Drop: Empfangene Dateien nach so vielen Tagen in den Papierkorb (0 = behalten). \
+               Schlägt der Absender eine kürzere Frist vor, gilt diese",
+        default: |_| 0,
+    },
+    Spec {
         key: "pin_max_gb",
         unit: "GB",
         min: 0,
@@ -183,6 +192,9 @@ impl Settings {
 
     pub fn ops_hourly_limit(&self) -> u32 {
         self.get("ops_hourly_limit").clamp(0, u32::MAX as i64) as u32
+    }
+    pub fn drop_expire_days(&self) -> u32 {
+        self.get("drop_expire_days").clamp(0, 3650) as u32
     }
     pub fn upload_daily_bytes(&self) -> u64 {
         self.get("upload_daily_gb") as u64 * GB

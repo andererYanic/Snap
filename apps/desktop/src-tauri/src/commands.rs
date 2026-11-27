@@ -699,7 +699,13 @@ pub async fn drop_add_code(d: State<'_, Daemon>, code: String) -> UiResult<Value
 /// (nicht aus der Web-Ansicht); der Nutzer bestätigt im nativen Dialog – eine manipulierte
 /// Web-Ansicht kann so keine Dateien unbemerkt an fremde Geräte schicken.
 #[tauri::command]
-pub async fn drop_send(app: AppHandle, d: State<'_, Daemon>, peer: String, paths: Vec<String>) -> UiResult<Value> {
+pub async fn drop_send(
+    app: AppHandle,
+    d: State<'_, Daemon>,
+    peer: String,
+    paths: Vec<String>,
+    expire: Option<u32>,
+) -> UiResult<Value> {
     drop_id(&peer)?;
     let list = self::paths(paths)?;
     if list.len() > 1000 {
@@ -725,7 +731,7 @@ pub async fn drop_send(app: AppHandle, d: State<'_, Daemon>, peer: String, paths
     if !confirm(&app, tr("In der Nähe senden", &[]), text, tr("Senden", &[])).await {
         return Err(cancelled());
     }
-    d.request(Request::DropSend { peer, paths: list, text: None }).await
+    d.request(Request::DropSend { peer, paths: list, text: None, expire }).await
 }
 
 /// An einen gespeicherten Kontakt senden, egal wo er ist – ebenfalls nur nach Bestätigung im
@@ -736,6 +742,7 @@ pub async fn drop_send_contact(
     d: State<'_, Daemon>,
     contact: String,
     paths: Vec<String>,
+    expire: Option<u32>,
 ) -> UiResult<Value> {
     if !(contact.len() == 64 && contact.bytes().all(|b| b.is_ascii_hexdigit())) {
         return Err(UiError::new("InvalidInput", "Ungültiger Kontakt."));
@@ -755,7 +762,7 @@ pub async fn drop_send_contact(
     if !confirm(&app, tr("Von überall senden", &[]), text, tr("Senden", &[])).await {
         return Err(cancelled());
     }
-    d.request(Request::DropSendContact { contact, paths: list, text: None }).await
+    d.request(Request::DropSendContact { contact, paths: list, text: None, expire }).await
 }
 
 /// Zwischenablage an ein eigenes Gerät (Text kommt aus der Web-Ansicht; das Zielgerät muss das

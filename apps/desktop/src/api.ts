@@ -306,8 +306,9 @@ export const drop = {
   browse: (on: boolean) => invoke<{ peers: NearbyPeer[] }>("drop_browse", { on }),
   nearby: () => invoke<{ peers: NearbyPeer[] }>("drop_nearby").then((r) => r.peers),
   addCode: (code: string) => invoke<NearbyPeer>("drop_add_code", { code }),
-  send: (peer: string, paths: string[]) => invoke<DropSent>("drop_send", { peer, paths }),
-  sendToContact: (contact: string, paths: string[]) => invoke<DropSent>("drop_send_contact", { contact, paths }),
+  send: (peer: string, paths: string[], expire: number | null = null) => invoke<DropSent>("drop_send", { peer, paths, expire }),
+  sendToContact: (contact: string, paths: string[], expire: number | null = null) =>
+    invoke<DropSent>("drop_send_contact", { contact, paths, expire }),
   cancel: (id: number) => invoke<unknown>("drop_cancel", { id }),
   history: () => invoke<{ items: DropHistoryItem[] }>("drop_history").then((r) => r.items),
   clearHistory: () => invoke<unknown>("drop_history_clear"),

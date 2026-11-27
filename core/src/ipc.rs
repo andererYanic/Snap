@@ -480,6 +480,9 @@ pub enum Request {
         /// Geteilter Text oder Link (statt oder zusätzlich zu Dateien).
         #[serde(default)]
         text: Option<String>,
+        /// Vorschlag: beim Empfänger nach so vielen Sekunden in den Papierkorb (3600, 86400, 604800).
+        #[serde(default)]
+        expire: Option<u32>,
     },
     DropOffers,
     DropRespond {
@@ -561,6 +564,8 @@ pub enum Request {
         paths: Vec<PathBuf>,
         #[serde(default)]
         text: Option<String>,
+        #[serde(default)]
+        expire: Option<u32>,
     },
     /// Weck-Schlüssel der Kontakte in eine private Datei (0600) im Datenordner schreiben und bei
     /// jeder Kontaktänderung aktuell halten (`enable`) bzw. löschen. Nur für das Wecken im

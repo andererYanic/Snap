@@ -46,7 +46,9 @@ pub(crate) async fn handle(inner: &Arc<DaemonInner>, req: Request) -> Result<Res
         Request::DropRefresh => {
             Response::DropConnectInfo { info: d.refresh_session().await?.map(|i| BASE64.encode(&i.encode())) }
         }
-        Request::DropSend { peer, paths, text } => Response::DropSent(d.send_with_text(&peer, paths, text).await?),
+        Request::DropSend { peer, paths, text, expire } => {
+            Response::DropSent(d.send_with_text(&peer, paths, text, expire).await?)
+        }
         Request::DropOffers => Response::DropOffers { offers: d.pending_offers() },
         Request::DropRespond { id, accept, block } => {
             d.respond(id, accept, block)?;
@@ -65,8 +67,8 @@ pub(crate) async fn handle(inner: &Arc<DaemonInner>, req: Request) -> Result<Res
         }
         Request::DropSetRemote { enabled } => Response::DropStatus(d.set_remote(enabled).await?),
         Request::DropContactRemote { key, ok } => Response::DropContact(d.set_contact_remote(&key, ok)?),
-        Request::DropSendContact { contact, paths, text } => {
-            Response::DropSent(d.send_to_contact(&contact, paths, text).await?)
+        Request::DropSendContact { contact, paths, text, expire } => {
+            Response::DropSent(d.send_to_contact(&contact, paths, text, expire).await?)
         }
         Request::DropWakeExport { enable } => {
             d.set_wake_export(enable)?;

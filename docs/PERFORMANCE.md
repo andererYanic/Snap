@@ -853,3 +853,11 @@ Gemessen (Release, `core/tests/perf.rs` › `content_index`, 2000 Textdateien à
   3 Zeichen und entprellt (160 ms) – keine GUI-Abfrage nahe der 16-ms-Grenze.
 - Massen-Umbenennen: zwei `renameat2`-Aufrufe je Datei (über Zwischennamen), keine Kopien.
 - Favoriten/Zuletzt: kleine JSON-Listen in den App-Einstellungen (≤ 50/20 Einträge).
+
+## Review 49 – Ablaufende Sendungen (2026-11-27)
+
+- Beim Empfang: ein `INSERT` je Datei in `drop_expiry` (eine Transaktion), gemessen im Test
+  `core/tests/drop.rs` › `ablaufende_sendung_vorschlag_und_eigene_frist` ohne messbaren Unterschied
+  zur Übertragung ohne Frist (< 1 ms).
+- Aufräumen alle 5 Minuten in `spawn_blocking`: eine indizierte Abfrage (`idx_drop_expiry`) nach
+  höchstens 500 fälligen Pfaden; ohne fällige Einträge kein Plattenzugriff außer der Abfrage.

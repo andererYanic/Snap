@@ -310,6 +310,10 @@ enum DropAction {
         peer: String,
         #[arg(required = true)]
         files: Vec<PathBuf>,
+        /// Empfänger legt die Dateien danach in den Papierkorb: 1h, 1d oder 7d (eine Abmachung,
+        /// kein Schutz – der Empfänger kann vorher kopieren)
+        #[arg(long, value_name = "FRIST")]
+        expire: Option<String>,
     },
     /// Offene Angebote anzeigen
     Offers,
@@ -920,10 +924,17 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             return Ok(print_response(r));
         }
         Commands::Drop { action: Some(DropAction::Add { code }) } => Request::DropAddCode { code },
-        Commands::Drop { action: Some(DropAction::Send { peer, files }) } => {
+        Commands::Drop { action: Some(DropAction::Send { peer, files, expire }) } => {
             let paths = files.iter().map(|f| absolute(f)).collect::<Result<Vec<_>>>()?;
+            let expire = match expire.as_deref() {
+                None => None,
+                Some("1h") => Some(3600),
+                Some("1d") => Some(86_400),
+                Some("7d") => Some(604_800),
+                Some(other) => anyhow::bail!("Frist '{other}' unbekannt – möglich: 1h, 1d, 7d"),
+            };
             eprintln!("⏳ Warte auf Annahme beim Empfänger …");
-            Request::DropSend { peer, paths, text: None }
+            Request::DropSend { peer, paths, text: None, expire }
         }
         Commands::Drop { action: Some(DropAction::Offers) } => Request::DropOffers,
         Commands::Drop { action: Some(DropAction::Accept { id }) } => {
