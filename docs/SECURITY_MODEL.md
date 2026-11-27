@@ -61,6 +61,12 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   gespeicherte Kontakte an (Kontakt-Tag), je Kontakt abschaltbar; die Kennung erfährt ein
   Empfänger erst nach dem Annehmen; der Sender prüft den Drop-Schlüssel gegen den Kontakt.
   Angriffstests in `core/tests/drop.rs` (Fremde, abgeschaltete Kontakte, manipulierte Adresse).
+- **„Alle Dateien“:** eine Freigabe der Speicherwurzel (Android: gemeinsamer Speicher; sonst das
+  Home-Verzeichnis) für alle gekoppelten Geräte, auch künftige – Standard aus, nur nach
+  Bestätigung (Desktop: nativer Dialog). Ausgenommen beim Erfassen: versteckte Ordner,
+  `Android/data|obb|media`, Snap-eigene Ordner (Daten, Spiegel, Downloads anderer Geräte,
+  Papierkorb); geschützte Pfade bleiben zusätzlich bei jeder Leseanfrage gesperrt. Sicher erst
+  durch die Kopplungs-Bestätigung (ein weitergegebener Code genügt nicht mehr).
 - **Zwischenablage zwischen eigenen Geräten (`snap/clip/1`):** nur mit dem ausdrücklich vergebenen
   Recht `clipboard.write` (nie Standard, in eine Richtung, sofort entziehbar); alle anderen werden
   vor dem ersten Lesen abgewiesen, entkoppelte erfahren es (Code 3). Eine Nachricht ≤ 64 KB, strikte

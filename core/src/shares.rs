@@ -61,6 +61,50 @@ fn mtime_of(meta: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+/// Name der Freigabe „Alle Dateien“ (ganzer Speicher dieses Geräts).
+pub const ALL_FILES_SHARE: &str = "Alle Dateien";
+
+/// Was ein Scan auslässt: eigene Snap-Ordner (Spiegel, Downloads anderer Geräte, Papierkorb,
+/// Daten) immer; bei „Alle Dateien“ zusätzlich versteckte Ordner und App-Daten (Android/data,
+/// Android/obb).
+#[derive(Debug, Clone, Default)]
+pub struct Skip {
+    pub dirs: Vec<PathBuf>,
+    pub whole_device: bool,
+}
+
+impl Skip {
+    pub fn for_share(inner: &DaemonInner, share: &ShareInfo) -> Self {
+        let c = &inner.config;
+        let mut dirs = vec![c.data_dir.clone(), c.pin_dir.clone(), c.trash_dir.clone(), c.download_dir.clone()];
+        if let Some(d) = c.socket_path.parent() {
+            dirs.push(d.to_path_buf());
+        }
+        Self { dirs, whole_device: share.name == ALL_FILES_SHARE }
+    }
+
+    fn skips(&self, root: &Path, path: &Path, name: &str, depth: usize) -> bool {
+        if depth == 0 {
+            return false;
+        }
+        if self.dirs.iter().any(|d| path.starts_with(d)) {
+            return true;
+        }
+        if self.whole_device {
+            if name.starts_with('.') {
+                return true;
+            }
+            if let Ok(rel) = path.strip_prefix(root) {
+                let rel = rel.to_string_lossy();
+                if matches!(rel.as_ref(), "Android/data" | "Android/obb" | "Android/media") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
 /// Relativer Pfad mit `/` als Trenner; `None` bei ungültigen Namen (nicht UTF-8 usw.).
 fn rel_of(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
@@ -75,6 +119,7 @@ fn walk(
     root: &Path,
     prefixes: Option<&[String]>,
     known: &HashMap<String, KnownShareFile>,
+    skip: &Skip,
 ) -> (Vec<Candidate>, Vec<i64>, ScanStats) {
     let mut stats = ScanStats::default();
     let mut seen: HashSet<String> = HashSet::new();
@@ -90,10 +135,14 @@ fn walk(
             Err(_) => continue, // gelöscht -> wird unten als Löschung erkannt
             _ => {}
         }
-        let walker = walkdir::WalkDir::new(start)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| e.depth() == 0 || e.file_name().to_str().is_some_and(|n| !is_ignored(n)));
+        // Startpunkt in einem ausgelassenen Bereich (z. B. Änderung im eigenen Spiegelordner)
+        if start != root && skip.dirs.iter().any(|d| start.starts_with(d)) {
+            continue;
+        }
+        let walker = walkdir::WalkDir::new(start).follow_links(false).into_iter().filter_entry(|e| {
+            e.depth() == 0
+                || e.file_name().to_str().is_some_and(|n| !is_ignored(n) && !skip.skips(root, e.path(), n, e.depth()))
+        });
         for entry in walker {
             let Ok(entry) = entry else {
                 stats.skipped += 1;
@@ -145,9 +194,10 @@ pub async fn scan_share(
     let root = PathBuf::from(&share.root);
     let db = inner.db.clone();
     let share_id = share.id;
+    let skip = Skip::for_share(inner, share);
     let (candidates, deleted, mut stats) = tokio::task::spawn_blocking(move || -> Result<_> {
         let known = db.known_share_files(share_id)?;
-        Ok(walk(&root, prefixes.as_deref(), &known))
+        Ok(walk(&root, prefixes.as_deref(), &known, &skip))
     })
     .await
     .context("Scan abgebrochen")??;
@@ -337,7 +387,7 @@ mod tests {
         std::os::unix::fs::symlink(&outside, root.join("link-ordner")).unwrap();
         std::os::unix::fs::symlink(outside.join("id_rsa"), root.join("link-datei")).unwrap();
 
-        let (cands, deleted, stats) = walk(&root, None, &HashMap::new());
+        let (cands, deleted, stats) = walk(&root, None, &HashMap::new(), &Skip::default());
         let mut rels: Vec<&str> = cands.iter().map(|c| c.rel.as_str()).collect();
         rels.sort();
         assert_eq!(rels, vec!["a.txt", "unter/b.txt"], "keine Symlinks, keine Temp-Dateien");
@@ -351,14 +401,14 @@ mod tests {
             ("weg.txt".to_string(), KnownShareFile { id: 2, hash: "h".into(), size: 1, mtime: 1 }),
             ("anders/x.txt".to_string(), KnownShareFile { id: 3, hash: "h".into(), size: 1, mtime: 1 }),
         ]);
-        let (cands, deleted, stats) = walk(&root, None, &known);
+        let (cands, deleted, stats) = walk(&root, None, &known, &Skip::default());
         assert_eq!(cands.len(), 1);
         assert_eq!(stats.unchanged, 1);
         let mut d = deleted.clone();
         d.sort();
         assert_eq!(d, vec![2, 3]);
         // Teil-Scan: nur "unter" -> Löschungen außerhalb werden nicht gemeldet
-        let (cands, deleted, _) = walk(&root, Some(&["unter".to_string()]), &known);
+        let (cands, deleted, _) = walk(&root, Some(&["unter".to_string()]), &known, &Skip::default());
         assert_eq!(cands.len(), 1);
         assert!(deleted.is_empty());
     }

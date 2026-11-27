@@ -198,6 +198,7 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropCancel { .. }
         | Request::ClipboardSend { .. }
         | Request::PairConfirm { .. }
+        | Request::ShareAll { .. }
         | Request::ClipboardPending
         | Request::DropHistory
         | Request::DropHistoryClear

@@ -127,6 +127,7 @@ pub fn mobile_config(opts: &CoreOptions) -> Result<space_core::config::Config, S
         cfg.download_dir = storage.join("Download").join("Snap");
         cfg.drop_dir = storage.join("Download").join("Snap Drop");
         cfg.trash_dir = storage.join(".Trash-snap");
+        cfg.storage_root = Some(storage.clone());
     }
     Ok(cfg)
 }

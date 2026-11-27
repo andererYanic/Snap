@@ -144,6 +144,8 @@ fn main() {
             commands::drop_set_remote,
             commands::drop_cancel,
             commands::clipboard_send,
+            commands::share_list,
+            commands::share_all,
             commands::pair_confirm_prompt,
             commands::clipboard_pending,
             commands::drop_history,

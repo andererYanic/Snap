@@ -236,3 +236,47 @@ async fn later_paired_devices_get_access_to_auto_shares() {
     pc.shutdown().await;
     phone.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn alle_dateien_ohne_app_daten_versteckte_und_snap_ordner() {
+    let tmp = tempfile::tempdir().unwrap();
+    let storage = tmp.path().join("speicher");
+    let w = |rel: &str| {
+        let p = storage.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, rel.as_bytes()).unwrap();
+    };
+    w("DCIM/urlaub.jpg");
+    w("Dokumente/brief.pdf");
+    w(".geheim/notiz.txt");
+    w("Android/data/com.app/cache.bin");
+    w("Android/obb/spiel.obb");
+    w("Snap/Laptop/kopie.txt"); // Spiegel fremder Dateien
+    let mut c = Config::portable(&tmp.path().join("handy"));
+    c.use_relay = false;
+    c.bind_port = None;
+    c.connect_timeout_secs = 2;
+    c.device_name = "Handy".into();
+    c.storage_root = Some(storage.clone());
+    c.pin_dir = storage.join("Snap");
+    let phone = Daemon::start_loopback(c).await.unwrap();
+    let laptop = start(&tmp.path().join("laptop"), "Laptop").await;
+    pair(&phone, &laptop).await;
+
+    assert!(matches!(phone.request(Request::ShareAll { enabled: true }).await, Response::ShareAdded { .. }));
+    let files =
+        sync_until(&laptop, |f| has(f, "Alle Dateien/DCIM/urlaub.jpg") && has(f, "Alle Dateien/Dokumente/brief.pdf"))
+            .await;
+    for hidden in
+        [".geheim/notiz.txt", "Android/data/com.app/cache.bin", "Android/obb/spiel.obb", "Snap/Laptop/kopie.txt"]
+    {
+        assert!(!has(&files, &format!("Alle Dateien/{hidden}")), "{hidden} darf nicht sichtbar sein");
+    }
+    // Zweimal einschalten ändert nichts; Ausschalten nimmt alles wieder weg
+    assert!(matches!(phone.request(Request::ShareAll { enabled: true }).await, Response::Success { .. }));
+    let off = phone.request(Request::ShareAll { enabled: false }).await;
+    assert!(!matches!(off, Response::Error { .. }), "{off:?}");
+    sync_until(&laptop, |f| !has(f, "Alle Dateien/DCIM/urlaub.jpg")).await;
+    phone.shutdown().await;
+    laptop.shutdown().await;
+}

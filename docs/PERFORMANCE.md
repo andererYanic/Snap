@@ -780,3 +780,12 @@ Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
   höchstens alle 3 s und nur, solange das Fenster im Vordergrund ist und ein Gerät gewählt wurde.
 - Drosselung je Gerät: eine kleine Liste von Zeitpunkten (≤ 30) im Speicher.
 - Fuzz-Ziel `clip_request`: 4 Mio. Läufe in 60 s ohne Befund.
+
+## Review 43 – „Alle Dateien“ (2026-11-27)
+
+- Erster Scan erfasst und hasht den ganzen Speicher einmal (parallel bis zur Kernzahl, wie bei
+  jeder Freigabe; Durchsatz siehe Review „share_scan“). Danach nur noch geänderte Dateien
+  (Größe/Zeitstempel), Beobachtung per Dateisystem-Ereignissen.
+- Die Auslass-Regeln wirken schon beim Durchlaufen (`filter_entry`): ausgelassene Ordner werden
+  nicht betreten – `Android/data` mit oft Hunderttausenden Cache-Dateien kostet damit nichts.
+- Katalog mit sehr vielen Einträgen: getestet bis 1 Mio. Einträge (Review „local_index_million“).
