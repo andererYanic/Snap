@@ -84,22 +84,6 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
-        // Texterkennung (Tesseract 5, siehe src/main/cpp/CMakeLists.txt)
-        externalNativeBuild {
-            cmake {
-                // Gleiche C++-Laufzeit wie React Native (libc++_shared.so liegt ohnehin in der App)
-                arguments "-DANDROID_STL=c++_shared"
-            }
-        }
-        ndk {
-            abiFilters(*((findProperty("reactNativeArchitectures") ?: "arm64-v8a,x86_64").split(",")*.trim()))
-        }
-    }
-    externalNativeBuild {
-        cmake {
-            path "src/main/cpp/CMakeLists.txt"
-            version "3.22.1"
-        }
     }
     // Sprachdaten unkomprimiert (werden einmal in den App-Ordner kopiert)
     androidResources {
@@ -143,6 +127,8 @@ dependencies {
     implementation("androidx.media3:media3-effect:1.8.0")
     // Animierte GIFs in der Bildanzeige (gleiche Fresco-Version wie React Native)
     implementation("com.facebook.fresco:animated-gif:3.7.0")
+    // Texterkennung (Tesseract 5, Modul ../ocr)
+    implementation(project(":ocr"))
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
