@@ -18,6 +18,7 @@ import Video from 'react-native-video';
 import * as core from './core';
 import { t } from './i18n';
 import { isAudio, isMedia, isRaw, isVideo, useThumb } from './thumbs';
+import { useOcr } from './Ocr';
 import { m } from './motion';
 import { Icon } from './Icon';
 import { clampV, pinchBase, pinchStep, range, rubber, settle, settleTarget, type PinchState } from './zoom';
@@ -58,6 +59,7 @@ export default function Viewer({ items, start, onClose, onEdit }: {
   const [chrome, setChrome] = useState(true);
   const item = items[index];
   const image = !!item && isMedia(item.name) && !isVideo(item.name);
+  const ocr = useOcr();
   const boxes = useRef(new Map<string, Box>());
 
   // Zoom des aktuellen Bilds
@@ -294,6 +296,11 @@ export default function Viewer({ items, start, onClose, onEdit }: {
                 <Icon name="edit" size={22} color="#fff" />
               </Pressable>
             )}
+            {image && !item.uri && (
+              <Pressable onPress={() => ocr.run({ image: item.path })} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Text erkennen')}>
+                <Icon name="scanText" size={22} color="#fff" />
+              </Pressable>
+            )}
             {!item.uri && (
               <Pressable onPress={() => core.shareFiles([item.path]).catch(() => {})} style={styles.btn} android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }} accessibilityLabel={t('Teilen')}>
                 <Icon name="share" size={22} color="#fff" />
@@ -305,6 +312,7 @@ export default function Viewer({ items, start, onClose, onEdit }: {
           </Animated.View>
         )}
       </GestureHandlerRootView>
+      {ocr.sheet}
     </Modal>
   );
 }

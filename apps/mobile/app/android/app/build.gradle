@@ -84,6 +84,25 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // Texterkennung (Tesseract 5, siehe src/main/cpp/CMakeLists.txt)
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_static"
+            }
+        }
+        ndk {
+            abiFilters(*((findProperty("reactNativeArchitectures") ?: "arm64-v8a,x86_64").split(",")*.trim()))
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+    // Sprachdaten unkomprimiert (werden einmal in den App-Ordner kopiert)
+    androidResources {
+        noCompress += "traineddata"
     }
     // Kein Schlüssel im Repository. Debug: Android erzeugt lokal einen eigenen Debug-Schlüssel.
     // Release: Schlüssel aus Umgebungsvariablen (GitHub-Secrets); fehlen sie, wird mit dem
@@ -176,3 +195,43 @@ tasks.register("generateUniffiBindings", Exec) {
 }
 
 preBuild.dependsOn "generateUniffiBindings"
+
+// ---------------------------------------------------------------- OCR-Sprachdaten
+// tessdata_fast (Apache-2.0), fest auf einen Commit und mit Prüfsumme – eine veränderte Datei
+// bricht den Bau ab.
+def tessCommit = "87416418657359cb625c412a48b6e1d6d41c29bd"
+def tessFiles = [
+    "deu.traineddata": "19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d",
+    "eng.traineddata": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+]
+def ocrAssets = layout.buildDirectory.dir("generated/ocrAssets").get().asFile
+android.sourceSets.main.assets.srcDirs += ocrAssets
+
+tasks.register("downloadTessdata") {
+    description = "Lädt die OCR-Sprachdaten (Deutsch, Englisch) und prüft sie"
+    outputs.dir ocrAssets
+    doLast {
+        def dir = new File(ocrAssets, "tessdata")
+        dir.mkdirs()
+        tessFiles.each { name, sha ->
+            def out = new File(dir, name)
+            def digest = { File f ->
+                def md = java.security.MessageDigest.getInstance("SHA-256")
+                f.withInputStream { is -> byte[] buf = new byte[65536]; int n; while ((n = is.read(buf)) > 0) md.update(buf, 0, n) }
+                md.digest().encodeHex().toString()
+            }
+            if (out.isFile() && digest(out) == sha) return
+            def tmp = new File(dir, name + ".tmp")
+            new URL("https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/${tessCommit}/${name}").withInputStream { is ->
+                tmp.withOutputStream { os -> os << is }
+            }
+            def got = digest(tmp)
+            if (got != sha) {
+                tmp.delete()
+                throw new GradleException("Prüfsumme von ${name} stimmt nicht: ${got}")
+            }
+            tmp.renameTo(out)
+        }
+    }
+}
+preBuild.dependsOn "downloadTessdata"

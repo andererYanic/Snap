@@ -45,6 +45,9 @@ davon über Iroh.
 | `react-native-video` (Media3/ExoPlayer) | Videos in der App abspielen | Nur lokale Dateien. Google-IMA-Werbemodul sowie HLS/DASH/RTSP/SmoothStreaming in `gradle.properties` abgeschaltet; Media3 selbst ist quelloffen (Apache-2.0) und braucht keine Play-Dienste. |
 | `react-native-svg` | Textmarker und Unterschrift live zeichnen | MIT, ohne Google-Dienste; gespeichert wird im Kern als PDF-Inhalt. |
 | `androidx.media3:media3-transformer`, `media3-effect` (1.8.0) | Videos kürzen, drehen, Ton entfernen | Gleiche Media3-Version wie die Wiedergabe, Apache-2.0, ohne Play-Dienste; arbeitet nur mit lokalen Dateien. |
+| `com.facebook.fresco:animated-gif` (3.7.0) | Animierte GIFs in der Bildanzeige | Modul der Bildbibliothek, die React Native ohnehin mitbringt (gleiche Version), Apache-2.0/MIT. |
+| **Tesseract** 5.5.5 (C++, Commit `4292f68`), **Leptonica** 1.87.0 (`13275a2`), **cpu_features** 0.9.0 (`ba4bffa`) – aus den Quellen mit dem NDK gebaut (`app/src/main/cpp/CMakeLists.txt`) | Texterkennung (OCR), offline | Apache-2.0 / BSD-2 / Apache-2.0, mit GPL-3.0 verteilbar. Fest auf Commit-Hashes; ohne Bild-, Netz- und Archivbibliotheken gebaut (nur Pixel aus Android), ohne Dateien des Bau-Rechners (pkg-config aus). Exportiert nur die eigene JNI-Funktion. Statt der fertigen Bibliothek tess-two (Stand 2019, veraltete Bildbibliotheken mit bekannten Lücken). |
+| Sprachdaten `tessdata_fast` deu/eng (Commit `8741641`) | OCR Deutsch + Englisch | Apache-2.0; beim Bau geladen und per SHA-256 geprüft (falsche Prüfsumme bricht den Bau ab). |
 
 ## Ergebnisse
 
