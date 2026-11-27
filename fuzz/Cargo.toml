@@ -178,3 +178,10 @@ path = "fuzz_targets/raw_preview.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "content_pdf"
+path = "fuzz_targets/content_pdf.rs"
+test = false
+doc = false
+bench = false

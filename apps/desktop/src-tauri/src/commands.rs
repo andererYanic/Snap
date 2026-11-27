@@ -66,6 +66,15 @@ pub async fn list_dir(d: State<'_, Daemon>, path: String, show_hidden: bool, off
     d.request(Request::ListDir { path: ui_path(&path)?, show_hidden, offset, limit: 1000, after: None }).await
 }
 
+/// Volltextsuche im Inhalt von Dokumenten (lokaler Index).
+#[tauri::command]
+pub async fn content_search(d: State<'_, Daemon>, query: String) -> UiResult<Value> {
+    if query.len() > 200 {
+        return Err(UiError::new("InvalidInput", "Suchbegriff zu lang."));
+    }
+    d.request(Request::ContentSearch { query, limit: 100 }).await
+}
+
 #[tauri::command]
 pub async fn search(d: State<'_, Daemon>, query: String, include_hidden: bool) -> UiResult<Value> {
     if query.len() > 200 {

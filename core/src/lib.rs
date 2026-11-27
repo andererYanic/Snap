@@ -7,6 +7,7 @@ pub mod backoff;
 pub mod backup;
 pub mod clipboard;
 pub mod config;
+pub mod content;
 pub mod daemon;
 pub mod database;
 pub mod docs;

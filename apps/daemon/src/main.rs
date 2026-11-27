@@ -112,6 +112,9 @@ enum Commands {
         /// Versteckte Dateien einbeziehen
         #[arg(long)]
         hidden: bool,
+        /// Im Inhalt von Dokumenten suchen (Text, Office, PDF) statt im Namen
+        #[arg(long, conflicts_with_all = ["ext", "dirs", "files", "hidden"])]
+        content: bool,
         #[arg(short, long, default_value_t = 50)]
         limit: u32,
     },
@@ -772,7 +775,8 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Queue { action: Some(QueueAction::Retry { id }) } => Request::QueueRetry { id },
         Commands::Peers => Request::Peers,
         Commands::Info => Request::Info,
-        Commands::Search { query, ext, dirs, files, hidden, limit } => Request::Search {
+        Commands::Search { query, content: true, limit, .. } => Request::ContentSearch { query, limit },
+        Commands::Search { query, ext, dirs, files, hidden, limit, .. } => Request::Search {
             query,
             filter: space_core::index::SearchFilter {
                 kind: if dirs {
@@ -1632,6 +1636,14 @@ fn print_response(res: Response) -> ExitCode {
                 if let Some(e) = u.last_error.as_ref().filter(|_| u.state != "done") {
                     println!("         {e} (Versuche: {})", u.attempts);
                 }
+            }
+        }
+        Response::ContentHits { hits } => {
+            if hits.is_empty() {
+                println!("Nichts gefunden (der Inhalt wird nach und nach im Hintergrund erfasst).");
+            }
+            for h in &hits {
+                println!("📄 {}\n   {}", h.path, h.snippet);
             }
         }
         Response::UploadRules { rules } => {

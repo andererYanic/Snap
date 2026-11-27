@@ -24,6 +24,8 @@ import TextViewer, { isText } from './TextViewer';
 import { ApkSheet, isApk } from './Apk';
 import ArchiveViewer, { isArchiveListable } from './ArchiveViewer';
 import SvgViewer, { isSvg } from './SvgViewer';
+import { planRename, renameProblem, type RenameMode } from './rename';
+import * as places from './places';
 import Viewer, { type MediaItem } from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
 
@@ -132,6 +134,8 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Item[] | null>(null);
+  // Volltext: Treffer im Inhalt von Dokumenten (ab 3 Zeichen)
+  const [contentHits, setContentHits] = useState<{ path: string; name: string; snippet: string }[]>([]);
   const [searching, setSearching] = useState(false); // Anfrage läuft noch
   const [apk, setApk] = useState<{ path: string; name: string; size: number } | null>(null);
   const [archive, setArchive] = useState<{ path: string; name: string } | null>(null);
@@ -139,11 +143,20 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [textFile, setTextFile] = useState<{ path: string; name: string } | null>(null);
   const [svg, setSvg] = useState<{ path: string; name: string } | null>(null);
+  // Massen-Umbenennen der Auswahl
+  const [bulk, setBulk] = useState<{ items: { path: string; name: string }[]; mode: RenameMode } | null>(null);
   const [viewer, setViewer] = useState<{ items: MediaItem[]; start: number } | null>(null);
   // Geöffnetes anderes Gerät (Startseite → Gerät antippen)
   const [remoteDev, setRemoteDev] = useState<RemoteDevice | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
   const [folders, setFolders] = useState<[string, string][]>([]);
+  // Favoriten und zuletzt geöffnete Dateien (lokal)
+  const [favs, setFavs] = useState<places.Place[]>([]);
+  const [recents, setRecents] = useState<places.Place[]>([]);
+  const loadPlaces = useCallback(() => {
+    places.favorites().then(setFavs).catch(() => {});
+    places.recent().then(setRecents).catch(() => {});
+  }, []);
   // Gekoppelte Geräte mit gemeldetem Speicher (Startseite)
   const [remote, setRemote] = useState<{ node_id: string; name: string; online?: boolean; storage?: { total: number; free: number } }[]>([]);
   const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -208,6 +221,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       return;
     }
     core.storageInfo().then(setStorage).catch(() => {});
+    loadPlaces();
     request<{ devices: typeof remote }>('PairList').then((r) => setRemote(r.devices ?? [])).catch(() => {});
     request<{ entries: DirEntry[] }>({ ListDir: { path: root, show_hidden: false, offset: 0, limit: 1000 } })
       .then((r) => {
@@ -236,6 +250,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     if (!q) {
       ++searchGen.current;
       setHits(null);
+      setContentHits([]);
       setSearching(false);
       return;
     }
@@ -251,6 +266,10 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         if (gen === searchGen.current) {
           setHits(r.hits.map((h) => ({ ...h, hidden: h.name.startsWith('.') })));
           setSearching(false);
+        }
+        const c = q.length >= 3 ? await request<{ hits: { path: string; name: string; snippet: string }[] }>({ ContentSearch: { query: q, limit: 30 } }).catch(() => ({ hits: [] })) : { hits: [] };
+        if (gen === searchGen.current) {
+          setContentHits(c.hits ?? []);
         }
       } catch {
         // Suche fehlgeschlagen: alte Treffer stehen lassen
@@ -304,6 +323,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     FOREIGN_PROGRAM.test(name) ? notify(t('„{name}“ ist ein Programm für Windows, Linux oder macOS und lässt sich auf Android nicht ausführen.', { name })) : fail(err);
 
   const open = (e: Item) => {
+    if (!sel.size && e.kind === 'File') {
+      places.noteOpened({ path: e.path, name: e.name, dir: false }).catch(() => {});
+    }
     if (sel.size) {
       const n = new Set(sel);
       n.has(e.path) ? n.delete(e.path) : n.add(e.path);
@@ -685,6 +707,47 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
               );
             })}
           </View>
+          {favs.length > 0 && (
+            <>
+              <SectionLabel theme={theme} style={s.section}>{t('Favoriten')}</SectionLabel>
+              <View style={s.group}>
+                {favs.map((f, i) => (
+                  <View key={f.path}>
+                    {i > 0 && <View style={s.sep} />}
+                    <Tap
+                      theme={theme}
+                      onPress={() => (f.dir ? go(f.path, 'forward') : openPath(f.path, f.name))}
+                      onLongPress={() => places.toggleFavorite(f).then(loadPlaces)}
+                      style={s.placeRow}
+                      label={f.name}
+                    >
+                      <Glyph name={f.name} dir={f.dir} theme={theme} />
+                      <Text style={[s.placeName, s.grow]} numberOfLines={1}>{f.name}</Text>
+                    </Tap>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+          {recents.length > 0 && (
+            <>
+              <SectionLabel theme={theme} style={s.section}>{t('Zuletzt geöffnet')}</SectionLabel>
+              <View style={s.group}>
+                {recents.slice(0, 5).map((f, i) => (
+                  <View key={f.path}>
+                    {i > 0 && <View style={s.sep} />}
+                    <Tap theme={theme} onPress={() => openPath(f.path, f.name)} style={s.placeRow} label={f.name}>
+                      <Glyph name={f.name} dir={false} theme={theme} />
+                      <View style={s.grow}>
+                        <Text style={s.placeName} numberOfLines={1}>{f.name}</Text>
+                        <Text style={s.meta} numberOfLines={1}>{f.path.slice(0, f.path.lastIndexOf('/')).replace(root, '') || '/'}</Text>
+                      </View>
+                    </Tap>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
           {folders.length > 0 && <SectionLabel theme={theme} style={s.section}>{t('Standardordner')}</SectionLabel>}
           <View style={s.folderGrid}>
             {folders.map(([d, label]) => (
@@ -712,12 +775,22 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         ? { icon: 'close' as const, label: t('Freigabe beenden'), onPress: () => unshareFolder(single) }
         : { icon: 'devices' as const, label: t('Für Geräte freigeben'), onPress: () => shareFolder(single) }]
       : []),
+    ...(single
+      ? [{
+          icon: 'check' as const,
+          label: favs.some((f) => f.path === single.path) ? t('Aus Favoriten entfernen') : t('Zu Favoriten'),
+          onPress: () => {
+            places.toggleFavorite({ path: single.path, name: single.name, dir: single.kind === 'Dir' }).then(loadPlaces).catch(() => {});
+            setSel(new Set());
+          },
+        }]
+      : []),
     { icon: 'share', label: t('Teilen'), disabled: selected.some((e) => e.kind === 'Dir'), onPress: () => core.shareFiles(selected.map((e) => e.path)).catch(fail) },
     // Ordner werden für die Übertragung gepackt und beim Empfänger wieder entpackt
     ...(onDrop ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }] : []),
     { icon: 'copy', label: t('Kopieren nach …'), onPress: () => { setClip({ mode: 'copy', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
     { icon: 'move', label: t('Verschieben nach …'), onPress: () => { setClip({ mode: 'move', paths: selected.map((e) => e.path) }); setSel(new Set()); } },
-    { icon: 'rename', label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
+    { icon: 'rename', label: t('Umbenennen'), disabled: !!hits || selected.length === 0, onPress: () => startRename() },
     { icon: 'trash', label: t('In den Papierkorb'), separate: true, onPress: trash },
     { icon: 'close', label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
@@ -791,13 +864,37 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     { icon: 'trash' as const, label: t('Papierkorb'), danger: true, onPress: trash },
     { icon: 'more' as const, label: t('Mehr'), onPress: () => setSheet('selection') },
   ];
+  /** Umbenennen: eine Datei direkt, mehrere als Massen-Umbenennung mit Vorschau. */
+  const startRename = () => {
+    if (single) {
+      setNaming({ mode: 'rename', from: single.name, value: single.name });
+    } else if (selected.length > 1) {
+      setBulk({ items: selected.map((e) => ({ path: e.path, name: e.name })), mode: { kind: 'number', base: '', start: 1 } });
+    }
+  };
+  const commitBulk = async () => {
+    if (!bulk) {
+      return;
+    }
+    const names = planRename(bulk.items.map((i) => i.name), bulk.mode);
+    const items = bulk.items.map((it, i) => ({ path: it.path, new_name: names[i] })).filter((x, i) => x.new_name !== bulk.items[i].name);
+    setBulk(null);
+    setSel(new Set());
+    try {
+      await fileOp({ RenameMany: { items } });
+      notify(t('{n} umbenannt.', { n: items.length }));
+    } catch (e) {
+      fail(e);
+    }
+    load();
+  };
   const selectionActions: SheetAction[] = [
     ...(onDrop && !selected.some((e) => e.kind === 'Dir')
       ? [{ icon: 'nearby' as const, label: t('In der Nähe senden'), onPress: () => { onDrop(selected.map((e) => e.path)); setSel(new Set()); } }]
       : []),
     ...(zips.length ? [{ label: zips.length === 1 ? t('Entpacken') : t('{n} Archive entpacken', { n: zips.length }), onPress: () => extractAll(zips) }] : []),
     { label: t('Als ZIP packen'), disabled: !!hits, onPress: compressSel },
-    { label: t('Umbenennen'), disabled: !single || !!hits, onPress: () => single && setNaming({ mode: 'rename', from: single.name, value: single.name }) },
+    { label: selected.length > 1 ? t('{n} umbenennen', { n: selected.length }) : t('Umbenennen'), disabled: !!hits || selected.length === 0, onPress: () => startRename() },
     { label: t('Endgültig löschen'), danger: true, onPress: deleteForever },
   ];
   const moreActions: SheetAction[] = [
@@ -919,8 +1016,24 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
             onRefresh={hits ? undefined : load}
             refreshing={false}
             keyboardShouldPersistTaps="handled"
+            ListFooterComponent={
+              hits && contentHits.length > 0 ? (
+                <View>
+                  <SectionLabel theme={theme} style={s.section}>{t('Im Inhalt gefunden')}</SectionLabel>
+                  {contentHits.map((c) => (
+                    <Tap key={c.path} theme={theme} onPress={() => openPath(c.path, c.name)} style={s.placeRow} label={c.name}>
+                      <Glyph name={c.name} dir={false} theme={theme} />
+                      <View style={s.grow}>
+                        <Text style={s.placeName} numberOfLines={1}>{c.name}</Text>
+                        <Text style={s.meta} numberOfLines={2}>{c.snippet.replace(/[«»]/g, '')}</Text>
+                      </View>
+                    </Tap>
+                  ))}
+                </View>
+              ) : undefined
+            }
             ListEmptyComponent={
-              hits && searching ? undefined : <Animated.View entering={m(fadeIn)} style={s.empty}>
+              (hits && searching) || (hits && contentHits.length > 0) ? undefined : <Animated.View entering={m(fadeIn)} style={s.empty}>
                 <View style={s.emptyIcon}>
                   <Icon name={error ? 'warning' : hits ? 'search' : 'folder'} size={28} color={theme.text3 as string} />
                 </View>
@@ -1021,6 +1134,59 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
               <Tap theme={theme} onPress={commitName} style={s.textBtn}><Text style={s.link}>{t('Speichern')}</Text></Tap>
             </View>
           </Animated.View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!bulk} transparent animationType="fade" onRequestClose={() => setBulk(null)}>
+        <View style={s.modalBg}>
+          {bulk && (() => {
+            const olds = bulk.items.map((i) => i.name);
+            const news = planRename(olds, bulk.mode);
+            const problem = renameProblem(olds, news);
+            const num = bulk.mode.kind === 'number' ? bulk.mode : null;
+            const rep = bulk.mode.kind === 'replace' ? bulk.mode : null;
+            return (
+              <Animated.View entering={m(popIn)} style={s.modal}>
+                <Text style={s.modalTitle}>{t('{n} umbenennen', { n: olds.length })}</Text>
+                <View style={s.modalBtns}>
+                  <Tap theme={theme} onPress={() => setBulk({ ...bulk, mode: { kind: 'number', base: '', start: 1 } })} style={s.textBtn} selected={!!num}>
+                    <Text style={[s.link, !num && s.meta]}>{t('Nummerieren')}</Text>
+                  </Tap>
+                  <Tap theme={theme} onPress={() => setBulk({ ...bulk, mode: { kind: 'replace', find: '', with: '' } })} style={s.textBtn} selected={!!rep}>
+                    <Text style={[s.link, !rep && s.meta]}>{t('Ersetzen')}</Text>
+                  </Tap>
+                </View>
+                {num ? (
+                  <TextInput
+                    autoFocus
+                    value={num.base}
+                    placeholder={t('Name, z. B. Urlaub')}
+                    onChangeText={(v) => setBulk({ ...bulk, mode: { ...num, base: v } })}
+                    style={s.input}
+                    accessibilityLabel={t('Name, z. B. Urlaub')}
+                  />
+                ) : rep ? (
+                  <>
+                    <TextInput autoFocus value={rep.find} placeholder={t('Suchen')} onChangeText={(v) => setBulk({ ...bulk, mode: { ...rep, find: v } })} style={s.input} accessibilityLabel={t('Suchen')} />
+                    <TextInput value={rep.with} placeholder={t('Ersetzen durch')} onChangeText={(v) => setBulk({ ...bulk, mode: { ...rep, with: v } })} style={s.input} accessibilityLabel={t('Ersetzen durch')} />
+                  </>
+                ) : null}
+                {olds.slice(0, 3).map((o, i) => (
+                  <Text key={o} style={s.meta} numberOfLines={1}>{`${o}  →  ${news[i]}`}</Text>
+                ))}
+                {olds.length > 3 ? <Text style={s.meta}>{t('und {n} weitere', { n: olds.length - 3 })}</Text> : null}
+                {problem === 'duplicate' || problem === 'invalid' ? (
+                  <Text style={s.meta}>{problem === 'duplicate' ? t('Mehrere Dateien würden gleich heißen.') : t('Ungültiger Name.')}</Text>
+                ) : null}
+                <View style={s.modalBtns}>
+                  <Tap theme={theme} onPress={() => setBulk(null)} style={s.textBtn}><Text style={s.link}>{t('Abbrechen')}</Text></Tap>
+                  <Tap theme={theme} onPress={commitBulk} disabled={!!problem} style={s.textBtn} label={t('Umbenennen')}>
+                    <Text style={[s.link, !!problem && s.meta]}>{t('Umbenennen')}</Text>
+                  </Tap>
+                </View>
+              </Animated.View>
+            );
+          })()}
         </View>
       </Modal>
 
@@ -1219,8 +1385,10 @@ const styles = themed((th: Theme) =>
     searchRow: { flexDirection: 'row', alignItems: 'center' },
     section: { marginTop: 28, marginBottom: 10, marginLeft: 4 },
     group: { borderRadius: 12, backgroundColor: th.surface, overflow: 'hidden' },
+    sep: { height: StyleSheet.hairlineWidth, backgroundColor: th.surface2, marginLeft: 56 },
+    placeRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, minHeight: 56 },
+    placeName: { color: th.text, fontSize: 15, lineHeight: 20 },
     groupLine: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 56 },
-    placeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, paddingHorizontal: 16, paddingVertical: 14 },
     placeText: { flex: 1 },
     placeTop: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
     placeNum: { color: th.text2, fontSize: 13 },

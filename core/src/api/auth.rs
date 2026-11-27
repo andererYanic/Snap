@@ -205,6 +205,7 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::ClipboardSend { .. }
         | Request::Ring { .. }
         | Request::RingStop
+        | Request::ContentSearch { .. }
         | Request::PairConfirm { .. }
         | Request::ShareAll { .. }
         | Request::ClipboardPending

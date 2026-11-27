@@ -90,6 +90,8 @@ export const api = {
     invoke<DirListing>("list_dir", { path, showHidden, offset }),
   search: (query: string, includeHidden: boolean) =>
     invoke<{ hits: SearchHit[] }>("search", { query, includeHidden }),
+  contentSearch: (query: string) =>
+    invoke<{ hits: { path: string; name: string; size: number; mtime: number; snippet: string }[] }>("content_search", { query }),
   metadata: (path: string) => invoke<Record<string, unknown>>("metadata", { path }),
   copy: (sources: string[], dest: string) => invoke<{ job: number }>("copy_items", { sources, dest }),
   move: (sources: string[], dest: string) => invoke<{ job: number }>("move_items", { sources, dest }),

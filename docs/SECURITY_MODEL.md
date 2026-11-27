@@ -45,6 +45,12 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   JPEG-Decoder mit dessen Grenzen. Fuzz-Ziel `raw_preview`. SVGs zeigt Android erst nach Bereinigung
   (keine Skripte, Fremdinhalte, Ereignis-Attribute, Entitäten oder Verweise nach außen – nur `#id`
   und eingebettete Bilder), damit eine Grafik beim Ansehen nichts nachlädt.
+- **Volltextsuche:** Der Inhalt von Dokumenten wird nur lokal in `index.db` erfasst (nie an andere
+  Geräte). Dateien kommen von außen: Größen begrenzt (Text 2 MB, Dokumente 50 MB, je Datei höchstens
+  100 000 Zeichen, PDFs nur die ersten 50 Seiten), Leser mit eigenen Grenzen, Abstürze abgefangen.
+  Suchbegriffe werden als Phrasen übergeben, die FTS5-Syntax von außen gilt wörtlich. Fuzz-Ziel
+  `content_pdf`. Versteckte Dateien und der Tresor werden nie erfasst.
+- **Favoriten / Zuletzt geöffnet:** nur lokal in den Einstellungen der App, nie abgeglichen.
 - **Zwei-Wege-Sync (Pins mit `two_way`):** lokale Änderungen am Spiegel gehen ausschließlich über
   die Fernoperationen zum Ursprung und damit durch dessen Rechteprüfung (`files.write`, für Ersetzen
   und Löschen zusätzlich `files.delete`, ordnergebunden, nie Standard), Massenschutz und Audit-Log.

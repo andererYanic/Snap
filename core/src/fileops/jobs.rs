@@ -36,6 +36,12 @@ pub enum FileOp {
         path: PathBuf,
         new_name: String,
     },
+    /// Mehrere Einträge auf einmal umbenennen (jeweils im eigenen Ordner). Alles wird vorher
+    /// geprüft (gültige, eindeutige Namen, keine belegten Ziele); scheitert unterwegs etwas, werden
+    /// die bereits erledigten zurückbenannt. Rückgängig als Ganzes.
+    RenameMany {
+        items: Vec<RenameItem>,
+    },
     Mkdir {
         parent: PathBuf,
         name: String,
@@ -73,6 +79,15 @@ pub enum FileOp {
     },
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RenameItem {
+    pub path: PathBuf,
+    pub new_name: String,
+}
+
+/// Höchstens so viele Einträge je Massen-Umbenennung.
+pub const MAX_RENAME_MANY: usize = 10_000;
+
 impl FileOp {
     /// Kurzbeschreibung für Meldungen und das Audit-Log.
     pub fn label(&self) -> String {
@@ -80,6 +95,7 @@ impl FileOp {
             FileOp::Copy { sources, .. } => format!("{} Einträge kopieren", sources.len()),
             FileOp::Move { sources, .. } => format!("{} Einträge verschieben", sources.len()),
             FileOp::Rename { new_name, .. } => format!("umbenennen in '{new_name}'"),
+            FileOp::RenameMany { items } => format!("{} Einträge umbenennen", items.len()),
             FileOp::Mkdir { name, .. } => format!("Ordner '{name}' anlegen"),
             FileOp::CreateFile { name, .. } => format!("Datei '{name}' anlegen"),
             FileOp::Trash { paths } => format!("{} Einträge in den Papierkorb", paths.len()),
@@ -100,6 +116,7 @@ impl FileOp {
             FileOp::Copy { sources, .. } | FileOp::Move { sources, .. } => sources.len(),
             FileOp::Trash { paths } | FileOp::Delete { paths } => paths.len(),
             FileOp::Compress { sources, .. } => sources.len(),
+            FileOp::RenameMany { items } => items.len(),
             _ => 1,
         }
     }
@@ -150,6 +167,8 @@ impl Outcome {
 
 #[derive(Debug, Clone)]
 enum Undo {
+    /// Massen-Umbenennung zurück (ebenfalls zweistufig, damit auch Tausche gelingen).
+    RenameBack(Vec<Done>),
     /// Zurückverschieben/-benennen (Ziel → Quelle).
     MoveBack(Vec<Done>),
     /// Aus dem Papierkorb wiederherstellen.
@@ -217,6 +236,10 @@ impl FileJobs {
             FileOp::Rename { path, new_name } => {
                 out.done = vec![ops::rename(path, new_name)?];
                 Some(Undo::MoveBack(out.done.clone()))
+            }
+            FileOp::RenameMany { items } => {
+                out.done = ops::rename_many(items)?;
+                Some(Undo::RenameBack(out.done.clone()))
             }
             FileOp::Mkdir { parent, name } => {
                 let created = ops::mkdir(parent, name)?;
@@ -304,6 +327,19 @@ impl FileJobs {
         let mut dirs = Vec::new();
         let p = Progress::default();
         match action {
+            Undo::RenameBack(done) => {
+                let items: Vec<RenameItem> = done
+                    .iter()
+                    .filter_map(|d| {
+                        Some(RenameItem {
+                            path: d.to.clone(),
+                            new_name: d.from.file_name()?.to_string_lossy().into_owned(),
+                        })
+                    })
+                    .collect();
+                dirs.extend(done.iter().filter_map(|d| d.from.parent().map(Path::to_path_buf)));
+                ops::rename_many(&items)?;
+            }
             Undo::MoveBack(done) => {
                 for d in done.iter().rev() {
                     let (Some(from_dir), Some(from_name)) = (d.from.parent(), d.from.file_name()) else { continue };
@@ -406,6 +442,48 @@ mod tests {
         assert!(prog.cancel.load(Ordering::Relaxed));
         jobs.unregister(id);
         assert!(!jobs.cancel(id));
+    }
+
+    #[test]
+    fn rename_many_tausch_konflikte_und_rueckgaengig() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("r");
+        std::fs::create_dir_all(&root).unwrap();
+        for (n, c) in [("a.jpg", "A"), ("b.jpg", "B"), ("c.jpg", "C"), ("frei.txt", "F")] {
+            std::fs::write(root.join(n), c).unwrap();
+        }
+        let jobs = FileJobs::new(Trash::new(dir.path().join("Trash")));
+        let p = Progress::default();
+        let item = |from: &str, to: &str| RenameItem { path: root.join(from), new_name: to.into() };
+        let read = |n: &str| std::fs::read_to_string(root.join(n)).unwrap();
+
+        // Tausch a↔b und Kette c→Urlaub 1.jpg in einem Schritt
+        let op = FileOp::RenameMany {
+            items: vec![item("a.jpg", "b.jpg"), item("b.jpg", "a.jpg"), item("c.jpg", "Urlaub 1.jpg")],
+        };
+        jobs.run(&op, &p).unwrap();
+        assert_eq!((read("a.jpg"), read("b.jpg"), read("Urlaub 1.jpg")), ("B".into(), "A".into(), "C".into()));
+        assert!(std::fs::read_dir(&root).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".snap-ren")));
+
+        // Konflikte: belegtes Ziel, doppeltes Ziel, ungültiger Name → nichts passiert
+        for bad in [
+            vec![item("a.jpg", "frei.txt")],
+            vec![item("a.jpg", "x.jpg"), item("b.jpg", "x.jpg")],
+            vec![item("a.jpg", "../raus.jpg")],
+            vec![item("fehlt.jpg", "y.jpg")],
+        ] {
+            assert!(jobs.run(&FileOp::RenameMany { items: bad }, &p).is_err());
+        }
+        assert_eq!((read("a.jpg"), read("b.jpg")), ("B".into(), "A".into()));
+
+        // Rückgängig als Ganzes (auch der Tausch)
+        jobs.undo().unwrap();
+        assert_eq!((read("a.jpg"), read("b.jpg"), read("c.jpg")), ("A".into(), "B".into(), "C".into()));
+        assert!(!root.join("Urlaub 1.jpg").exists());
     }
 
     #[test]

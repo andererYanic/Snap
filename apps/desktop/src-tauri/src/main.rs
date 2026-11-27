@@ -84,6 +84,7 @@ fn main() {
             commands::info,
             commands::list_dir,
             commands::search,
+            commands::content_search,
             commands::metadata,
             commands::index_roots,
             commands::trash_list,
