@@ -120,7 +120,14 @@ pub struct Offer {
     /// Fern-Adresse des Senders (damit ein Kontakt später auch von überall senden kann).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<RemoteAddr>,
+    /// Vorschlag des Senders: Dateien nach so vielen Sekunden beim Empfänger in den Papierkorb
+    /// (nur [`EXPIRE_CHOICES`]). Eine Abmachung, kein Schutz – der Empfänger kann vorher kopieren.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expire: Option<u32>,
 }
+
+/// Erlaubte Fristen für ablaufende Sendungen: 1 Stunde, 1 Tag, 7 Tage.
+pub const EXPIRE_CHOICES: [u32; 3] = [3600, 86_400, 604_800];
 
 /// Fern-Adresse eines Geräts: dauerhafte Kennung seines Fern-Endpunkts und Adress-Hinweise.
 /// Geht nur an Gegenüber eines Tauschs (Empfänger erst nach dem Annehmen); angenommen werden
@@ -178,6 +185,8 @@ pub struct ValidOffer {
     pub link: Option<String>,
     /// Geprüfte Fern-Adresse des Senders (ungültige werden verworfen).
     pub remote: Option<(PublicKey, Vec<std::net::SocketAddr>)>,
+    /// Vom Sender vorgeschlagene Frist (Sekunden, nur erlaubte Werte).
+    pub expire: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,6 +214,9 @@ impl Offer {
             None => None,
         };
         let link = text.as_deref().and_then(as_link);
+        if self.expire.is_some_and(|e| !EXPIRE_CHOICES.contains(&e)) {
+            api_bail!(InvalidInput, "Ungültige Frist");
+        }
         Ok(ValidOffer {
             sender,
             name: display_name(&self.name),
@@ -215,6 +227,7 @@ impl Offer {
             text,
             link,
             remote: self.remote.as_ref().and_then(RemoteAddr::validate),
+            expire: self.expire,
         })
     }
 }
@@ -764,6 +777,7 @@ mod tests {
             preview: None,
             text: None,
             remote: None,
+            expire: None,
         };
         let v = offer.validate(&session).unwrap();
         assert_eq!(v.sender, id.public());
@@ -782,6 +796,13 @@ mod tests {
         assert_eq!(addrs.len(), MAX_REMOTE_ADDRS);
         // Ohne Fern-Adresse bleibt das Format wie bisher (ältere Gegenstellen verstehen es)
         assert!(!serde_json::to_string(&offer).unwrap().contains("remote"));
+        // Frist: nur die erlaubten Werte; ohne Frist bleibt das Format wie bisher
+        assert!(!serde_json::to_string(&offer).unwrap().contains("expire"));
+        for (e, ok) in [(3600, true), (86_400, true), (604_800, true), (1, false), (u32::MAX, false)] {
+            let mut o = offer.clone();
+            o.expire = Some(e);
+            assert_eq!(o.validate(&session).is_ok(), ok, "{e}");
+        }
         // Beweis aus einer anderen Sitzung.
         assert!(offer.validate(&[4u8; 32]).is_err());
         // Überlauf der Gesamtgröße.

@@ -162,6 +162,9 @@ pub struct IncomingOffer {
     pub total: u64,
     pub preview: bool,
     pub expires_at: i64,
+    /// Vorschlag des Senders: Dateien nach so vielen Sekunden in den Papierkorb.
+    #[serde(default)]
+    pub expire: Option<u32>,
     /// Geteilter Text (bereinigt).
     #[serde(default)]
     pub text: Option<String>,
@@ -377,6 +380,8 @@ pub struct DropService {
     exchanges: Mutex<HashMap<u64, Exchange>>,
     limiter: Mutex<Limiter>,
     declined_strangers: AtomicU32,
+    /// Eigene Frist für Empfangenes (Tage, 0 = behalten); Einstellung `drop_expire_days`.
+    expire_days: AtomicU32,
     next_id: AtomicU64,
     active: Arc<AtomicUsize>,
     slots: Arc<Semaphore>,
@@ -415,6 +420,7 @@ impl DropService {
             exchanges: Mutex::new(HashMap::new()),
             limiter: Mutex::new(Limiter::default()),
             declined_strangers: AtomicU32::new(0),
+            expire_days: AtomicU32::new(0),
             next_id: AtomicU64::new(1),
             active: Arc::new(AtomicUsize::new(0)),
             slots: Arc::new(Semaphore::new(MAX_CONNS)),
@@ -724,9 +730,20 @@ impl DropService {
         }
     }
 
+    /// Eigene Frist für empfangene Dateien (Tage, 0 = behalten).
+    pub fn set_expire_days(&self, days: u32) {
+        self.expire_days.store(days, Ordering::Relaxed);
+    }
+
     /// An einen gespeicherten Kontakt senden, egal wo er ist (über seinen Fern-Endpunkt; das
     /// Relais sieht nur verschlüsselte Daten). Die Gegenseite muss wie immer annehmen.
-    pub async fn send_to_contact(&self, key: &str, paths: Vec<PathBuf>, text: Option<String>) -> Result<SendResult> {
+    pub async fn send_to_contact(
+        &self,
+        key: &str,
+        paths: Vec<PathBuf>,
+        text: Option<String>,
+        expire: Option<u32>,
+    ) -> Result<SendResult> {
         let Some(c) = self.contact_by_key(key)? else {
             api_bail!(NotFound, "Kein solcher Kontakt");
         };
@@ -741,7 +758,7 @@ impl DropService {
         };
         let target = Target { endpoint, addrs };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let r = self.send_to(id, &target, paths, text, Some(&c.key)).await;
+        let r = self.send_to(id, &target, paths, text, expire, Some(&c.key)).await;
         let (ok, error, code, can_save) = match r {
             Ok((code, can_save)) => (true, None, Some(code), can_save),
             Err(e) => (false, Some(format!("{e:#}")), None, false),
@@ -1081,6 +1098,7 @@ impl DropService {
                 total: offer.total,
                 kinds: kinds_of(&offer),
                 preview: offer.preview_png.is_some(),
+                expire: offer.expire,
             });
         }
 
@@ -1142,6 +1160,19 @@ impl DropService {
                 };
                 if let Err(e) = self.db.add_drop_history(&peer, kind, &files) {
                     tracing::warn!("Drop: Verlauf nicht gespeichert: {e:#}");
+                }
+                // Ablaufende Sendung: kürzere Frist aus Vorschlag des Senders und eigener Einstellung
+                let own = self.expire_days.load(Ordering::Relaxed) as i64 * 86_400;
+                let secs = match (offer.expire.map(i64::from), own) {
+                    (Some(a), 0) => Some(a),
+                    (Some(a), b) => Some(a.min(b)),
+                    (None, 0) => None,
+                    (None, b) => Some(b),
+                };
+                if let Some(secs) = secs.filter(|_| !saved.is_empty()) {
+                    if let Err(e) = self.db.add_drop_expiry(&files, Self::now() + secs) {
+                        tracing::warn!("Drop: Ablauf nicht gespeichert: {e:#}");
+                    }
                 }
                 self.db.events().emit(Event::DropFinished {
                     id,
@@ -1504,15 +1535,21 @@ impl DropService {
 
     /// Sendet Dateien an ein Gerät aus der Nähe-Liste (oder per Code). Wartet bis zum Ende.
     pub async fn send(&self, peer: &str, paths: Vec<PathBuf>) -> Result<SendResult> {
-        self.send_with_text(peer, paths, None).await
+        self.send_with_text(peer, paths, None, None).await
     }
 
     /// Wie [`Self::send`], zusätzlich (oder nur) mit Text bzw. Link.
-    pub async fn send_with_text(&self, peer: &str, paths: Vec<PathBuf>, text: Option<String>) -> Result<SendResult> {
+    pub async fn send_with_text(
+        &self,
+        peer: &str,
+        paths: Vec<PathBuf>,
+        text: Option<String>,
+        expire: Option<u32>,
+    ) -> Result<SendResult> {
         let target = self.target_of(peer)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let peer_name = self.peer_label(&target);
-        let r = self.send_to(id, &target, paths, text, None).await;
+        let r = self.send_to(id, &target, paths, text, expire, None).await;
         let (ok, error, code, can_save) = match r {
             Ok((code, can_save)) => (true, None, Some(code), can_save),
             Err(e) => (false, Some(format!("{e:#}")), None, false),
@@ -1562,8 +1599,12 @@ impl DropService {
         target: &Target,
         paths: Vec<PathBuf>,
         text: Option<String>,
+        expire: Option<u32>,
         expect_contact: Option<&str>,
     ) -> Result<(String, bool)> {
+        if expire.is_some_and(|e| !super::wire::EXPIRE_CHOICES.contains(&e)) {
+            api_bail!(InvalidInput, "Frist: 1 Stunde, 1 Tag oder 7 Tage");
+        }
         let text = text.filter(|t| !t.trim().is_empty());
         if text.as_ref().is_some_and(|t| t.len() > super::wire::MAX_TEXT) {
             api_bail!(InvalidInput, "Text ist zu lang (höchstens 64 KB)");
@@ -1581,7 +1622,7 @@ impl DropService {
         for f in files.iter_mut().filter(|f| packed.contains(&f.path)) {
             f.offer.mime = super::wire::FOLDER_MIME.into();
         }
-        let r = self.send_files(id, target, files, text, expect_contact).await;
+        let r = self.send_files(id, target, files, text, expire, expect_contact).await;
         remove_all(&packed);
         r
     }
@@ -1636,6 +1677,7 @@ impl DropService {
         target: &Target,
         files: Vec<Prepared>,
         text: Option<String>,
+        expire: Option<u32>,
         expect_contact: Option<&str>,
     ) -> Result<(String, bool)> {
         let conn = self.connect(target).await?;
@@ -1643,7 +1685,7 @@ impl DropService {
         self.transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, conn.clone());
         // Erstes Lebenszeichen: die Oberfläche kennt so die Kennung (zum Abbrechen)
         self.db.events().emit(Event::DropProgress { id, incoming: false, done_bytes: 0, total_bytes: total });
-        let r = self.send_on(id, &conn, files, text, expect_contact).await;
+        let r = self.send_on(id, &conn, files, text, expire, expect_contact).await;
         self.transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         r.map_err(|e| anyhow::anyhow!(self.transfer_error(id, &conn, &e)))
     }
@@ -1654,6 +1696,7 @@ impl DropService {
         conn: &Connection,
         files: Vec<Prepared>,
         text: Option<String>,
+        expire: Option<u32>,
         expect_contact: Option<&str>,
     ) -> Result<(String, bool)> {
         let session = identity::session_value(conn)?;
@@ -1679,6 +1722,7 @@ impl DropService {
             preview: files.iter().find_map(|f| f.preview.clone()),
             text,
             remote: self.remote_addr().await,
+            expire,
         };
         write_frame_max(&mut send, &offer, MAX_FRAME).await?;
         let reply: Reply =
@@ -2015,6 +2059,7 @@ fn incoming_view(id: u64, o: &ValidOffer, contact: Option<String>, code: String)
         total: o.total,
         preview: o.preview_png.is_some(),
         expires_at: DropService::now() + OFFER_TIMEOUT.as_secs() as i64,
+        expire: o.expire,
         text: o.text.clone(),
         link: o.link.clone(),
     }

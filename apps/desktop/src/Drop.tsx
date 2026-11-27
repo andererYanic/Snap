@@ -227,6 +227,8 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
   const [checkCode, setCheckCode] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [people, setPeople] = useState<DropContact[]>([]);
+  // Frist: beim Empfänger nach so vielen Sekunden in den Papierkorb (0 = behalten)
+  const [expire, setExpire] = useState(0);
 
   useEffect(() => {
     drop.contacts().then(setPeople).catch(() => {});
@@ -258,7 +260,7 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
     setBusy(p.id);
     setProgress(null);
     drop
-      .send(p.id, paths)
+      .send(p.id, paths, expire || null)
       .then((r) => {
         if (r.ok) onClose();
         else notify({ text: r.error ?? t("Fehlgeschlagen"), error: true });
@@ -272,7 +274,7 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
     setBusy(id);
     setProgress(null);
     drop
-      .sendToContact(c.key, paths)
+      .sendToContact(c.key, paths, expire || null)
       .then((r) => {
         if (r.ok) onClose();
         else notify({ text: r.error ?? t("Fehlgeschlagen"), error: true });
@@ -294,6 +296,15 @@ export function DropSendDialog({ paths, notify, onClose }: { paths: string[]; no
       <div className="dialog drop" onClick={(e) => e.stopPropagation()}>
         <h2>{t("In der Nähe senden")}</h2>
         <p className="muted small">{paths.length === 1 ? baseName(paths[0]) : filesLabel(paths.length)}</p>
+        <label className="line small">
+          <span className="muted">{t("Beim Empfänger löschen nach")}</span>
+          <select className="field" value={expire} onChange={(e) => setExpire(Number(e.target.value))} disabled={!!busy}>
+            <option value={0}>{t("nie")}</option>
+            <option value={3600}>{t("1 Std.")}</option>
+            <option value={86400}>{t("1 Tag")}</option>
+            <option value={604800}>{t("7 Tagen")}</option>
+          </select>
+        </label>
         <div className="peers">
           {peers.length === 0 ? (
             <div className="empty">

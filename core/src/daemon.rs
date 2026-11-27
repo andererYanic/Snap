@@ -372,6 +372,18 @@ impl Daemon {
                 }
             })
         };
+        // Ablaufende Snap-Drop-Sendungen: fällige Dateien in den Papierkorb
+        inner.drop.set_expire_days(inner.settings.drop_expire_days());
+        let drop_expiry = {
+            let weak = Arc::downgrade(&inner);
+            tokio::spawn(async move {
+                loop {
+                    let Some(inner) = weak.upgrade() else { return };
+                    let _ = tokio::task::spawn_blocking(move || crate::drop::expire_due(&inner)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                }
+            })
+        };
         let streamer = match (stream, stream_listener) {
             (Some(s), Some(l)) => tokio::spawn(crate::stream::serve(s, l, Arc::downgrade(&inner))),
             _ => tokio::spawn(async {}),
@@ -407,6 +419,7 @@ impl Daemon {
             uploads,
             upload_rules,
             vault_lock,
+            drop_expiry,
             links,
             backups,
             photos,

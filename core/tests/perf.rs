@@ -1679,7 +1679,7 @@ async fn drop_remote() {
     let n = 5;
     let t = Instant::now();
     for _ in 0..n {
-        let r = a.send_to_contact(&key, vec![src.clone()], None).await.unwrap();
+        let r = a.send_to_contact(&key, vec![src.clone()], None, None).await.unwrap();
         assert!(r.ok, "{:?}", r.error);
     }
     report("Drop: von überall an Kontakt (Loopback, inkl. Annahme)", n, t.elapsed());

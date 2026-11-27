@@ -851,3 +851,11 @@ Gemessen (Release, Host, `core/tests/perf.rs` › `vault_crypto`):
   Rechenintensive läuft in `spawn_blocking`, die Oberfläche zeigt währenddessen einen Fortschritt.
 - Speicher beim Ver-/Entschlüsseln: zwei Blöcke à 64 KiB, unabhängig von der Dateigröße.
 - Der automatische Sperr-Takt prüft alle 20 s eine Zeitmarke (kein Plattenzugriff).
+
+## Review 49 – Ablaufende Sendungen (2026-11-27)
+
+- Beim Empfang: ein `INSERT` je Datei in `drop_expiry` (eine Transaktion), gemessen im Test
+  `core/tests/drop.rs` › `ablaufende_sendung_vorschlag_und_eigene_frist` ohne messbaren Unterschied
+  zur Übertragung ohne Frist (< 1 ms).
+- Aufräumen alle 5 Minuten in `spawn_blocking`: eine indizierte Abfrage (`idx_drop_expiry`) nach
+  höchstens 500 fälligen Pfaden; ohne fällige Einträge kein Plattenzugriff außer der Abfrage.
