@@ -1,0 +1,8 @@
+target
+fuzz/target
+**/node_modules
+apps/mobile/app/android/app/build
+apps/mobile/app/android/.gradle
+apps/desktop/dist
+apps/desktop/src-tauri/target
+.git

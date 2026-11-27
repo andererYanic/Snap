@@ -1,0 +1,28 @@
+# Beispiel für Docker Compose. Start:  docker compose -f packaging/docker/compose.yml up -d --build
+services:
+  snap:
+    build:
+      context: ../..
+      dockerfile: packaging/docker/Dockerfile
+    container_name: snap
+    restart: unless-stopped
+    environment:
+      SNAP_NAME: "Server"
+    volumes:
+      # Schlüssel, Datenbank, Spiegel – privat halten und sichern
+      - snap-data:/data
+      # Ordner des Servers, die deine Geräte sehen sollen (danach: space-daemon share add /shares/Fotos)
+      # - /srv/fotos:/shares/Fotos
+    ports:
+      # Optional, für direkte Verbindungen ohne Relais
+      - "11204:11204/udp"
+    # Abgesichert: nur Lesezugriff auf das Abbild, keine Zusatzrechte
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  snap-data: {}
