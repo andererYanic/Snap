@@ -859,3 +859,26 @@ Gemessen (Release, Host, `core/tests/perf.rs` › `vault_crypto`):
   zur Übertragung ohne Frist (< 1 ms).
 - Aufräumen alle 5 Minuten in `spawn_blocking`: eine indizierte Abfrage (`idx_drop_expiry`) nach
   höchstens 500 fälligen Pfaden; ohne fällige Einträge kein Plattenzugriff außer der Abfrage.
+
+## Review 53 – Größe der App (2026-11-27)
+
+Ziel: weniger Speicher auf dem Handy, ohne spürbar langsamer zu werden.
+
+| Maßnahme | Wirkung |
+|---|---|
+| Rust-Kern mit `opt-level = "s"`, rechenintensive Bibliotheken (Hashing, Krypto, Bild-Decoder, Kompression, QUIC) weiter `opt-level = 3` | `libsnap_ffi.so` (arm64) 27,2 → 24,1 MB (−11 %) |
+| R8 und Entfernen ungenutzter Ressourcen (Release) | Java/Kotlin-Bytecode wird geschrumpft (vorher ~21 MB DEX) |
+| Eine Architektur je APK (arm64-v8a für Handys) | statt beider Architekturen: halbiert die nativen Bibliotheken |
+
+Tempo im Vergleich (Host, gleiche Perf-Tests, Profil `release` → `mobile`):
+
+| Vorgang | vorher | nachher |
+|---|---|---|
+| Vorschaubild 12 MP → 256 px | 56,7 ms | 58,1 ms |
+| RAW → Anzeige 2560 px | 257 ms | 175 ms |
+| Tresor ver-/entschlüsseln (100 MB) | 83 / 75 ms | 81 / 74 ms |
+| Erstscan je Datei (hashen + importieren) | 200 µs | 204 µs |
+| Tresor entsperren (Argon2id, bewusst langsam) | 152 ms | 177 ms |
+
+Alles innerhalb der Messschwankung außer dem Entsperren (+25 ms) – dort ist Langsamkeit Absicht
+(bremst Passwort-Raten); die Oberfläche zeigt währenddessen einen Fortschritt.

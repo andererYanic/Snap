@@ -1,10 +1,18 @@
-# Add project specific ProGuard rules here.
-# By default, the flags in this file are appended to flags specified
-# in /usr/local/Cellar/android-sdk/24.3.3/tools/proguard/proguard-android.txt
-# You can edit the include path and order by changing the proguardFiles
-# directive in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# R8 (Release): Code schrumpfen, ohne Laufzeit-Reflexion zu brechen.
 
-# Add any project specific keep options here:
+# Snap-Kern über UniFFI: die Kotlin-Anbindung ruft die Rust-Bibliothek über JNA auf (Reflexion,
+# Strukturen und Rückrufe werden zur Laufzeit gesucht).
+-keep class uniffi.** { *; }
+-keep class com.sun.jna.** { *; }
+-keepclassmembers class * extends com.sun.jna.** { public *; }
+-dontwarn java.awt.**
+-dontwarn com.sun.jna.**
+
+# Eigene Klassen: React-Native-Module, Dienste, Empfänger und JNI (Texterkennung) – klein, daher
+# vollständig behalten statt einzeln aufzuzählen.
+-keep class de.snap.mobile.** { *; }
+-keepclasseswithmembernames class * { native <methods>; }
+
+# Hermes/React Native bringen eigene Regeln mit (consumer rules); Warnungen aus optionalen
+# Abhängigkeiten nicht als Fehler werten.
+-dontwarn com.facebook.**
