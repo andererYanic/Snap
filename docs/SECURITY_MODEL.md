@@ -57,6 +57,14 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   gespeicherte Kontakte an (Kontakt-Tag), je Kontakt abschaltbar; die Kennung erfährt ein
   Empfänger erst nach dem Annehmen; der Sender prüft den Drop-Schlüssel gegen den Kontakt.
   Angriffstests in `core/tests/drop.rs` (Fremde, abgeschaltete Kontakte, manipulierte Adresse).
+- **Zwischenablage zwischen eigenen Geräten (`snap/clip/1`):** nur mit dem ausdrücklich vergebenen
+  Recht `clipboard.write` (nie Standard, in eine Richtung, sofort entziehbar); alle anderen werden
+  vor dem ersten Lesen abgewiesen, entkoppelte erfahren es (Code 3). Eine Nachricht ≤ 64 KB, strikte
+  Felder, Text ohne Steuer- und Formatzeichen, höchstens 30 je Minute und Gerät. Der Inhalt wird nie
+  protokolliert und nie gespeichert; ohne verbundene Oberfläche hält ihn der Dienst bis zu 5 Minuten
+  im Speicher. Automatisches Senden ist je Gerät und nur lokal einstellbar (Standard aus); Android
+  liest die Zwischenablage nur, solange Snap im Vordergrund ist. Angriffstests: `core/tests/clipboard.rs`,
+  Fuzz-Ziel `clip_request`.
 - **Entkoppeln in beide Richtungen:** Wer entkoppelt, schließt die Verbindung mit dem
   Anwendungscode 3 („unpaired“). Der Code kommt im verschlüsselten, per TLS als genau dieses Gerät
   ausgewiesenen QUIC-Kanal an und wirkt **nur auf den Absender selbst** – kein Gerät kann so ein

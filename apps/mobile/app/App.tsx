@@ -15,6 +15,7 @@ import { materialTheme, snapTheme, type Theme } from './src/theme';
 import { NavIcon, themed } from './src/ui';
 import { fadeIn, initMotion, m, toastIn, toastOut } from './src/motion';
 import * as drop from './src/drop';
+import * as clip from './src/clipboard';
 import { DropSendSheet, HotspotSheet, OfferSheet, ReceiveBar } from './src/Drop';
 
 type Tab = 'files' | 'photos' | 'settings';
@@ -92,6 +93,10 @@ export default function App() {
     const sub = AppState.addEventListener('change', (st) => {
       if (st === 'active' && ready === 'permission') {
         boot();
+      }
+      // Zwischenablage automatisch an die gewählten eigenen Geräte (nur im Vordergrund lesbar)
+      if (st === 'active' && ready === 'ok') {
+        clip.syncOnForeground().catch(() => {});
       }
       // Ein offenes Angebot könnte inzwischen per Mitteilung beantwortet worden sein
       if (st === 'active' && ready === 'ok') {
@@ -194,6 +199,10 @@ export default function App() {
         }
       } else if (ev.type === 'DropVisibilityChanged') {
         drop.syncRadio(ev.mode).catch(() => {});
+      } else if (ev.type === 'ClipboardReceived') {
+        // Android hat den Text schon übernommen (DropNotify); hier nur merken und melden
+        clip.remember(ev.text);
+        notify(t('Zwischenablage von „{name}“ übernommen.', { name: ev.name }));
       } else if (ev.type === 'DeviceRemoved') {
         // Geöffnete Dateien des Geräts sofort unzugänglich machen (Cache ist nur ein Cache)
         core.clearRemoteCache().catch(() => {});

@@ -157,3 +157,10 @@ path = "fuzz_targets/doc_read.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "clip_request"
+path = "fuzz_targets/clip_request.rs"
+test = false
+doc = false
+bench = false

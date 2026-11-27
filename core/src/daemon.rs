@@ -32,6 +32,8 @@ pub(crate) const PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
 pub(crate) const CATALOG_MAX_AGE_SECS: i64 = 300;
 
 pub struct DaemonInner {
+    /// Zwischenablage zwischen eigenen Geräten (Drosselung, Bereithalten für die App).
+    pub(crate) clipboard: crate::clipboard::ClipState,
     /// Verbundene Oberflächen, die Ereignisse abonniert haben.
     pub(crate) ui_clients: std::sync::atomic::AtomicUsize,
     pub config: Config,
@@ -243,6 +245,7 @@ impl Daemon {
                     .accept(PAIR_ALPN, PairingProtocol { ctx: pairing })
                     .accept(crate::live::LIVE_ALPN, crate::live::LiveProtocol { mgr: live })
                     .accept(crate::remote_ops::OPS_ALPN, crate::remote_ops::OpsProtocol { inner: ops_slot.clone() })
+                    .accept(crate::clipboard::CLIP_ALPN, crate::clipboard::ClipProtocol { inner: ops_slot.clone() })
                     .accept(
                         crate::remote_thumbs::THUMB_ALPN,
                         crate::remote_thumbs::ThumbProtocol {
@@ -297,6 +300,7 @@ impl Daemon {
             db.clone(),
         )?;
         let inner = Arc::new(DaemonInner {
+            clipboard: crate::clipboard::ClipState::default(),
             ui_clients: std::sync::atomic::AtomicUsize::new(0),
             config,
             network,

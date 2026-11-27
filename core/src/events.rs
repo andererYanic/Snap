@@ -46,6 +46,12 @@ pub enum Event {
     DeviceRemoved {
         node_id: String,
     },
+    /// Ein eigenes Gerät hat etwas in die Zwischenablage gelegt (nur an lokale Oberflächen).
+    ClipboardReceived {
+        node_id: String,
+        name: String,
+        text: String,
+    },
     /// Die Gegenseite hat die Kopplung aufgehoben; hier wurde daraufhin ebenfalls entkoppelt.
     DeviceUnpairedByPeer {
         node_id: String,

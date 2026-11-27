@@ -486,6 +486,13 @@ pub enum Request {
     DropUnblock {
         key: String,
     },
+    /// Text in die Zwischenablage eines eigenen Geräts legen (braucht dort `clipboard.write`).
+    ClipboardSend {
+        device: String,
+        text: String,
+    },
+    /// Zuletzt empfangene Zwischenablage abholen (einmalig, höchstens 5 Minuten alt).
+    ClipboardPending,
     /// Laufende Übertragung oder offenes Angebot abbrechen.
     DropCancel {
         id: u64,
@@ -825,6 +832,10 @@ pub enum Response {
         contacts: Vec<crate::drop::ContactInfo>,
     },
     DropContact(crate::drop::ContactInfo),
+    ClipboardPending {
+        name: Option<String>,
+        text: Option<String>,
+    },
     DropHistory {
         items: Vec<crate::drop::HistoryItem>,
     },

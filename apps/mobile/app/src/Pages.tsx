@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { Text, TextInput } from './text';
+import * as clip from './clipboard';
 import * as core from './core';
 import { humanSize, request, shortDate } from './core';
 import { LANGUAGES, lang, locale, setLanguage, t } from './i18n';
@@ -29,6 +30,9 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
   const [shares, setShares] = useState<{ name: string; root: string; file_count: number }[]>([]);
   // Nach dem Koppeln: fragen, was das neue Gerät sehen soll
   const [afterPair, setAfterPair] = useState<string | null>(null);
+  // Aufgeklapptes Gerät (Zwischenablage) und Geräte mit automatischem Senden
+  const [open, setOpen] = useState<string | null>(null);
+  const [auto, setAuto] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -43,7 +47,23 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
 
   useEffect(() => {
     load();
+    clip.autoDevices().then((l) => setAuto(new Set(l))).catch(() => {});
   }, [load]);
+
+  const mayFill = (d: Device) => d.grants.some((g) => g.capability === 'clipboard.write');
+  const toggleFill = (d: Device, on: boolean) =>
+    request({ [on ? 'PairGrant' : 'PairRevoke']: { device: d.node_id, capability: 'clipboard.write', folder: null } })
+      .then(load)
+      .catch((e) => notify(e?.message ?? String(e)));
+  const toggleAuto = async (d: Device, on: boolean) => {
+    await clip.setAuto(d.node_id, on);
+    setAuto(new Set(await clip.autoDevices()));
+  };
+  const sendClip = (d: Device) =>
+    clip
+      .sendTo(d.node_id)
+      .then(() => notify(t('Zwischenablage an „{name}“ gesendet.', { name: d.name })))
+      .catch((e) => notify(e?.message ?? String(e)));
 
   const startInvite = async () => {
     try {
@@ -113,7 +133,7 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
             return (
               <View key={d.node_id}>
                 {i > 0 && <View style={s.sep} />}
-                <Pressable style={s.row} onLongPress={() => unpair(d)} android_ripple={{ color: theme.accentSoft as string }}>
+                <Pressable style={s.row} onPress={() => setOpen(open === d.node_id ? null : d.node_id)} onLongPress={() => unpair(d)} android_ripple={{ color: theme.accentSoft as string }} accessibilityState={{ expanded: open === d.node_id }}>
                   <Icon name={kind(d.name)} size={24} color={(on ? theme.accent : theme.text3) as string} />
                   <View style={s.grow}>
                     <Text style={s.strong}>{d.name}</Text>
@@ -127,6 +147,37 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
                     <Icon name="more" size={22} color={theme.text2 as string} strokeWidth={2.4} />
                   </Pressable>
                 </Pressable>
+                {open === d.node_id && (
+                  <View style={s.devPanel}>
+                    <Pressable onPress={() => sendClip(d)} style={s.devAction} accessibilityRole="button">
+                      <Icon name="copy" size={20} color={theme.text2 as string} />
+                      <Text style={[s.text, s.grow]}>{t('Zwischenablage senden')}</Text>
+                    </Pressable>
+                    <View style={s.devAction}>
+                      <Text style={[s.text, s.grow]}>{t('Darf meine Zwischenablage füllen')}</Text>
+                      <Switch
+                        value={mayFill(d)}
+                        onValueChange={(v) => toggleFill(d, v)}
+                        trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                        thumbColor={theme.surface as string}
+                        accessibilityLabel={t('Darf meine Zwischenablage füllen')}
+                      />
+                    </View>
+                    <View style={s.devAction}>
+                      <View style={s.grow}>
+                        <Text style={s.text}>{t('Zwischenablage automatisch senden')}</Text>
+                        <Text style={s.muted}>{t('Beim Öffnen von Snap, wenn sich etwas geändert hat.')}</Text>
+                      </View>
+                      <Switch
+                        value={auto.has(d.node_id)}
+                        onValueChange={(v) => toggleAuto(d, v)}
+                        trackColor={{ true: theme.accent as string, false: theme.surface2 as string }}
+                        thumbColor={theme.surface as string}
+                        accessibilityLabel={t('Zwischenablage automatisch senden')}
+                      />
+                    </View>
+                  </View>
+                )}
               </View>
             );
           })}
@@ -333,6 +384,8 @@ const styles = themed((th: Theme) =>
     row: { flexDirection: 'row', alignItems: 'center', gap: 18, minHeight: 64, paddingLeft: 16, paddingRight: 8, paddingVertical: 10 },
     block: { padding: 16, gap: 2 },
     sep: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 58 },
+    devPanel: { paddingLeft: 58, paddingRight: 12, paddingBottom: 8, gap: 2 },
+    devAction: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48 },
     sepFile: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 70 },
     sepFull: { height: StyleSheet.hairlineWidth, backgroundColor: th.line },
     grow: { flex: 1 },

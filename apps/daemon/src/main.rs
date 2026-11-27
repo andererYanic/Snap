@@ -1026,6 +1026,7 @@ fn describe_event(e: &Event) -> String {
         Event::JobRemoved { job_id } => format!("🗑️  Auftrag {job_id} entfernt"),
         Event::DevicePaired { name, .. } => format!("🔗 Gerät '{name}' gekoppelt"),
         Event::DeviceRemoved { node_id } => format!("✂️  Gerät {} entkoppelt", short(node_id, 10)),
+        Event::ClipboardReceived { name, .. } => format!("📋 Zwischenablage von '{name}' empfangen"),
         Event::DeviceUnpairedByPeer { name, .. } => format!("✂️  '{name}' hat die Kopplung aufgehoben"),
         Event::ShareScanned { name, changed, deleted, total } => {
             format!("📂 Freigabe '{name}': {changed} neu/geändert, {deleted} gelöscht, {total} insgesamt")
@@ -1678,6 +1679,11 @@ fn print_response(res: Response) -> ExitCode {
             }
         }
         Response::DropContact(c) => println!("👤 Kontakt {} gespeichert ({}).", c.name, c.fingerprint),
+        // Inhalt der Zwischenablage nie im Terminal zeigen
+        Response::ClipboardPending { name, .. } => match name {
+            Some(n) => println!("📋 Zwischenablage von '{n}' liegt bereit."),
+            None => println!("📋 Nichts bereit."),
+        },
         Response::DropHistory { items } => {
             for i in items {
                 println!("📥 {} · {} · {} Datei(en)", i.peer, i.kind, i.count);

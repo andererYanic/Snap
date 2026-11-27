@@ -5,7 +5,7 @@ import { api, baseName, errorText, onDaemonEvent, onDaemonStatus, type DaemonEve
 import { Icon } from "./icons";
 import Explorer from "./Explorer";
 import Photos from "./Photos";
-import { Backups, Devices, SettingsPage } from "./Pages";
+import { Backups, clipAuto, Devices, SettingsPage } from "./Pages";
 import { LinksPage, StoragePage } from "./Tools";
 import { DropPage, OfferDialog } from "./Drop";
 import { drop, type IncomingOffer } from "./api";
@@ -99,10 +99,44 @@ export default function App() {
       if (ev.incoming && !ev.ok) notify({ text: t("Empfang fehlgeschlagen: {error}", { error: ev.error ?? "" }), error: true });
       else if (ev.incoming) notify({ text: t("{files} von {name} gespeichert.", { files: n === 1 ? t("1 Datei") : t("{n} Dateien", { n }), name: ev.peer }), action: save });
       else if (ev.ok) notify({ text: t("An {name} gesendet.", { name: ev.peer }), action: save });
+    } else if (ev.type === "ClipboardReceived") {
+      lastClip.current = String(ev.text);
+      navigator.clipboard.writeText(String(ev.text)).catch(() => {});
+      notify({ text: t("Zwischenablage von „{name}“ übernommen.", { name: ev.name }) });
     } else if (ev.type === "DeviceUnpairedByPeer") {
       notify({ text: t("„{name}“ hat die Kopplung aufgehoben. Seine Dateien sind hier nicht mehr verfügbar.", { name: ev.name }) });
     }
   }, [events, notify]);
+
+  // Zwischenablage: beim Start bereitgehaltene übernehmen; automatisch senden, solange das
+  // Fenster im Vordergrund ist und sich der Text geändert hat
+  const lastClip = useRef<string | null>(null);
+  useEffect(() => {
+    if (!up) return;
+    api
+      .clipboardPending()
+      .then((p) => {
+        if (p.text) {
+          lastClip.current = p.text;
+          navigator.clipboard.writeText(p.text).catch(() => {});
+          notify({ text: t("Zwischenablage von „{name}“ übernommen.", { name: p.name ?? "" }) });
+        }
+      })
+      .catch(() => {});
+    const timer = window.setInterval(() => {
+      const targets = clipAuto();
+      if (targets.length === 0 || !document.hasFocus()) return;
+      navigator.clipboard
+        .readText()
+        .then((text) => {
+          if (!text.trim() || text === lastClip.current || text.length > 64 * 1024) return;
+          lastClip.current = text;
+          targets.forEach((d) => api.clipboardSend(d, text).catch(() => {}));
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [up, notify]);
 
   // Dienststatus und Ereignisse
   useEffect(() => {

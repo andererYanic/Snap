@@ -116,6 +116,17 @@ async fn serve(daemon: Daemon) -> anyhow::Result<()> {
                             Err(e) => tracing::debug!("Mitteilung nicht gezeigt: {e}"),
                         }
                     }
+                    // Inhalt nie in der Mitteilung (kann ein Passwort sein)
+                    Event::ClipboardReceived { name, .. } if daemon.ui_clients() == 0 => {
+                        let body = if de {
+                            "Zwischenablage empfangen – öffne Snap, dann liegt sie bereit."
+                        } else {
+                            "Clipboard received – open Snap and it's ready to paste."
+                        };
+                        let mut hints = HashMap::new();
+                        hints.insert("desktop-entry", Value::from("de.snap.desktop"));
+                        let _ = proxy.notify("Snap", 0, "de.snap.desktop", &plain(&name, 64), body, &[], hints, 10_000).await;
+                    }
                     Event::DropOfferClosed { id, .. } => {
                         if let Some(nid) = by_offer.remove(&id) {
                             shown.remove(&nid);

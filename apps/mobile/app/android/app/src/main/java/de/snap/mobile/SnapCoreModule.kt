@@ -590,6 +590,18 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     promise.resolve(ctx.cacheDir.absolutePath)
   }
 
+  /** Text der Zwischenablage (nur im Vordergrund möglich; sonst null). */
+  @ReactMethod
+  fun readClipboard(promise: Promise) {
+    try {
+      val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+      val item = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
+      promise.resolve(item?.coerceToText(ctx)?.toString()?.take(64 * 1024))
+    } catch (e: Throwable) {
+      promise.resolve(null)
+    }
+  }
+
   /** Zwischengespeicherte Dateien anderer Geräte löschen (nach dem Entkoppeln). */
   @ReactMethod
   fun clearRemoteCache(promise: Promise) {

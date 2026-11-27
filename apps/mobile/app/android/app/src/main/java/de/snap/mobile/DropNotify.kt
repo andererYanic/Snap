@@ -31,6 +31,7 @@ object DropNotify {
   const val CH_OFFERS = "drop_offers"
   private const val NOTE_OFFER = 4200
   private const val NOTE_DONE = 4600
+  private const val NOTE_CLIP = 4099
   const val K_POPUP = "popup"
 
   @Volatile private var installed = false
@@ -86,6 +87,25 @@ object DropNotify {
     val ev = try { JSONObject(json) } catch (_: Throwable) { return }
     val id = ev.optLong("id", -1)
     when (ev.optString("type")) {
+      // Eigenes Gerät hat etwas in die Zwischenablage gelegt (Recht vom Nutzer vergeben)
+      "ClipboardReceived" -> {
+        val text = ev.optString("text")
+        if (text.isNotEmpty()) {
+          try {
+            (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Snap", text))
+          } catch (_: Throwable) {}
+          if (!MainActivity.visible) {
+            val n = NotificationCompat.Builder(ctx, CH_SERVICE)
+              .setSmallIcon(R.mipmap.ic_launcher)
+              .setContentTitle(ev.optString("name").take(64))
+              .setContentText(ctx.getString(R.string.clip_received))
+              .setAutoCancel(true)
+              .setTimeoutAfter(15_000)
+              .build()
+            notify(ctx, NOTE_CLIP, n)
+          }
+        }
+      }
       "DropOffer" -> {
         val contact = ev.optString("contact").takeIf { it.isNotEmpty() && it != "null" }
         val name = contact ?: ev.optString("name")
