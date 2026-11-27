@@ -123,6 +123,11 @@ pub(crate) async fn handle_request(
         Request::TrashPurge { id } => fileops::trash_purge(inner, id).await,
         Request::TrashEmpty => fileops::trash_empty(inner).await,
         Request::RemoteOp { device, op } => crate::remote_ops::send(inner, &device, op).await,
+        Request::ClipboardSend { device, text } => crate::clipboard::send(inner, &device, text).await,
+        Request::ClipboardPending => {
+            let p = inner.clipboard.take_pending();
+            Ok(Response::ClipboardPending { name: p.as_ref().map(|x| x.0.clone()), text: p.map(|x| x.1) })
+        }
         Request::OpsPending => fileops::ops_pending(inner),
         Request::OpsApprove { id } => crate::remote_ops::approve(inner, id).await,
         Request::OpsReject { id } => crate::remote_ops::reject(inner, id),
@@ -358,6 +363,8 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::DropWakeExport { .. } => "drop.wake_export",
         Request::DropSetRemote { .. } => "drop.remote",
         Request::DropCancel { .. } => "drop.cancel",
+        Request::ClipboardSend { .. } => "clipboard.send",
+        Request::ClipboardPending => "clipboard.pending",
         Request::DropHistory => "drop.history",
         Request::DropHistoryClear => "drop.history.clear",
         Request::DropContactRemote { .. } => "drop.contact_remote",

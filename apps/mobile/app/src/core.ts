@@ -138,6 +138,8 @@ export const videoSave = (path: string, p: VideoParams, mode: 'copy' | 'temp'): 
 export const videoProgress = (): Promise<number> => native().videoProgress();
 export const videoCancel = (): void => native().videoCancel();
 export const cacheDir = (): Promise<string> => native().cacheDir();
+/** Text der Zwischenablage (Android erlaubt das nur, solange die App im Vordergrund ist). */
+export const readClipboard = (): Promise<string | null> => native().readClipboard?.() ?? Promise.resolve(null);
 /** Geöffnete Dateien anderer Geräte aus dem Cache löschen (nach dem Entkoppeln). */
 export const clearRemoteCache = (): Promise<void> => native().clearRemoteCache?.() ?? Promise.resolve();
 export const haptic = (kind: 'select' | 'tick' | 'confirm' = 'select'): void => native().haptic?.(kind);

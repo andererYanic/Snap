@@ -1,7 +1,7 @@
 // Geräte, Sicherungen und Einstellungen (Phase 3b).
 import { LANGUAGES, lang, locale, setLanguage, t } from "./i18n";
 import { useCallback, useEffect, useState } from "react";
-import { api3, api5, applyFont, errorText, formatDate, humanSize, isCancelled, type Approval, type BackupJob, type Device, type Peer, type Setting, type Snapshot } from "./api";
+import { api, api3, api5, applyFont, errorText, formatDate, humanSize, isCancelled, type Approval, type BackupJob, type Device, type Peer, type Setting, type Snapshot } from "./api";
 import type { Toast } from "./App";
 import { Icon } from "./icons";
 
@@ -28,7 +28,23 @@ const CAPS: Record<string, string> = {
   "pin.request": t("Kopien anfordern"),
   "files.delete": t("In den Papierkorb"),
   "files.purge": t("Endgültig löschen"),
+  "clipboard.write": t("Zwischenablage füllen"),
   admin: t("Verwalten (alles)"),
+};
+/** Geräte, an die die Zwischenablage automatisch geht (nur lokal gespeichert). */
+export const clipAuto = (): string[] => {
+  try {
+    const v = JSON.parse(localStorage.getItem("snap.clipAuto") ?? "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+};
+const setClipAuto = (id: string, on: boolean) => {
+  const l = new Set(clipAuto());
+  if (on) l.add(id);
+  else l.delete(id);
+  localStorage.setItem("snap.clipAuto", JSON.stringify([...l]));
 };
 const FOLDER_CAPS = ["files.read", "files.write", "files.delete", "files.purge"];
 
@@ -97,6 +113,23 @@ export function Devices({ notify }: { notify: Notify }) {
                   {d.storage ? ` · ${t("{free} von {total} frei", { free: humanSize(d.storage.free), total: humanSize(d.storage.total) })}` : ""}
                 </div>
               </div>
+              <button
+                className="btn"
+                title={t("Zwischenablage senden")}
+                onClick={() =>
+                  navigator.clipboard
+                    .readText()
+                    .then((text) => api.clipboardSend(d.node_id, text))
+                    .then(() => notify({ text: t("Zwischenablage an „{name}“ gesendet.", { name: d.name }) }))
+                    .catch(fail(notify))
+                }
+              >
+                {t("Zwischenablage senden")}
+              </button>
+              <label className="small" title={t("Zwischenablage automatisch senden")}>
+                <input type="checkbox" checked={clipAuto().includes(d.node_id)} onChange={(e) => { setClipAuto(d.node_id, e.target.checked); reload(); }} />{" "}
+                {t("automatisch")}
+              </label>
               <button className="btn" onClick={() => setGrantFor(grantFor?.node_id === d.node_id ? null : d)}>{t("Recht geben …")}</button>
               <button className="btn" onClick={() => api3.pairRemove(d.node_id, d.name).then(reload).catch(fail(notify))}>{t("Entkoppeln …")}</button>
             </div>

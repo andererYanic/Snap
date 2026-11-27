@@ -771,3 +771,12 @@ Messung `core/tests/perf.rs::drop_remote` (Release, Loopback):
 - **Gruppen:** Sendungen an mehrere Empfänger laufen gleichzeitig; jede hat ihre eigene Verbindung
   und Kennung, die Dateien werden je Empfänger einmal gelesen (BLAKE3 beim Vorbereiten je Sendung).
 - **Fotoauswahl:** nur Zustand in der Oberfläche (Menge der Pfade), kein zusätzliches Laden.
+
+## Review 42 – Zwischenablage zwischen eigenen Geräten (2026-11-27)
+
+- Eine kurze QUIC-Verbindung je Sendung (wie die Fernoperationen), ein Rahmen ≤ 64 KB; die
+  Rechteprüfung ist eine indizierte Abfrage (gemessen in Review „auth_checks“).
+- Kein Dauerbetrieb: Android liest die Zwischenablage nur beim Öffnen der App; der Desktop prüft
+  höchstens alle 3 s und nur, solange das Fenster im Vordergrund ist und ein Gerät gewählt wurde.
+- Drosselung je Gerät: eine kleine Liste von Zeitpunkten (≤ 30) im Speicher.
+- Fuzz-Ziel `clip_request`: 4 Mio. Läufe in 60 s ohne Befund.

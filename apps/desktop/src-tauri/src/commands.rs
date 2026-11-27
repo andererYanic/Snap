@@ -749,6 +749,21 @@ pub async fn drop_send_contact(
     d.request(Request::DropSendContact { contact, paths: list, text: None }).await
 }
 
+/// Zwischenablage an ein eigenes Gerät (Text kommt aus der Web-Ansicht; das Zielgerät muss das
+/// Recht `clipboard.write` vergeben haben).
+#[tauri::command]
+pub async fn clipboard_send(d: State<'_, Daemon>, device: String, text: String) -> UiResult<Value> {
+    if text.len() > 64 * 1024 {
+        return Err(UiError::new("InvalidInput", "Zu viel Text (höchstens 64 KB)."));
+    }
+    d.request(Request::ClipboardSend { device, text }).await
+}
+
+#[tauri::command]
+pub async fn clipboard_pending(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::ClipboardPending).await
+}
+
 #[tauri::command]
 pub async fn drop_cancel(d: State<'_, Daemon>, id: u64) -> UiResult<Value> {
     d.request(Request::DropCancel { id }).await

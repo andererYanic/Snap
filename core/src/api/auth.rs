@@ -30,18 +30,21 @@ pub enum Capability {
     FilesDelete,
     /// Dateien in einem Ordner endgültig löschen (ohne Papierkorb) – nie Standard.
     FilesPurge,
+    /// Text in die Zwischenablage dieses Geräts legen – nie Standard.
+    Clipboard,
     /// Fernverwaltung (Einstellungen, Kopplungen) – für Geräte noch gesperrt.
     Admin,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 7] = [
+    pub const ALL: [Capability; 8] = [
         Capability::CatalogRead,
         Capability::FilesRead,
         Capability::FilesWrite,
         Capability::PinRequest,
         Capability::FilesDelete,
         Capability::FilesPurge,
+        Capability::Clipboard,
         Capability::Admin,
     ];
 
@@ -53,6 +56,7 @@ impl Capability {
             Capability::PinRequest => "pin.request",
             Capability::FilesDelete => "files.delete",
             Capability::FilesPurge => "files.purge",
+            Capability::Clipboard => "clipboard.write",
             Capability::Admin => "admin",
         }
     }
@@ -192,6 +196,8 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropWakeExport { .. }
         | Request::DropSetRemote { .. }
         | Request::DropCancel { .. }
+        | Request::ClipboardSend { .. }
+        | Request::ClipboardPending
         | Request::DropHistory
         | Request::DropHistoryClear
         | Request::DropContactRemote { .. }

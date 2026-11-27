@@ -143,6 +143,8 @@ fn main() {
             commands::drop_send_contact,
             commands::drop_set_remote,
             commands::drop_cancel,
+            commands::clipboard_send,
+            commands::clipboard_pending,
             commands::drop_history,
             commands::drop_history_clear,
             commands::drop_contact_remote,

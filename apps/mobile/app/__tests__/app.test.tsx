@@ -1546,3 +1546,55 @@ test('An mehrere senden; Fotos auswählen und per Snap Drop senden', async () =>
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Zwischenablage: Recht vergeben, senden, automatisch beim Öffnen, Empfang ohne Ping-Pong', async () => {
+  const { Devices } = require('../src/Pages');
+  const clip = require('../src/clipboard');
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let grants: { capability: string; folder: string | null }[] = [{ capability: 'catalog.read', folder: null }];
+  const prefs: Record<string, string> = {};
+  NativeModules.SnapCore.getPref = jest.fn(async (k: string) => prefs[k] ?? (k === 'lang' ? 'de' : null));
+  NativeModules.SnapCore.setPref = jest.fn((k: string, v: string) => { prefs[k] = v; });
+  NativeModules.SnapCore.readClipboard = jest.fn(async () => 'Einkaufsliste');
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'PairList') return JSON.stringify({ Devices: { devices: [{ node_id: 'n1', name: 'Laptop', paired_at: 0, last_sync_at: null, grants }] } });
+    if (req === 'ShareList') return JSON.stringify({ Shares: { shares: [] } });
+    if (req === 'Peers') return JSON.stringify({ Peers: { peers: [] } });
+    if (req.PairGrant) { calls.push(req); grants = [...grants, { capability: 'clipboard.write', folder: null }]; return JSON.stringify({ Success: { message: 'ok' } }); }
+    if (req.ClipboardSend) { calls.push(req); return JSON.stringify({ Success: { message: 'ok' } }); }
+    return origRequest(json);
+  });
+  const messages: string[] = [];
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<Devices theme={snapTheme(false)} notify={(m: string) => messages.push(m)} />); });
+    await flush();
+    await act(async () => { pressable(r, 'Laptop').props.onPress(); });
+    const fill = r.root.find((n) => n.props.accessibilityLabel === 'Darf meine Zwischenablage füllen' && typeof n.props.onValueChange === 'function');
+    expect(fill.props.value).toBe(false);
+    await act(async () => { await fill.props.onValueChange(true); });
+    await flush();
+    expect(calls).toContainEqual({ PairGrant: { device: 'n1', capability: 'clipboard.write', folder: null } });
+    await act(async () => { await pressable(r, 'Zwischenablage senden').props.onPress(); });
+    await flush();
+    expect(calls).toContainEqual({ ClipboardSend: { device: 'n1', text: 'Einkaufsliste' } });
+    // Automatisch: nur Neues, und nie den eben empfangenen Text zurück
+    const auto = r.root.find((n) => n.props.accessibilityLabel === 'Zwischenablage automatisch senden' && typeof n.props.onValueChange === 'function');
+    await act(async () => { await auto.props.onValueChange(true); });
+    calls.length = 0;
+    await clip.syncOnForeground();
+    expect(calls.filter((c: any) => c.ClipboardSend)).toHaveLength(0); // unverändert seit dem Senden
+    NativeModules.SnapCore.readClipboard = jest.fn(async () => 'Neu kopiert');
+    await clip.syncOnForeground();
+    expect(calls).toContainEqual({ ClipboardSend: { device: 'n1', text: 'Neu kopiert' } });
+    calls.length = 0;
+    clip.remember('Vom Laptop');
+    NativeModules.SnapCore.readClipboard = jest.fn(async () => 'Vom Laptop');
+    await clip.syncOnForeground();
+    expect(calls.filter((c: any) => c.ClipboardSend)).toHaveLength(0);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
