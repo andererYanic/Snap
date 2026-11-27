@@ -1,7 +1,7 @@
 // Einstellungen mit Unterkategorien (Allgemein, Geräte, Papierkorb, Über Snap). Die Geräte sind
 // hierher gewandert (vorher eigener Tab). Unterseiten gleiten herein, „Zurück“ führt zur Liste.
 import { useEffect, useState } from 'react';
-import { BackHandler, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, BackHandler, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { request, storageRoot } from './core';
 import { SignIdPage } from './SignId';
@@ -14,8 +14,14 @@ import { Text } from './text';
 import type { Theme } from './theme';
 import { themed } from './ui';
 import { Icon, type IconName } from './Icon';
+import { handoff, VaultPage } from './Vault';
+import Viewer from './Viewer';
+import PdfViewer from './PdfViewer';
+import TextViewer, { isText } from './TextViewer';
+import { isAudio, isMedia } from './thumbs';
+import * as core from './core';
 
-type Sub = 'general' | 'devices' | 'drop' | 'sign' | 'trash' | 'about';
+type Sub = 'general' | 'devices' | 'drop' | 'sign' | 'vault' | 'trash' | 'about';
 
 interface Props {
   theme: Theme;
@@ -60,7 +66,20 @@ export default function Settings(p: Props) {
     setDir('forward');
     setSub(x);
   };
-  const title = { general: t('Allgemein'), devices: t('Geräte'), drop: t('Snap Drop'), sign: t('Digitale ID'), trash: t('Papierkorb'), about: t('Über Snap') };
+  const title = { general: t('Allgemein'), devices: t('Geräte'), drop: t('Snap Drop'), sign: t('Digitale ID'), vault: t('Tresor'), trash: t('Papierkorb'), about: t('Über Snap') };
+  // Geöffnete Tresor-Datei (entschlüsselt im privaten Ordner, beim Sperren gelöscht)
+  const [vaultFile, setVaultFile] = useState<{ path: string; name: string } | null>(null);
+  const openVaultFile = (path: string, name: string) => {
+    if (isMedia(name) || isAudio(name) || /\.pdf$/i.test(name) || isText(name)) {
+      setVaultFile({ path, name });
+    } else {
+      // Andere Formate nur mit Rückfrage an eine fremde App geben
+      Alert.alert(t('Mit anderer App öffnen?'), t('„{name}“ wird dafür unverschlüsselt an eine andere App übergeben.', { name }), [
+        { text: t('Abbrechen'), style: 'cancel' },
+        { text: t('Öffnen'), onPress: () => { handoff.at = Date.now(); core.openFile(path).catch((e) => p.notify(String(e?.message ?? e))); } },
+      ]);
+    }
+  };
   const dropMeta = dropMode === 'everyone' ? t('Für alle sichtbar') : dropMode === 'contacts' ? t('Für Kontakte sichtbar') : t('Unsichtbar · Senden an Geräte in der Nähe');
   const online = devices?.filter((d) => d.online).length ?? 0;
 
@@ -79,6 +98,16 @@ export default function Settings(p: Props) {
         {sub === 'devices' && <Devices theme={p.theme} notify={p.notify} />}
         {sub === 'drop' && <DropPage theme={p.theme} notify={p.notify} />}
         {sub === 'sign' && <SignIdPage theme={p.theme} notify={p.notify} downloads={async () => `${await storageRoot()}/Download`} />}
+        {sub === 'vault' && <VaultPage theme={p.theme} notify={p.notify} onOpen={openVaultFile} />}
+        {vaultFile && (isMedia(vaultFile.name) || isAudio(vaultFile.name)) && (
+          <Viewer items={[vaultFile]} start={0} onClose={() => setVaultFile(null)} />
+        )}
+        {vaultFile && /\.pdf$/i.test(vaultFile.name) && (
+          <PdfViewer path={vaultFile.path} name={vaultFile.name} notify={p.notify} onChanged={() => {}} onClose={() => setVaultFile(null)} />
+        )}
+        {vaultFile && isText(vaultFile.name) && !/\.pdf$/i.test(vaultFile.name) && (
+          <TextViewer path={vaultFile.path} name={vaultFile.name} theme={p.theme} onClose={() => setVaultFile(null)} />
+        )}
         {sub === 'trash' && <TrashPage theme={p.theme} notify={p.notify} />}
         {sub === 'about' && (
           <ScrollView contentContainerStyle={s.page}>
@@ -124,6 +153,8 @@ export default function Settings(p: Props) {
           <Row k="drop" icon="nearby" label={t('Snap Drop')} meta={dropMeta} />
           <View style={s.sep} />
           <Row k="sign" icon="sign" label={t('Digitale ID')} meta={t('PDFs signieren, Unterschrift')} />
+          <View style={s.sep} />
+          <Row k="vault" icon="shield" label={t('Tresor')} meta={t('Dateien mit Passwort verschlüsselt')} />
         </View>
         <View style={s.card}>
           <Row k="trash" icon="trash" label={t('Papierkorb')} meta={t('Gelöschte Dateien wiederherstellen')} />

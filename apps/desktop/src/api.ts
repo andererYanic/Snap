@@ -338,3 +338,19 @@ export interface PinInfo {
   two_way: boolean;
   held_deletes: number;
 }
+
+// ---------------------------------------------------------------- Tresor
+export interface VaultStatus { exists: boolean; unlocked: boolean; entries: number | null; auto_lock_secs: number; retry_after_secs: number }
+export interface VaultEntry { id: string; name: string; size: number; added: number }
+export const vault = {
+  status: () => invoke<VaultStatus>("vault_status"),
+  create: (password: string) => invoke<{ recovery_code: string }>("vault_create", { password }),
+  unlock: (password: string) => invoke<VaultStatus>("vault_unlock", { password }),
+  recover: (code: string, password: string) => invoke<VaultStatus>("vault_recover", { code, password }),
+  lock: () => invoke<unknown>("vault_lock"),
+  list: () => invoke<{ entries: VaultEntry[] }>("vault_list").then((r) => r.entries ?? []),
+  add: () => invoke<{ message: string }>("vault_add"),
+  open: (id: string, name: string) => invoke<unknown>("vault_open", { id, name }),
+  export: (id: string) => invoke<{ path: string }>("vault_export", { id }),
+  remove: (id: string, name: string) => invoke<unknown>("vault_remove", { id, name }),
+};

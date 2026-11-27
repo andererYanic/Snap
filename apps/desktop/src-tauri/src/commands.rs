@@ -801,6 +801,102 @@ pub async fn clipboard_send(d: State<'_, Daemon>, device: String, text: String) 
     d.request(Request::ClipboardSend { device, text }).await
 }
 
+// ---------------------------------------------------------------- Tresor
+
+fn pw(s: String) -> space_core::fileops::archive::Password {
+    space_core::fileops::archive::Password(s)
+}
+
+#[tauri::command]
+pub async fn vault_status(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::VaultStatus).await
+}
+
+#[tauri::command]
+pub async fn vault_create(d: State<'_, Daemon>, password: String) -> UiResult<Value> {
+    d.request(Request::VaultCreate { password: pw(password) }).await
+}
+
+#[tauri::command]
+pub async fn vault_unlock(d: State<'_, Daemon>, password: String) -> UiResult<Value> {
+    d.request(Request::VaultUnlock { password: pw(password) }).await
+}
+
+#[tauri::command]
+pub async fn vault_recover(d: State<'_, Daemon>, code: String, password: String) -> UiResult<Value> {
+    d.request(Request::VaultRecover { code: pw(code), new_password: pw(password) }).await
+}
+
+#[tauri::command]
+pub async fn vault_lock(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::VaultLock).await
+}
+
+#[tauri::command]
+pub async fn vault_list(d: State<'_, Daemon>) -> UiResult<Value> {
+    d.request(Request::VaultList).await
+}
+
+/// Dateien über den nativen Dialog wählen und aufnehmen; Originale nur nach Rückfrage löschen.
+#[tauri::command]
+pub async fn vault_add(app: AppHandle, d: State<'_, Daemon>) -> UiResult<Value> {
+    let app2 = app.clone();
+    let picked = tokio::task::spawn_blocking(move || {
+        app2.dialog().file().set_title(tr("In den Tresor", &[])).blocking_pick_files()
+    })
+    .await
+    .unwrap_or(None);
+    let Some(files) = picked else { return Err(cancelled()) };
+    let list: Vec<std::path::PathBuf> = files.into_iter().filter_map(|f| f.into_path().ok()).collect();
+    if list.is_empty() {
+        return Err(cancelled());
+    }
+    let remove = confirm(
+        &app,
+        tr("Originale löschen?", &[]),
+        tr("Die Dateien liegen dann nur noch verschlüsselt im Tresor. Gelöscht wird endgültig, nicht in den Papierkorb.", &[]),
+        tr("Originale löschen", &[]),
+    )
+    .await;
+    d.request(Request::VaultAdd { paths: list, remove }).await
+}
+
+/// Zum Ansehen entschlüsseln und mit dem Standardprogramm öffnen (nach Rückfrage).
+#[tauri::command]
+pub async fn vault_open(app: AppHandle, d: State<'_, Daemon>, id: String, name: String) -> UiResult<Value> {
+    let name: String = name.chars().filter(|c| !c.is_control()).take(120).collect();
+    let text = tr("„{name}“ wird dafür unverschlüsselt an ein anderes Programm übergeben.", &[("name", &name)]);
+    if !confirm(&app, tr("Mit anderem Programm öffnen?", &[]), text, tr("Öffnen", &[])).await {
+        return Err(cancelled());
+    }
+    let r = d.request(Request::VaultOpen { id }).await?;
+    if let Some(path) = r.get("path").and_then(|p| p.as_str()) {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| UiError::new("Internal", format!("Kein Programm zum Öffnen: {e}")))?;
+    }
+    Ok(r)
+}
+
+#[tauri::command]
+pub async fn vault_export(d: State<'_, Daemon>, id: String) -> UiResult<Value> {
+    let dest = directories::UserDirs::new()
+        .and_then(|u| u.download_dir().map(|p| p.to_path_buf()))
+        .ok_or_else(|| UiError::new("NotFound", "Kein Download-Ordner."))?;
+    d.request(Request::VaultExport { id, dest_dir: dest }).await
+}
+
+#[tauri::command]
+pub async fn vault_remove(app: AppHandle, d: State<'_, Daemon>, id: String, name: String) -> UiResult<Value> {
+    let name: String = name.chars().filter(|c| !c.is_control()).take(120).collect();
+    let text = tr("„{name}“ aus dem Tresor löschen? Das lässt sich nicht rückgängig machen.", &[("name", &name)]);
+    if !confirm(&app, tr("Endgültig löschen", &[]), text, tr("Löschen", &[])).await {
+        return Err(cancelled());
+    }
+    d.request(Request::VaultRemove { id }).await
+}
+
 /// Gespiegelte Ordner anderer Geräte (Pins).
 #[tauri::command]
 pub async fn pin_list(d: State<'_, Daemon>) -> UiResult<Value> {

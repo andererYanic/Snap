@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as core from './src/core';
+import { handoff } from './src/Vault';
 import Files from './src/Files';
 import { initLanguage, t } from './src/i18n';
 import Settings from './src/Settings';
@@ -91,6 +92,10 @@ export default function App() {
   // Nach Rückkehr aus den Systemeinstellungen erneut prüfen
   useEffect(() => {
     const sub = AppState.addEventListener('change', (st) => {
+      // Tresor beim Verlassen der App sperren (außer eine andere App liest gerade eine Tresor-Datei)
+      if (st === 'background' && ready === 'ok' && Date.now() - handoff.at > 5 * 60_000) {
+        core.request('VaultLock').catch(() => {});
+      }
       if (st === 'active' && ready === 'permission') {
         boot();
       }
