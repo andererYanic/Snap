@@ -835,3 +835,10 @@ Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP
 - SVG: Bereinigung per regulären Ausdrücken über höchstens 2 MB Text, einmal je Öffnen.
 - Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
   Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.
+
+## Review 51 – Speicherübersicht am Handy (2026-11-27)
+
+- Nutzt die vorhandene Speicheranalyse des Kerns (eine Abfrage über den Teilbaum im lokalen Index,
+  kein erneutes Durchsuchen; gemessen in Review „storage_analysis“). Je geöffnetem Ordner genau eine
+  Anfrage in `spawn_blocking`, die Oberfläche zeigt bis dahin einen Fortschritt.
+- Neu nur die Kategorie „Apps“ (APK/APKS/XAPK) – eine weitere Endungszuordnung, keine Mehrkosten.

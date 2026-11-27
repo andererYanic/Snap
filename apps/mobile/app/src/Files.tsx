@@ -23,6 +23,7 @@ import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
 import { ApkSheet, isApk } from './Apk';
 import ArchiveViewer, { isArchiveListable } from './ArchiveViewer';
+import StoragePage from './Storage';
 import SvgViewer, { isSvg } from './SvgViewer';
 import Viewer, { type MediaItem } from './Viewer';
 import { fadeIn, LONG_PRESS, m, pageIn, popIn, popOut, toastIn } from './motion';
@@ -143,6 +144,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   // Geöffnetes anderes Gerät (Startseite → Gerät antippen)
   const [remoteDev, setRemoteDev] = useState<RemoteDevice | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
+  const [analyze, setAnalyze] = useState(false);
   const [folders, setFolders] = useState<[string, string][]>([]);
   // Gekoppelte Geräte mit gemeldetem Speicher (Startseite)
   const [remote, setRemote] = useState<{ node_id: string; name: string; online?: boolean; storage?: { total: number; free: number } }[]>([]);
@@ -654,6 +656,14 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
                 )}
               </View>
             </Tap>
+            <View style={s.divider} />
+            <Tap theme={theme} onPress={() => setAnalyze(true)} style={s.placeRow} label={t('Was belegt Platz?')}>
+              <Icon name="search" size={24} color={theme.text2 as string} />
+              <View style={s.placeText}>
+                <Text style={s.cardTitle} numberOfLines={1}>{t('Was belegt Platz?')}</Text>
+                <Text style={s.meta}>{t('Nach Art, größte Dateien und Ordner')}</Text>
+              </View>
+            </Tap>
             {remote.map((d) => {
               const dUsed = d.storage ? d.storage.total - d.storage.free : 0;
               return (
@@ -1024,6 +1034,15 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
         </View>
       </Modal>
 
+      {analyze && (
+        <StoragePage
+          root={root}
+          theme={theme}
+          notify={notify}
+          onClose={() => setAnalyze(false)}
+          onOpenFolder={(dir) => { setAnalyze(false); go(dir, 'forward'); }}
+        />
+      )}
       {remoteDev && (
         <View style={StyleSheet.absoluteFill}>
           <RemoteBrowser
@@ -1221,6 +1240,7 @@ const styles = themed((th: Theme) =>
     group: { borderRadius: 12, backgroundColor: th.surface, overflow: 'hidden' },
     groupLine: { height: StyleSheet.hairlineWidth, backgroundColor: th.line, marginLeft: 56 },
     placeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, paddingHorizontal: 16, paddingVertical: 14 },
+    divider: { height: StyleSheet.hairlineWidth, backgroundColor: th.surface2, marginLeft: 56 },
     placeText: { flex: 1 },
     placeTop: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
     placeNum: { color: th.text2, fontSize: 13 },

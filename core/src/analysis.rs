@@ -69,6 +69,7 @@ pub fn category(ext: Option<&str>) -> &'static str {
         "mp3" | "flac" | "m4a" | "ogg" | "oga" | "opus" | "wav" | "aac" | "wma" | "aiff" => "Musik",
         "pdf" | "doc" | "docx" | "odt" | "txt" | "md" | "rtf" | "xls" | "xlsx" | "ods" | "csv" | "ppt" | "pptx"
         | "odp" | "epub" => "Dokumente",
+        "apk" | "apks" | "xapk" | "apkm" | "aab" => "Apps",
         "zip" | "tar" | "gz" | "tgz" | "7z" | "rar" | "xz" | "zst" | "bz2" | "iso" | "dmg" => "Archive",
         "rs" | "py" | "js" | "ts" | "c" | "h" | "cpp" | "go" | "java" | "kt" | "swift" | "sh" | "json" | "toml"
         | "yaml" | "yml" | "html" | "css" => "Programmcode",
@@ -328,6 +329,16 @@ pub fn duplicates(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn kategorien_wie_bei_android() {
+        assert_eq!(category(Some("apk")), "Apps");
+        assert_eq!(category(Some("xapk")), "Apps");
+        assert_eq!(category(Some("jpg")), "Bilder");
+        assert_eq!(category(Some("pdf")), "Dokumente");
+        assert_eq!(category(None), "Sonstiges");
+    }
+
     use super::*;
     use std::path::PathBuf;
 
