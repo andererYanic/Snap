@@ -1748,29 +1748,6 @@ test('Untertitel neben dem Video werden gefunden', () => {
   expect(tracks[2].type).toBe('text/vtt');
 });
 
-test('Texterkennung: Ergebnis zeigen und kopieren, sonst Hinweis', async () => {
-  const { useOcr } = require('../src/Ocr');
-  const messages: string[] = [];
-  let api: any;
-  function Probe() {
-    api = useOcr((m: string) => messages.push(m));
-    return api.sheet;
-  }
-  let r!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => { r = mount(<Probe />); });
-  await act(async () => { api.run({ image: '/storage/emulated/0/DCIM/rechnung.jpg' }); });
-  await flush();
-  expect(NativeModules.SnapCore.ocrImage).toHaveBeenCalledWith('/storage/emulated/0/DCIM/rechnung.jpg');
-  expect(JSON.stringify(r.toJSON())).toContain('Gesamt: 19,99');
-  await act(async () => { await pressable(r, 'Kopieren').props.onPress(); });
-  expect(NativeModules.SnapCore.copyText).toHaveBeenCalledWith('Rechnung Nr. 42\nGesamt: 19,99 €');
-  // PDF-Seite ohne Ergebnis → kein Fenster, sondern Hinweis
-  await act(async () => { r.unmount(); r = mount(<Probe />); });
-  await act(async () => { api.run({ pdf: '/storage/emulated/0/scan.pdf', page: 2 }); });
-  await flush();
-  expect(NativeModules.SnapCore.ocrPdfPage).toHaveBeenCalledWith('/storage/emulated/0/scan.pdf', 2);
-  expect(r.toJSON()).toBeNull();
-  expect(messages).toContain('Texterkennung ist hier nicht möglich.');
 test('Tresor: einrichten mit einmaligem Code, entsperren, öffnen', async () => {
   const { VaultPage } = require('../src/Vault');
   const { snapTheme } = require('../src/theme');
@@ -1812,4 +1789,29 @@ test('Tresor: einrichten mit einmaligem Code, entsperren, öffnen', async () => 
   } finally {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
+});
+
+test('Texterkennung: Ergebnis zeigen und kopieren, sonst Hinweis', async () => {
+  const { useOcr } = require('../src/Ocr');
+  const messages: string[] = [];
+  let api: any;
+  function Probe() {
+    api = useOcr((m: string) => messages.push(m));
+    return api.sheet;
+  }
+  let r!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { r = mount(<Probe />); });
+  await act(async () => { api.run({ image: '/storage/emulated/0/DCIM/rechnung.jpg' }); });
+  await flush();
+  expect(NativeModules.SnapCore.ocrImage).toHaveBeenCalledWith('/storage/emulated/0/DCIM/rechnung.jpg');
+  expect(JSON.stringify(r.toJSON())).toContain('Gesamt: 19,99');
+  await act(async () => { await pressable(r, 'Kopieren').props.onPress(); });
+  expect(NativeModules.SnapCore.copyText).toHaveBeenCalledWith('Rechnung Nr. 42\nGesamt: 19,99 €');
+  // PDF-Seite ohne Ergebnis → kein Fenster, sondern Hinweis
+  await act(async () => { r.unmount(); r = mount(<Probe />); });
+  await act(async () => { api.run({ pdf: '/storage/emulated/0/scan.pdf', page: 2 }); });
+  await flush();
+  expect(NativeModules.SnapCore.ocrPdfPage).toHaveBeenCalledWith('/storage/emulated/0/scan.pdf', 2);
+  expect(r.toJSON()).toBeNull();
+  expect(messages).toContain('Texterkennung ist hier nicht möglich.');
 });
