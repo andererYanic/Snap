@@ -535,6 +535,8 @@ pub enum Request {
     },
     /// Klingeln auf diesem Gerät beenden (alle Oberflächen hören auf).
     RingStop,
+    /// Sicherheitsübersicht: Rechte, Freigaben, Links, Sichtbarkeit, Tresor, Hinweise. Nur lokal.
+    SecurityOverview,
     /// Tresor: Zustand (gibt es ihn, entsperrt, Anzahl Dateien).
     VaultStatus,
     /// Tresor anlegen; Antwort enthält den Wiederherstellungscode (nur dieses eine Mal).
@@ -938,6 +940,7 @@ pub enum Response {
     UploadRules {
         rules: Vec<crate::database::UploadRule>,
     },
+    SecurityOverview(crate::security::SecurityReport),
     VaultStatus(crate::vault::VaultStatus),
     /// Nur beim Anlegen: zum Aufschreiben anzeigen, nie speichern.
     VaultCreated {

@@ -859,3 +859,9 @@ Gemessen (Release, Host, `core/tests/perf.rs` › `vault_crypto`):
   zur Übertragung ohne Frist (< 1 ms).
 - Aufräumen alle 5 Minuten in `spawn_blocking`: eine indizierte Abfrage (`idx_drop_expiry`) nach
   höchstens 500 fälligen Pfaden; ohne fällige Einträge kein Plattenzugriff außer der Abfrage.
+
+## Review 52 – Sicherheitsübersicht (2026-11-27)
+
+- Eine Anfrage in `spawn_blocking`: Geräte mit Rechten (indizierte Abfragen je Gerät), Freigaben,
+  Links, die letzten 1000 Audit-Einträge und Zustandsabfragen im Speicher – im Test
+  (`core/tests/security.rs`) im einstelligen Millisekundenbereich. Nur beim Öffnen der Seite.

@@ -1788,3 +1788,31 @@ test('Tresor: einrichten mit einmaligem Code, entsperren, öffnen', async () => 
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Sicherheitsübersicht: Hinweise übersetzt, Rechte lesbar', async () => {
+  const { SecurityPage, hintText, rightLabel } = require('../src/Security');
+  const { snapTheme } = require('../src/theme');
+  expect(rightLabel('files.purge: /storage/emulated/0/DCIM')).toBe('Endgültig löschen · DCIM');
+  expect(hintText({ level: 'warn', code: 'denied', text: 'x', count: 3 })).toContain('3 abgewiesene');
+  expect(hintText({ level: 'info', code: 'unbekannt', text: 'Rückfall' })).toBe('Rückfall');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    if (JSON.parse(json) === 'SecurityOverview') {
+      return JSON.stringify({ SecurityOverview: {
+        devices: [{ node_id: 'n1', name: 'Laptop', rights: ['catalog.read', 'files.purge: /storage/emulated/0/DCIM'], strong: true, online: false }],
+        shares: [], all_files: true, links_active: 0, drop_mode: 'Off', vault_exists: true, vault_unlocked: false, denied_7d: 0, relay_public: true,
+        hints: [{ level: 'warn', code: 'purge', text: '…', name: 'Laptop' }],
+      } });
+    }
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<SecurityPage theme={snapTheme(false)} />); });
+    await flush();
+    const texts = r.root.findAll((n) => typeof n.props.children === 'string').map((n) => n.props.children as string);
+    expect(texts).toEqual(expect.arrayContaining(['Laptop', '„Laptop“ darf Dateien endgültig löschen (ohne Papierkorb).', 'Gesperrt']));
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
