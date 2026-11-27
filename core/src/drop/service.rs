@@ -1658,6 +1658,7 @@ impl DropService {
     ) -> Result<(String, bool)> {
         let session = identity::session_value(conn)?;
         let code = identity::check_code(&session);
+        self.db.events().emit(Event::DropSending { id, code: code.clone() });
         let (mut send, mut recv) = tokio::time::timeout(IO_TIMEOUT, conn.open_bi()).await??;
         write_frame_max(&mut send, &self.probe_for(&session)?, MAX_FRAME).await?;
         let card: Card = tokio::time::timeout(IO_TIMEOUT, read_frame_max(&mut recv, MAX_FRAME)).await??;

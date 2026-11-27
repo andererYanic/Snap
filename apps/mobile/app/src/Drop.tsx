@@ -62,7 +62,7 @@ function Sheet({ theme, onClose, children }: { theme: Theme; onClose: () => void
 
 // ------------------------------------------------------------------ Senden
 
-type SendState = { peer: string; phase: 'waiting' | 'sending' | 'done' | 'failed'; done: number; total: number; error?: string; id?: number };
+type SendState = { peer: string; phase: 'waiting' | 'sending' | 'done' | 'failed'; done: number; total: number; error?: string; id?: number; code?: string };
 
 export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
   paths: string[]; text?: string | null; theme: Theme; onClose: () => void; notify: (text: string) => void;
@@ -128,6 +128,9 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
     const off = core.onEvent((ev) => {
       if (ev.type === 'DropNearbyChanged') {
         refresh();
+      } else if (ev.type === 'DropSending') {
+        // Prüfcode vor dem Annehmen: muss beim Empfänger genauso stehen
+        setState((st) => (st && (st.id === undefined || st.id === ev.id) && st.phase === 'waiting' ? { ...st, id: ev.id, code: ev.code } : st));
       } else if (ev.type === 'DropProgress' && !ev.incoming) {
         // Das erste Lebenszeichen (0 Byte) kommt vor dem Annehmen und liefert die Kennung
         setState((st) =>
@@ -290,7 +293,9 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
             // Text braucht ein gemeinsames Netz (der Offline-Weg trägt nur Dateien)
             const unavailable = textOnly && p.offline;
             const meta = mine?.phase === 'waiting'
-              ? t('Wartet auf Annahme …')
+              ? mine.code
+                ? t('Wartet auf Annahme … Prüfcode {code} – beim Empfänger muss derselbe stehen.', { code: mine.code })
+                : t('Wartet auf Annahme …')
               : mine?.phase === 'sending'
                 ? `${size(mine.done)} / ${size(mine.total)}`
                 : mine?.phase === 'done'
@@ -351,7 +356,9 @@ export function DropSendSheet({ paths, text = null, theme, onClose, notify }: {
                     <Text style={[s.meta, state?.peer === `contact:${c.key}` && state.phase === 'failed' && s.dangerText]} numberOfLines={2}>
                       {state?.peer === `contact:${c.key}` && state.phase !== 'failed'
                         ? state.phase === 'waiting'
-                          ? t('Wartet auf Annahme …')
+                          ? state.code
+                            ? t('Wartet auf Annahme … Prüfcode {code} – beim Empfänger muss derselbe stehen.', { code: state.code })
+                            : t('Wartet auf Annahme …')
                           : state.phase === 'sending'
                             ? `${size(state.done)} / ${size(state.total)}`
                             : t('Gesendet')

@@ -466,6 +466,7 @@
     "Warte auf das andere Gerät …": "Waiting for the other device …",
     "Wartende Anfragen anderer Geräte": "Pending requests from other devices",
     "Wartet auf Annahme …": "Waiting for acceptance …",
+    "Wartet auf Annahme … Prüfcode {code} – beim Empfänger muss derselbe stehen.": "Waiting for acceptance … check code {code} – the recipient must see the same.",
     "Was soll „{name}“ von diesem Gerät sehen?": "What should “{name}” see on this device?",
     "Wecken dürfen": "Who may wake",
     "Weiter": "Next",
