@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 17;
+const SCHEMA_VERSION: i64 = 18;
 /// So lange merkt sich ein Gerät, wen es entkoppelt hat (um es der Gegenseite sagen zu können).
 pub const UNPAIRED_KEEP_SECS: i64 = 90 * 24 * 3600;
 
@@ -747,6 +747,18 @@ impl DatabaseManager {
             if !has {
                 conn.execute_batch("ALTER TABLE pins ADD COLUMN two_way INTEGER NOT NULL DEFAULT 0;")?;
             }
+        }
+        if version < 18 {
+            // Migration -> 18: ablaufende Snap-Drop-Sendungen (Pfad → Zeitpunkt für den Papierkorb).
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS drop_expiry (
+                    path       TEXT PRIMARY KEY,
+                    expires_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_drop_expiry ON drop_expiry(expires_at);
+                ",
+            )?;
         }
         if version > 0 && version < 3 {
             // Migration 2 -> 3: bestehende Kopplungen behalten ihr bisheriges Recht.
@@ -2081,6 +2093,48 @@ impl DatabaseManager {
             [],
         )?;
         Ok(())
+    }
+
+    /// Empfangene Dateien zum Ablauf vormerken.
+    pub fn add_drop_expiry(&self, paths: &[String], expires_at: i64) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for p in paths.iter().take(1000) {
+            tx.execute(
+                "INSERT OR REPLACE INTO drop_expiry (path, expires_at) VALUES (?1, ?2)",
+                params![p, expires_at],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Abgelaufene Dateien (höchstens `limit`) und aus der Liste nehmen.
+    pub fn take_expired_drops(&self, now: i64, limit: u32) -> Result<Vec<String>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let paths: Vec<String> = {
+            let mut stmt =
+                tx.prepare("SELECT path FROM drop_expiry WHERE expires_at <= ?1 ORDER BY expires_at LIMIT ?2")?;
+            let rows = stmt.query_map(params![now, limit], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            rows
+        };
+        for p in &paths {
+            tx.execute("DELETE FROM drop_expiry WHERE path = ?1", params![p])?;
+        }
+        tx.commit()?;
+        Ok(paths)
+    }
+
+    /// Ablaufzeitpunkte zu Pfaden (für die Anzeige im Verlauf).
+    pub fn drop_expiry_of(&self, path: &str) -> Result<Option<i64>> {
+        let conn = self.read();
+        let mut stmt = conn.prepare_cached("SELECT expires_at FROM drop_expiry WHERE path = ?1")?;
+        let mut rows = stmt.query(params![path])?;
+        Ok(match rows.next()? {
+            Some(r) => Some(r.get(0)?),
+            None => None,
+        })
     }
 
     /// Neueste empfangene Sendungen: (id, Zeit, Absender, Art, Pfade).

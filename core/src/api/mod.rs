@@ -254,6 +254,9 @@ pub(crate) async fn handle_request(
             if info.key == "pin_max_gb" {
                 inner.pin_notify.notify_one();
             }
+            if info.key == "drop_expire_days" {
+                inner.drop.set_expire_days(inner.settings.drop_expire_days());
+            }
             inner.db.events().emit(crate::events::Event::SettingChanged { key: info.key.clone(), value: info.value });
             Response::Settings { items: inner.settings.list() }
         }),
