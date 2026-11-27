@@ -90,9 +90,35 @@ pub fn load_or_create_secret_key(path: &Path) -> Result<SecretKey> {
     }
 }
 
+/// Private Datei (0600) atomar schreiben: erst eine temporäre Datei daneben, dann umbenennen.
+pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let _ = fs::remove_file(&tmp);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .with_context(|| format!("{} nicht anlegbar", tmp.display()))?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_file_is_0600_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x.json");
+        write_private_file(&p, b"eins").unwrap();
+        write_private_file(&p, b"zwei").unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"zwei");
+        assert_eq!(fs::metadata(&p).unwrap().mode() & 0o777, 0o600);
+    }
 
     #[test]
     fn key_roundtrip_and_permissions() {

@@ -715,3 +715,22 @@ Messung `core/tests/perf.rs::unpair_cleanup` (Release) und `core/tests/unpair.rs
 - Die Entkoppelt-Prüfung beim Übernehmen kostet eine indizierte Abfrage je Herkunft und Seite.
 - Offline-Kopien und Vorschaubilder räumt die Pin-Schleife danach im Hintergrund auf; die
   Vorschaubilder liegen je Gerät in einem eigenen Ordner und verschwinden mit einem Aufruf.
+
+## Review 38 – Snap Drop im Hintergrund (2026-11-27)
+
+Messung `core/tests/perf.rs::drop_wake` (Release):
+
+| Fall | Zeit |
+|---|---|
+| Weck-Tags prüfen: 500 Kontakte × 3 Epochen (Rust; Android rechnet dasselbe mit `javax.crypto`) | 0,3 ms |
+| Weck-Schlüssel-Datei für 500 Kontakte schreiben (bei jeder Kontaktänderung, 0600, atomar) | 1,2 ms |
+
+- **Akku, Standard (Bluetooth-Wecken):** Snap läuft nicht. Die Suche filtert der Bluetooth-Chip
+  (Hardware-Filter, `SCAN_MODE_LOW_POWER`, wo möglich ein Treffer je Gerät statt je Paket).
+  Geweckt wird nur bei passendem Tag; der Dienst läuft dann gut 3 Minuten und endet von selbst.
+  Drosselung: höchstens alle 20 s, 30-mal je Stunde.
+- **Akku, „Auch über WLAN“:** dauerhafter Vordergrunddienst mit Multicast-Sperre und
+  Bluetooth-Werbung (`ADVERTISE_MODE_LOW_POWER`) – bewusst als „braucht mehr Akku“ gekennzeichnet.
+- **Sender:** Weck-Werbung nur nach Antippen eines Kontakts (90 s) bzw. beim Öffnen des
+  Sende-Fensters ohne Tag (30 s), danach Ende.
+- Messung auf dem Gerät (Akkuverbrauch über 24 h mit eingeschaltetem Wecken) steht aus.

@@ -25,6 +25,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
+import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -61,6 +62,8 @@ class SnapDropModule(private val ctx: ReactApplicationContext) : ReactContextBas
     const val EVENT = "snap-drop-ble"
     const val GATT_TIMEOUT_MS = 12_000L
     const val REREAD_MS = 30_000L
+    /** Werbung der geöffneten App läuft (der Hintergrunddienst startet dann keine zweite). */
+    @Volatile var foregroundAdvertising = false
   }
 
   private val main = Handler(Looper.getMainLooper())
@@ -234,6 +237,7 @@ class SnapDropModule(private val ctx: ReactApplicationContext) : ReactContextBas
         adv.startAdvertising(settings, ad, cb)
         advertising = cb
       }
+      foregroundAdvertising = true
       promise.resolve(true)
     } catch (e: Throwable) {
       promise.reject("ble", e.message ?: e.toString())
@@ -267,6 +271,7 @@ class SnapDropModule(private val ctx: ReactApplicationContext) : ReactContextBas
 
   @ReactMethod
   fun stopAdvertise() {
+    foregroundAdvertising = false
     try {
       advertising?.let { bt?.adapter?.bluetoothLeAdvertiser?.stopAdvertising(it) }
     } catch (_: Throwable) {}
@@ -275,6 +280,65 @@ class SnapDropModule(private val ctx: ReactApplicationContext) : ReactContextBas
     server = null
     info = ByteArray(0)
     synchronized(subscribed) { subscribed.clear() }
+  }
+
+  // --- Im Hintergrund empfangen (siehe DropWake, DropBgService) ---
+
+  /** Einstellungen übernehmen: Weck-Suche, Dauerdienst über WLAN, wer wecken darf. */
+  @ReactMethod
+  fun setBackground(enabled: Boolean, wlan: Boolean, who: String) {
+    DropWake.prefs(ctx).edit()
+      .putBoolean(DropWake.K_ENABLED, enabled)
+      .putBoolean(DropWake.K_WLAN, wlan)
+      .putString(DropWake.K_WHO, if (who == "visibility") "visibility" else "contacts")
+      .apply()
+    DropWake.sync(ctx.applicationContext)
+  }
+
+  /** Ende eines „Alle“-Fensters (Unix-Sekunden, 0 = keins) – für das Wecken „wie Sichtbarkeit“. */
+  @ReactMethod
+  fun setEveryoneUntil(until: Double) {
+    DropWake.prefs(ctx).edit().putLong(DropWake.K_EVERYONE_UNTIL, until.toLong()).apply()
+  }
+
+  @ReactMethod
+  fun backgroundState(promise: Promise) {
+    val p = DropWake.prefs(ctx)
+    val m = com.facebook.react.bridge.Arguments.createMap()
+    m.putBoolean("enabled", p.getBoolean(DropWake.K_ENABLED, false))
+    m.putBoolean("wlan", p.getBoolean(DropWake.K_WLAN, false))
+    m.putString("who", p.getString(DropWake.K_WHO, "contacts"))
+    m.putBoolean("batteryExempt", DropBgService.exempt(ctx))
+    m.putBoolean("supported", Build.VERSION.SDK_INT >= 26 && DropWake.selfTest())
+    promise.resolve(m)
+  }
+
+  /** Systemdialog „Akku-Optimierung aufheben“ (nötig, damit das Wecken den Dienst starten darf). */
+  @ReactMethod
+  fun requestBatteryExempt() {
+    if (Build.VERSION.SDK_INT < 23 || DropBgService.exempt(ctx)) return
+    try {
+      val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, android.net.Uri.parse("package:${ctx.packageName}"))
+      ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: Throwable) {}
+  }
+
+  /** Einen Kontakt wecken (Tag aus seinem Weck-Schlüssel). `false`, wenn nicht möglich. */
+  @ReactMethod
+  fun wake(contact: String, seconds: Int, promise: Promise) {
+    val tag = DropWake.tagFor(ctx, contact) ?: return promise.resolve(false)
+    promise.resolve(DropWake.advertise(ctx, tag, seconds))
+  }
+
+  /** „Jemand sucht“ – weckt nur Geräte mit laufendem „Alle“-Fenster, die das erlauben. */
+  @ReactMethod
+  fun wakeAll(seconds: Int, promise: Promise) {
+    promise.resolve(DropWake.advertise(ctx, null, seconds))
+  }
+
+  @ReactMethod
+  fun stopWake() {
+    DropWake.stopAdvertise(ctx)
   }
 
   // --- Suchen: Scan + Verbindungsdaten lesen ---

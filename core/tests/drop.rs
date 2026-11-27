@@ -628,3 +628,93 @@ async fn text_und_links_teilen() {
     let r = a.svc.send_with_text(&peer.id, vec![], Some("   ".into())).await.unwrap();
     assert!(!r.ok);
 }
+
+fn opts_for(root: &Path, name: &str) -> DropOptions {
+    DropOptions {
+        dir: root.join(name).join("Snap Drop"),
+        identity_path: root.join(name).join("drop.key"),
+        name: name.into(),
+        kind: DeviceKind::Phone,
+        use_relay: false,
+        relay_urls: vec![],
+        relay_fallback_n0: false,
+        loopback_only: true,
+        mdns: false,
+        reserve_bytes: 0,
+        can_join_hotspot: false,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hintergrund_fenster_aendert_die_sichtbarkeit_nicht() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("a")).unwrap();
+    let db = Arc::new(DatabaseManager::open_in_memory().unwrap());
+    let svc = DropService::with_identity(opts_for(tmp.path(), "a"), db.clone(), DropIdentity::ephemeral());
+
+    // Aus → im Hintergrund kurz für Kontakte sichtbar, danach wieder aus
+    let st = svc.background(60, false).await.unwrap();
+    assert_eq!(st.mode, Mode::Contacts);
+    assert!(st.code.is_some(), "Sitzung läuft");
+    assert_eq!(svc.background(0, false).await.unwrap().mode, Mode::Off);
+
+    // Vom Nutzer sichtbar geschaltet: der Hintergrund ändert nichts und schaltet nichts ab
+    svc.set_visibility(Mode::Contacts).await.unwrap();
+    assert_eq!(svc.background(60, false).await.unwrap().mode, Mode::Contacts);
+    assert_eq!(svc.background(0, false).await.unwrap().mode, Mode::Contacts);
+    svc.set_visibility(Mode::Off).await.unwrap();
+
+    // „Alle“ läuft nach einem Neustart (App geschlossen) nur weiter, wenn es erlaubt ist
+    svc.set_visibility(Mode::Everyone).await.unwrap();
+    let until = svc.status().unwrap().until.unwrap();
+    svc.shutdown().await;
+    drop(svc);
+    let svc = DropService::with_identity(opts_for(tmp.path(), "a"), db.clone(), DropIdentity::ephemeral());
+    assert_eq!(svc.status().unwrap().mode, Mode::Off);
+    let st = svc.background(60, false).await.unwrap();
+    assert_eq!(st.mode, Mode::Contacts, "„Nur Kontakte“ weckt nie für alle");
+    svc.background(0, false).await.unwrap();
+    let st = svc.background(60, true).await.unwrap();
+    assert_eq!((st.mode, st.until), (Mode::Everyone, Some(until)), "das alte Fenster läuft weiter, nicht länger");
+    svc.background(0, true).await.unwrap();
+    // Abgelaufenes Fenster: nur Kontakte
+    svc.set_visibility(Mode::Off).await.unwrap();
+    assert_eq!(svc.background(60, true).await.unwrap().mode, Mode::Contacts);
+    svc.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn weck_schluessel_nur_als_private_datei() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("a")).unwrap();
+    let db = Arc::new(DatabaseManager::open_in_memory().unwrap());
+    let svc = DropService::with_identity(opts_for(tmp.path(), "a"), db.clone(), DropIdentity::ephemeral());
+    let secret = [9u8; 32];
+    db.upsert_drop_contact(&space_core::database::DropContactRow {
+        key: "aa".repeat(32),
+        name: "Anna".into(),
+        alias: None,
+        secret: secret.to_vec(),
+        added_at: 0,
+        last_seen: 0,
+    })
+    .unwrap();
+    let file = svc.wake_file();
+    assert!(!file.exists(), "ohne Einschalten keine Datei");
+    svc.set_wake_export(true).unwrap();
+    let meta = std::fs::metadata(&file).unwrap();
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    let keys: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    let expected = data_encoding::HEXLOWER.encode(&space_core::drop::wake::wake_key(&secret));
+    assert_eq!(keys[0]["key"], expected.as_str());
+    assert_eq!(keys[0]["name"], "Anna");
+    // Kontakt entfernen → Datei ohne ihn
+    assert!(svc.remove_contact(&"aa".repeat(32)).unwrap());
+    let keys: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(keys.as_array().unwrap().len(), 0);
+    // Ausschalten löscht die Datei
+    svc.set_wake_export(false).unwrap();
+    assert!(!file.exists());
+    svc.shutdown().await;
+}

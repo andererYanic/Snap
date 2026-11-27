@@ -81,6 +81,44 @@ JSON-Rahmen mit Längenpräfix und Größengrenze (wie die übrigen Protokolle).
 Der Desktop kann einem Android-Hotspot beitreten (NetworkManager über D-Bus, nie per
 Kommandozeile mit Passwort). Desktop ↔ Desktop offline gibt es in Version 1 nicht.
 
+## Im Hintergrund (Android)
+
+Entscheidung des Nutzers (2026-11-26): Standard ist **Bluetooth-Wecken**, zuschaltbar ein
+Dauerdienst „Auch über WLAN“; einstellbar, wer wecken darf („Nur Kontakte“ oder „Wie
+Sichtbarkeit“).
+
+- **Weck-Tag:** `HMAC-SHA256(Weck-Schlüssel, "snap-wake-v1" ‖ Epoche)[..8]`, Epoche = Unix-Zeit /
+  15 min. Weck-Schlüssel = `BLAKE3-derive("snap drop wake key v1", Kontakt-Geheimnis)` – auf beiden
+  Seiten gleich, Einwegableitung (taugt nicht zum Anmelden). HMAC, weil Android das Tag ohne den
+  Rust-Kern prüft (`DropWake.kt`, Testvektor in `wake.rs`).
+- **Werbung des Senders:** Dienst-Daten unter einer eigenen 128-Bit-UUID: Version, Flags, Tag
+  (10 Byte), nicht verbindbar, ohne Namen, höchstens 3 Minuten. Ohne Tag (Flag „jemand sucht“)
+  weckt sie nur Geräte mit „Wie Sichtbarkeit“ und laufendem „Alle“-Fenster.
+- **Empfänger:** eine Suche mit Hardware-Filter auf die UUID, Treffer stellt Android als
+  `PendingIntent` zu – Snap läuft dafür nicht. Passt das Tag (Epoche ± 1, Vergleich in konstanter
+  Zeit), startet ein kurzer Vordergrunddienst (`connectedDevice`): Sitzung für Kontakte
+  (`DropBackground`, ändert die gespeicherte Sichtbarkeit nicht), Bluetooth-Werbung mit den
+  Verbindungsdaten, Multicast für das WLAN. Angebote erscheinen als Mitteilung mit
+  „Annehmen“/„Ablehnen“; danach endet der Dienst von selbst (gut 3 Minuten, länger nur während
+  offener Angebote oder Übertragungen).
+- **Android-Grenze:** Ab Android 12 darf ein Bluetooth-Treffer den Dienst nur mit der Ausnahme von
+  der Akku-Optimierung starten. Ohne sie zeigt Snap eine Mitteilung; Antippen startet den Empfang.
+- **Schlüssel auf dem Gerät:** Die Weck-Schlüssel gehen nie über die API; der Kern schreibt sie
+  auf Anforderung (`DropWakeExport`) in eine private Datei (0600) neben dem Drop-Schlüssel und hält
+  sie bei jeder Kontaktänderung aktuell. Die Desktop-App schaltet das nie ein.
+- **Drosselung:** höchstens ein Wecken je 20 s und 30 je Stunde; im Hintergrund kein Offline-Hotspot
+  (der braucht die App).
+
+### Risiken
+
+| Risiko | Gegenmaßnahme |
+|---|---|
+| Verfolgen über die Werbung | Tag wechselt alle 15 min, ohne Weck-Schlüssel Zufall; nur während aktiven Weckens |
+| Dauerwecken (Akku) durch Wiedereinspielen eines Tags | Tag gilt nur ±15 min, Drosselung, Dienst endet von selbst |
+| Fremde wecken | Nur mit Kontakt-Tag; „jemand sucht“ nur bei ausdrücklich gewähltem „Wie Sichtbarkeit“ und laufendem „Alle“ |
+| Weck-Schlüssel gestohlen (Root, Backup) | Datei 0600, kein Backup (`allowBackup=false`); Schlüssel erlaubt nur Wecken, nicht Senden ohne Prüfung |
+| Inhalte auf dem Sperrbildschirm | Mitteilung dort ohne Namen und Dateien |
+
 ## Ablage beim Empfänger
 
 - `Downloads/Snap Drop/` (einstellbar). Nichts wird automatisch geöffnet.

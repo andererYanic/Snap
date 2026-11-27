@@ -25,6 +25,12 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <!-- APK-Dateien aus dem Dateimanager installieren (der Nutzer erlaubt es einmalig im System) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Snap Drop im Hintergrund: kurzer Empfangsdienst, Mitteilungen, nach Neustart neu einrichten -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
@@ -75,6 +81,16 @@
           <data android:mimeType="*/*" />
         </intent-filter>
       </activity-alias>
+      <service
+        android:name=".DropBgService"
+        android:exported="false"
+        android:foregroundServiceType="connectedDevice" />
+      <receiver android:name=".DropWakeReceiver" android:exported="false">
+        <intent-filter>
+          <action android:name="android.intent.action.BOOT_COMPLETED" />
+          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        </intent-filter>
+      </receiver>
     </application>
     <!-- Welche Apps Dateien öffnen bzw. empfangen können (Paketsichtbarkeit ab Android 11) -->
     <queries>

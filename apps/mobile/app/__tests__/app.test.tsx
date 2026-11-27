@@ -1342,3 +1342,64 @@ test('Entkoppeln durch die Gegenseite: Hinweis und Cache der fremden Dateien gel
   expect(NativeModules.SnapCore.clearRemoteCache).toHaveBeenCalled();
   expect(allText(r)).toContain('„Laptop“ hat die Kopplung aufgehoben');
 });
+
+test('Snap Drop im Hintergrund: Einstellungen, Schlüssel-Datei, Akku-Hinweis, wer wecken darf', async () => {
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  const bgState = { enabled: false, wlan: false, who: 'contacts', batteryExempt: false, supported: true };
+  NativeModules.SnapDrop = {
+    capabilities: jest.fn(async () => ({ ble: true, bleOn: true, advertise: true, joinHotspot: true, sdk: 34 })),
+    backgroundState: jest.fn(async () => ({ ...bgState })),
+    setBackground: jest.fn((enabled: boolean, wlan: boolean, who: string) => Object.assign(bgState, { enabled, wlan, who })),
+    requestBatteryExempt: jest.fn(),
+    setEveryoneUntil: jest.fn(),
+    wake: jest.fn(async () => true),
+    wakeAll: jest.fn(async () => true),
+    stopWake: jest.fn(),
+    multicast: jest.fn(),
+    scan: jest.fn(async () => null),
+    advertise: jest.fn(async () => true),
+    updateInfo: jest.fn(),
+    stopAdvertise: jest.fn(),
+    addListener: jest.fn(),
+    removeListeners: jest.fn(),
+  };
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req === 'DropStatus') return JSON.stringify({ DropStatus: { mode: 'off', until: null, name: 'Mein Telefon', fingerprint: 'f', dir: '/x', code: null } });
+    if (req === 'DropContacts') return JSON.stringify({ DropContacts: { contacts: [{ key: 'cc'.repeat(32), name: 'Clara', device_name: 'Clara', renamed: false, fingerprint: 'f', added_at: 0, last_seen: 0 }] } });
+    if (req === 'DropBlocked') return JSON.stringify({ DropBlocked: { blocked: [] } });
+    if (req === 'DropNearby' || req.DropBrowse) return JSON.stringify({ DropNearby: { peers: [] } });
+    if (req.DropWakeExport) {
+      calls.push(req);
+      return JSON.stringify({ Success: { message: 'ok' } });
+    }
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    const tabs = () => r.root.findAll((n) => n.props.accessibilityRole === 'tab' && typeof n.props.onPress === 'function');
+    await act(async () => { tabs()[2].props.onPress(); });
+    await flush();
+    await act(async () => { byLabel(r, 'Snap Drop').props.onPress(); });
+    await flush();
+    expect(allText(r)).toContain('Wenn Snap geschlossen ist');
+    // Einschalten: Einstellung an Android, Schlüssel-Datei, Akku-Hinweis
+    const sw = r.root.find((n) => n.props.accessibilityLabel === 'Im Hintergrund empfangen' && typeof n.props.onValueChange === 'function');
+    await act(async () => { await sw.props.onValueChange(true); });
+    await flush();
+    expect(NativeModules.SnapDrop.setBackground).toHaveBeenLastCalledWith(true, false, 'contacts');
+    expect(calls).toContainEqual({ DropWakeExport: { enable: true } });
+    expect(allText(r)).toContain('Akku-Optimierung für Snap aufheben');
+    expect(allText(r)).toContain('Wecken dürfen');
+    await act(async () => { pressable(r, 'Wie Sichtbarkeit').props.onPress(); });
+    await flush();
+    expect(NativeModules.SnapDrop.setBackground).toHaveBeenLastCalledWith(true, false, 'visibility');
+    await act(async () => { pressable(r, 'Akku-Optimierung für Snap aufheben').props.onPress(); });
+    expect(NativeModules.SnapDrop.requestBatteryExempt).toHaveBeenCalled();
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+    delete NativeModules.SnapDrop;
+  }
+});

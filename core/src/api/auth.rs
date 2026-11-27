@@ -189,6 +189,8 @@ pub fn required_capability(req: &Request) -> Capability {
         | Request::DropHotspotParse { .. }
         | Request::DropHotspotAccept { .. }
         | Request::DropHotspotRequest { .. }
+        | Request::DropWakeExport { .. }
+        | Request::DropBackground { .. }
         | Request::LinkRevoke { .. }
         | Request::SpaceUsage { .. }
         | Request::Duplicates { .. }

@@ -1,0 +1,25 @@
+<resources>
+    <string name="drop_bg_channel">Snap Drop in the background</string>
+    <string name="drop_offer_channel">Snap Drop: requests</string>
+    <string name="drop_bg_ready">Snap Drop is ready to receive</string>
+    <string name="drop_bg_always">Snap Drop receives in the background</string>
+    <string name="drop_bg_text">Tap to open Snap</string>
+    <string name="drop_wake_contact">%1$s wants to send you something – tap to receive.</string>
+    <string name="drop_wake_someone">Someone nearby wants to send you something – tap to receive.</string>
+    <string name="drop_offer_files">wants to send you %1$s (%2$s)</string>
+    <string name="drop_offer_text">wants to send you a text</string>
+    <string name="drop_offer_code">Check code %1$s – only accept if you know this person.</string>
+    <string name="drop_offer_locked">New request</string>
+    <string name="drop_accept">Accept</string>
+    <string name="drop_decline">Decline</string>
+    <string name="drop_receiving">Receiving …</string>
+    <string name="drop_saved">%1$s from %2$s saved.</string>
+    <string name="drop_text_copied">Text from %1$s copied to the clipboard.</string>
+    <string name="drop_link_copied">Link from %1$s – copied to the clipboard.</string>
+    <string name="drop_open">Open</string>
+    <string name="drop_failed">Receiving failed: %1$s</string>
+    <plurals name="drop_files">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
+</resources>

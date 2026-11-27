@@ -53,6 +53,12 @@ const CHUNK: usize = 256 * 1024;
 const PART_SUFFIX: &str = ".snap-part";
 
 const SETTING_BASE_MODE: &str = "drop_visibility";
+/// Ende eines „Alle“-Fensters (Unix-Sekunden), damit es nach dem Wecken weiterläuft.
+const SETTING_EVERYONE_UNTIL: &str = "drop_everyone_until";
+/// Wecken im Hintergrund eingeschaltet (Weck-Schlüssel-Datei wird gepflegt).
+const SETTING_WAKE_EXPORT: &str = "drop_wake_export";
+/// Längstes Empfangsfenster im Hintergrund (der Dienst verlängert bei Bedarf).
+const BACKGROUND_MAX_SECS: u32 = 3600;
 const META_NAME: &str = "name";
 
 /// Angezeigter Name eines Kontakts: eigener (lokaler) Name vor dem Namen des Geräts.
@@ -129,6 +135,9 @@ pub struct NearbyPeer {
     pub kind: Option<DeviceKind>,
     /// Gespeicherter Kontakt (am Schlüssel erkannt).
     pub contact: Option<String>,
+    /// Schlüssel des Kontakts (zum Zuordnen in der Oberfläche).
+    #[serde(default)]
+    pub contact_key: Option<String>,
     /// `lan`, `bluetooth` oder `code`.
     pub via: String,
     /// Nur über Bluetooth gefunden und per Netz nicht erreichbar: Senden über den Offline-Weg
@@ -164,6 +173,14 @@ pub struct OfferedFile {
 }
 
 /// Gespeicherter Kontakt für die Oberfläche (ohne Geheimnis).
+/// Weck-Schlüssel eines Kontakts (Hex) – nur für das lokale Wecken im Hintergrund.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct WakeKey {
+    pub contact: String,
+    pub name: String,
+    pub key: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ContactInfo {
     pub key: String,
@@ -224,6 +241,9 @@ impl Target {
     }
 }
 
+/// Karte eines Geräts: Name, Art, Kontakt (angezeigter Name, Schlüssel).
+type CardView = (String, DeviceKind, Option<(String, String)>);
+
 struct NearbyEntry {
     target: Target,
     via: &'static str,
@@ -231,7 +251,7 @@ struct NearbyEntry {
     ble_name: Option<String>,
     offline: bool,
     seen: Instant,
-    card: Option<(String, DeviceKind, Option<String>)>,
+    card: Option<CardView>,
     hidden: bool,
     probed: Option<Instant>,
     probing: bool,
@@ -328,6 +348,8 @@ pub struct DropService {
     nearby: Mutex<HashMap<PublicKey, NearbyEntry>>,
     browser: Mutex<Option<Browser>>,
     pre_accept: Mutex<Option<PreAccept>>,
+    /// Generation der Sichtbarkeit, die `background` gesetzt hat (zum Zurücknehmen).
+    background_gen: Mutex<Option<u64>>,
 }
 
 impl DropService {
@@ -356,6 +378,7 @@ impl DropService {
             nearby: Mutex::new(HashMap::new()),
             browser: Mutex::new(None),
             pre_accept: Mutex::new(None),
+            background_gen: Mutex::new(None),
         })
     }
 
@@ -366,6 +389,7 @@ impl DropService {
     /// Stellt die gespeicherte Sichtbarkeit nach dem Start wieder her („Kontakte“ bleibt an,
     /// „Alle“ nie – das gilt immer nur 10 Minuten).
     pub async fn restore(&self) -> Result<()> {
+        self.wake_export_changed();
         let base = self.base_mode();
         if base == Mode::Contacts {
             self.set_visibility(Mode::Contacts).await?;
@@ -400,6 +424,8 @@ impl DropService {
             self.db.put_setting(SETTING_BASE_MODE, Some(i64::from(mode == Mode::Contacts)))?;
         }
         let generation = self.apply(mode).await?;
+        let until = self.vis.lock().unwrap_or_else(|e| e.into_inner()).until;
+        self.db.put_setting(SETTING_EVERYONE_UNTIL, until)?;
         if mode == Mode::Everyone {
             let me = self.me.clone();
             tokio::spawn(async move {
@@ -414,10 +440,14 @@ impl DropService {
 
     /// Setzt den Modus und startet/stoppt die Sitzung (ohne Ablauf-Aufgabe).
     async fn apply(&self, mode: Mode) -> Result<u64> {
+        self.apply_until(mode, (mode == Mode::Everyone).then(|| Self::now() + EVERYONE_SECS)).await
+    }
+
+    async fn apply_until(&self, mode: Mode, until: Option<i64>) -> Result<u64> {
         let (until, generation) = {
             let mut v = self.vis.lock().unwrap_or_else(|e| e.into_inner());
             v.mode = mode;
-            v.until = (mode == Mode::Everyone).then(|| Self::now() + EVERYONE_SECS);
+            v.until = until;
             v.generation += 1;
             (v.until, v.generation)
         };
@@ -459,6 +489,107 @@ impl DropService {
             }
         }
         self.db.set_drop_meta(META_NAME, cleaned.as_deref())?;
+        self.status()
+    }
+
+    /// Weck-Schlüssel aller Kontakte (siehe `wake.rs`).
+    fn wake_keys(&self) -> Result<Vec<WakeKey>> {
+        Ok(self
+            .db
+            .drop_contacts()?
+            .into_iter()
+            .map(|c| WakeKey {
+                name: c.alias.clone().unwrap_or_else(|| c.name.clone()),
+                key: data_encoding::HEXLOWER.encode(&super::wake::wake_key(&c.secret)),
+                contact: c.key,
+            })
+            .collect())
+    }
+
+    /// Datei mit den Weck-Schlüsseln (neben dem Drop-Schlüssel, 0600).
+    pub fn wake_file(&self) -> PathBuf {
+        self.opts.identity_path.with_file_name("drop-wake.json")
+    }
+
+    /// Wecken im Hintergrund ein- oder ausschalten (Datei schreiben bzw. löschen).
+    pub fn set_wake_export(&self, enable: bool) -> Result<()> {
+        self.db.put_setting(SETTING_WAKE_EXPORT, enable.then_some(1))?;
+        if enable {
+            self.refresh_wake_export()
+        } else {
+            match std::fs::remove_file(self.wake_file()) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+                _ => Ok(()),
+            }
+        }
+    }
+
+    fn wake_export_changed(&self) {
+        if let Err(e) = self.refresh_wake_export() {
+            tracing::warn!("Drop: Weck-Schlüssel nicht aktualisiert: {e:#}");
+        }
+    }
+
+    /// Nach jeder Kontaktänderung: Datei aktualisieren, falls das Wecken eingeschaltet ist.
+    fn refresh_wake_export(&self) -> Result<()> {
+        let on = self.db.settings()?.into_iter().any(|(k, v)| k == SETTING_WAKE_EXPORT && v == 1);
+        if !on {
+            return Ok(());
+        }
+        let json = serde_json::to_vec(&self.wake_keys()?)?;
+        crate::secure_fs::write_private_file(&self.wake_file(), &json)
+    }
+
+    /// Kurz empfangsbereit sein, ohne die gespeicherte Sichtbarkeit zu ändern (Wecken im
+    /// Hintergrund). Ist das Gerät schon sichtbar, ändert sich nichts. `secs` = 0 nimmt ein
+    /// Hintergrund-Fenster zurück. Mit `everyone` läuft ein noch gültiges „Alle“-Fenster weiter;
+    /// sonst nur für Kontakte.
+    pub async fn background(&self, secs: u32, everyone: bool) -> Result<DropStatus> {
+        let secs = secs.min(BACKGROUND_MAX_SECS);
+        if secs == 0 {
+            let ours = *self.background_gen.lock().unwrap_or_else(|e| e.into_inner());
+            let current = self.vis.lock().unwrap_or_else(|e| e.into_inner()).generation;
+            if ours == Some(current) {
+                self.apply(self.base_mode()).await?;
+            }
+            *self.background_gen.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return self.status();
+        }
+        let mode = self.mode();
+        let mine = *self.background_gen.lock().unwrap_or_else(|e| e.into_inner())
+            == Some(self.vis.lock().unwrap_or_else(|e| e.into_inner()).generation);
+        if mode != Mode::Off && !mine {
+            return self.status(); // vom Nutzer sichtbar geschaltet – nichts ändern
+        }
+        let saved_until = self
+            .db
+            .settings()
+            .ok()
+            .and_then(|s| s.into_iter().find(|(k, _)| k == SETTING_EVERYONE_UNTIL))
+            .map(|(_, v)| v)
+            .filter(|u| *u > Self::now());
+        let (target, until) = match saved_until {
+            Some(u) if everyone => (Mode::Everyone, Some(u)),
+            _ => (Mode::Contacts, None),
+        };
+        let generation = self.apply_until(target, until).await?;
+        *self.background_gen.lock().unwrap_or_else(|e| e.into_inner()) = Some(generation);
+        let end = match until {
+            Some(u) => (u - Self::now()).clamp(1, i64::from(secs)) as u64,
+            None => u64::from(secs),
+        };
+        let me = self.me.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(end)).await;
+            if let Some(svc) = me.upgrade() {
+                let still = svc.vis.lock().unwrap_or_else(|e| e.into_inner()).generation == generation;
+                if still {
+                    if let Err(e) = svc.apply(svc.base_mode()).await {
+                        tracing::warn!("Drop: Ende des Hintergrund-Fensters fehlgeschlagen: {e:#}");
+                    }
+                }
+            }
+        });
         self.status()
     }
 
@@ -730,6 +861,7 @@ impl DropService {
         if !answer.accept {
             if answer.block {
                 self.db.block_drop(&sender_key, &offer.name, Self::now())?;
+                self.wake_export_changed();
             }
             if contact_name.is_none() && self.note_stranger_declined() {
                 let base = self.base_mode();
@@ -857,6 +989,7 @@ impl DropService {
                 name: super::wire::display_name(name),
                 ..c
             })?;
+            self.wake_export_changed(); // neues Geheimnis → neuer Weck-Schlüssel
             return Ok(false);
         }
         let mut ex = self.exchanges.lock().unwrap_or_else(|e| e.into_inner());
@@ -945,8 +1078,9 @@ impl DropService {
     }
 
     pub fn remove_contact(&self, key: &str) -> Result<bool> {
-        self.invalidate_cards();
-        self.db.remove_drop_contact(key)
+        let removed = self.db.remove_drop_contact(key)?;
+        self.invalidate_cards(); // danach: auch die Weck-Schlüssel-Datei ohne ihn
+        Ok(removed)
     }
 
     pub fn blocked(&self) -> Result<Vec<BlockedSender>> {
@@ -1074,7 +1208,7 @@ impl DropService {
     }
 
     /// Fragt die Karte eines Geräts ab: `Some((Name, Typ, Kontaktname))` oder `None` (verborgen).
-    async fn probe(&self, target: &Target) -> Result<Option<(String, DeviceKind, Option<String>)>> {
+    async fn probe(&self, target: &Target) -> Result<Option<CardView>> {
         let conn = self.connect(target).await?;
         let session = identity::session_value(&conn)?;
         let (mut send, mut recv) = tokio::time::timeout(IO_TIMEOUT, conn.open_bi()).await??;
@@ -1085,14 +1219,14 @@ impl DropService {
         self.card_view(card, &session)
     }
 
-    fn card_view(&self, card: Card, session: &[u8; 32]) -> Result<Option<(String, DeviceKind, Option<String>)>> {
+    fn card_view(&self, card: Card, session: &[u8; 32]) -> Result<Option<CardView>> {
         Ok(match card {
             Card::Hidden => None,
             Card::Visible { name, kind, proof } => {
                 let contact = match proof {
                     Some(p) => {
                         let key = p.verify(session)?;
-                        self.contact_by_key(&hex(key.as_bytes()))?.map(|c| label(&c))
+                        self.contact_by_key(&hex(key.as_bytes()))?.map(|c| (label(&c), c.key.clone()))
                     }
                     None => None,
                 };
@@ -1135,7 +1269,7 @@ impl DropService {
         nearby
             .get(&target.endpoint)
             .and_then(|e| e.card.as_ref())
-            .map(|(n, _, c)| c.clone().unwrap_or_else(|| n.clone()))
+            .map(|(n, _, c)| c.as_ref().map(|c| c.0.clone()).unwrap_or_else(|| n.clone()))
             .unwrap_or_else(|| "Gerät".into())
     }
 
@@ -1240,6 +1374,7 @@ impl DropService {
 
     /// Erzwingt neue Abfragen (z. B. nach Änderungen an den Kontakten).
     fn invalidate_cards(&self) {
+        self.wake_export_changed();
         let again: Vec<(Target, &'static str)> = {
             let mut n = self.nearby.lock().unwrap_or_else(|e| e.into_inner());
             n.values_mut()
@@ -1368,6 +1503,7 @@ impl DropService {
                         name: e.ble_name.clone(),
                         kind: None,
                         contact: None,
+                        contact_key: None,
                         via: e.via.into(),
                         offline: true,
                     });
@@ -1377,7 +1513,8 @@ impl DropService {
                     id: hex(k.as_bytes()),
                     name: Some(name),
                     kind: Some(kind),
-                    contact,
+                    contact_key: contact.as_ref().map(|c| c.1.clone()),
+                    contact: contact.map(|c| c.0),
                     via: e.via.into(),
                     offline: false,
                 })
@@ -1413,7 +1550,8 @@ impl DropService {
             id: hex(info.endpoint.as_bytes()),
             name: Some(name),
             kind: Some(kind),
-            contact,
+            contact_key: contact.as_ref().map(|c| c.1.clone()),
+            contact: contact.map(|c| c.0),
             via: "code".into(),
             offline: false,
         })

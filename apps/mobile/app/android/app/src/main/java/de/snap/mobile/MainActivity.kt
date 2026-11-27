@@ -8,6 +8,20 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnable
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 class MainActivity : ReactActivity() {
+  companion object {
+    /** App im Vordergrund: Angebote zeigt dann die Oberfläche statt einer Mitteilung. */
+    @Volatile var visible = false
+  }
+
+  override fun onResume() {
+    super.onResume()
+    visible = true
+  }
+
+  override fun onPause() {
+    visible = false
+    super.onPause()
+  }
 
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule

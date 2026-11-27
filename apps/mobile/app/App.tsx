@@ -126,6 +126,7 @@ export default function App() {
     pickShare();
     const offShare = core.onShare(pickShare);
     drop.syncRadio().catch(() => {});
+    drop.initBackground().catch(() => {});
     const saveContact = (id: number) =>
       drop
         .saveContact(id)

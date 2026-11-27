@@ -728,10 +728,27 @@ object CoreHolder {
     return c
   }
 
+  private val extra = java.util.concurrent.ConcurrentHashMap<String, (String) -> Unit>()
+
   /** Ein Abonnement pro Prozess; der jeweils aktuelle Empfänger bekommt die Ereignisse. */
   @Synchronized
   fun listen(onEvent: (String) -> Unit) {
     listener = onEvent
+    subscribe()
+  }
+
+  /** Weitere Empfänger (z. B. der Drop-Dienst im Hintergrund), unabhängig von der Oberfläche. */
+  @Synchronized
+  fun addListener(key: String, onEvent: (String) -> Unit) {
+    extra[key] = onEvent
+    subscribe()
+  }
+
+  fun removeListener(key: String) {
+    extra.remove(key)
+  }
+
+  private fun subscribe() {
     if (subscribed) return
     val c = core ?: return
     c.subscribe(object : EventListener {
@@ -740,6 +757,13 @@ object CoreHolder {
           listener?.invoke(json)
         } catch (e: Throwable) {
           android.util.Log.w("Snap", "Ereignis-Empfänger: ${e.message}")
+        }
+        for (l in extra.values) {
+          try {
+            l(json)
+          } catch (e: Throwable) {
+            android.util.Log.w("Snap", "Ereignis-Empfänger: ${e.message}")
+          }
         }
       }
     })
