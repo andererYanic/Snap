@@ -116,6 +116,9 @@ pub fn mobile_config(opts: &CoreOptions) -> Result<space_core::config::Config, S
     // Kein „Home“ auf Android: indexiert wird der gemeinsame Speicher (nach dem Start).
     cfg.index_home = false;
     cfg.index_drives = false;
+    // Leistungsdeckel: höchstens zwei Dateien gleichzeitig hashen (z. B. „Alle Dateien“ –
+    // sonst belegt der erste Scan alle Kerne und die Oberfläche ruckelt).
+    cfg.scan_parallel = 2;
     cfg.sync_interval_hours = 6.0;
     // Snap Drop: Telefon, im WLAN auffindbar, Offline-Weg über Hotspot möglich.
     cfg.drop_kind = space_core::drop::wire::DeviceKind::Phone;
@@ -145,6 +148,9 @@ impl SnapCore {
             .worker_threads(2)
             .enable_all()
             .thread_name("snap-core")
+            // Alle Threads des Kerns (auch die für blockierende Arbeit) hinter der Oberfläche
+            // einreihen: niedrigere CPU- und E/A-Priorität.
+            .on_thread_start(space_core::background::lower_current_thread)
             .build()
             .map_err(|e| SnapError::Start(e.to_string()))?;
         let storage = (!opts.storage_root.is_empty()).then(|| PathBuf::from(&opts.storage_root));
@@ -274,6 +280,7 @@ mod tests {
         let c = mobile_config(&ok).unwrap();
         assert_eq!(c.device_name, "Android");
         assert!(!c.index_home && !c.index_drives);
+        assert_eq!(c.scan_parallel, 2, "Leistungsdeckel am Handy");
         assert_eq!(c.pin_dir, PathBuf::from("/storage/emulated/0/Snap"));
         assert!(c.socket_path.starts_with("/data/user/0/de.snap/files"));
     }

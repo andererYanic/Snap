@@ -183,6 +183,14 @@ fn walk(
     (candidates, deleted, stats)
 }
 
+/// Gleichzeitige Hash-Vorgänge: die Vorgabe, sonst die Kernzahl (2…16).
+pub fn scan_parallel(configured: usize) -> usize {
+    if configured > 0 {
+        return configured.min(16);
+    }
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(2, 16)
+}
+
 /// Scannt eine Freigabe (ganz oder nur bestimmte Unterordner) und übernimmt Änderungen.
 pub async fn scan_share(
     inner: &Arc<DaemonInner>,
@@ -204,8 +212,8 @@ pub async fn scan_share(
     .await
     .context("Scan abgebrochen")??;
 
-    // Hashen/Importieren parallel, begrenzt auf die Anzahl der Kerne.
-    let parallel = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(2, 16);
+    // Hashen/Importieren parallel, begrenzt auf die Anzahl der Kerne (bzw. die Vorgabe).
+    let parallel = scan_parallel(inner.config.scan_parallel);
     let sem = Arc::new(tokio::sync::Semaphore::new(parallel));
     let mut set = tokio::task::JoinSet::new();
     for c in candidates {
@@ -364,6 +372,13 @@ fn affected_prefixes(root: &Path, paths: &HashSet<PathBuf>) -> Option<Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallele_hash_vorgaenge() {
+        assert_eq!(scan_parallel(2), 2, "Vorgabe (Handy)");
+        assert_eq!(scan_parallel(99), 16, "nach oben begrenzt");
+        assert!((2..=16).contains(&scan_parallel(0)), "automatisch: Kernzahl 2…16");
+    }
 
     #[test]
     fn ignore_list() {

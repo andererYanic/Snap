@@ -938,3 +938,18 @@ Alles innerhalb der Messschwankung außer dem Entsperren (+25 ms) – dort ist L
   ungefiltert – bei 12 600 Dateien eines typischen Handys rund 4 ms, in `spawn_blocking`.
 - Am Handy eine eigene Abfrage nur beim Antippen einer Art; die Übersicht bleibt stehen, nur der
   Dateiabschnitt zeigt bis zur Antwort einen Fortschritt. Höchstens 200 Zeilen.
+
+## Review 55 – Leistungsdeckel am Handy (2026-11-28)
+
+Anlass: Nach „Alle Dateien“ ruckelte das Handy. Der erste Scan hasht den ganzen gemeinsamen
+Speicher (hier 40 GB) und lief mit so vielen gleichzeitigen Hash-Vorgängen wie Kerne, mit normaler
+Priorität – im selben Prozess wie die Oberfläche.
+
+- **Deckel:** `Config::scan_parallel` (0 = Kernzahl 2…16 wie bisher); Android: 2.
+- **Priorität:** Alle Threads des Kerns am Handy (Tokio-Arbeiter und blockierende Arbeit) laufen
+  mit nice 10 (wie `THREAD_PRIORITY_BACKGROUND`) und E/A-Stufe „best effort 7“
+  (`core/src/background.rs`). Die Oberfläche hat damit bei CPU und Speicherzugriffen Vorrang;
+  läuft sie nicht, bekommt der Kern weiter die volle Rechenzeit.
+- Gemessen (`perf.rs` › `share_scan_capped`, Release, 4 Kerne, 1 000 Dateien à 1 MiB aus dem
+  Seitencache): 250 ms mit 4 gleichzeitig, 424 ms mit 2. Der Erstscan dauert also etwa 1,7-mal so
+  lange (einmalig), danach werden nur geänderte Dateien gehasht.
