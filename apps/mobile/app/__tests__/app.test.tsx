@@ -1955,3 +1955,69 @@ test('Speicherübersicht: Art antippen zeigt nur deren Dateien', async () => {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Papierkorb leeren: mit Rückfrage, danach leer; auch in der Speicherübersicht', async () => {
+  const { TrashPage } = require('../src/Pages');
+  const StoragePage = require('../src/Storage').default;
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  let entries = [
+    { id: '/s/.Trash-snap/info/a.iso.trashinfo', name: 'a.iso', original_path: '/storage/emulated/0/Download/a.iso', deleted_at: '2026-11-28T09:00:00', is_dir: false, size: 3e9 },
+    { id: '/s/.Trash-snap/info/b.jpg.trashinfo', name: 'b.jpg', original_path: '/storage/emulated/0/DCIM/b.jpg', deleted_at: '2026-11-28T09:01:00', is_dir: false, size: 2e6 },
+  ];
+  const asked: any[] = [];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    asked.push(req);
+    if (req === 'TrashList') return JSON.stringify({ Trash: { entries } });
+    if (req === 'TrashEmpty') { entries = []; return JSON.stringify({ Success: { message: 'ok' } }); }
+    if (req.TrashPurge) { entries = entries.filter((e) => e.id !== req.TrashPurge.id); return JSON.stringify({ Success: { message: 'ok' } }); }
+    if (req.SpaceUsage) {
+      return JSON.stringify({ SpaceUsage: { path: req.SpaceUsage.path, total: 1e9, files: 3, children: [], by_type: [{ category: 'Bilder', size: 1e9, files: 3 }], largest: [] } });
+    }
+    return origRequest(json);
+  });
+  let confirm = 'Abbrechen';
+  const titles: string[] = [];
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation((title: any, _m: any, buttons: any) => {
+    titles.push(String(title));
+    buttons.find((b: any) => b.text === confirm)?.onPress?.();
+  });
+  try {
+    const notes: string[] = [];
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<TrashPage theme={snapTheme(false)} notify={(m: string) => notes.push(m)} />); });
+    await flush();
+    const texts = () => r.root.findAll((n) => typeof n.props.children === 'string').map((n) => n.props.children as string);
+    expect(texts()).toEqual(expect.arrayContaining(['a.iso', 'b.jpg', 'Papierkorb leeren']));
+    // Abbrechen löscht nichts
+    await act(async () => { byLabel(r, 'Papierkorb leeren').props.onPress(); });
+    await flush();
+    expect(titles).toContain('Papierkorb leeren?');
+    expect(asked).not.toContain('TrashEmpty');
+    // Lange drücken: einzelnen Eintrag endgültig löschen
+    confirm = 'Endgültig löschen';
+    const row = r.root.findAll((n) => typeof n.props.onLongPress === 'function')[1];
+    await act(async () => { row.props.onLongPress(); });
+    await flush();
+    expect(asked).toContainEqual({ TrashPurge: { id: '/s/.Trash-snap/info/b.jpg.trashinfo' } });
+    expect(texts()).not.toContain('b.jpg');
+    // Speicherübersicht zeigt den Papierkorb mit „Leeren“
+    let st!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { st = mount(<StoragePage root="/storage/emulated/0" theme={snapTheme(false)} notify={() => {}} onClose={() => {}} onOpenFolder={() => {}} />); });
+    await flush();
+    const stTexts = () => st.root.findAll((n) => typeof n.props.children === 'string').map((n) => n.props.children as string);
+    expect(stTexts()).toEqual(expect.arrayContaining(['Papierkorb', 'Leeren']));
+    await act(async () => { byLabel(st, 'Papierkorb leeren').props.onPress(); });
+    await flush();
+    expect(asked).toContain('TrashEmpty');
+    expect(stTexts()).not.toContain('Leeren');
+    // Papierkorb-Seite: leer
+    await act(async () => { r.unmount(); r = mount(<TrashPage theme={snapTheme(false)} notify={() => {}} />); });
+    await flush();
+    expect(texts()).toContain('Der Papierkorb ist leer');
+  } finally {
+    alert.mockRestore();
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

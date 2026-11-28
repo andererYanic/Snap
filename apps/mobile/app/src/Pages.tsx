@@ -9,6 +9,7 @@ import { LANGUAGES, lang, locale, setLanguage, t } from './i18n';
 import type { Theme } from './theme';
 import { BottomSheet, Glyph, SectionLabel, themed } from './ui';
 import { Icon, type IconName } from './Icon';
+import { confirmEmptyTrash, confirmPurge, trashList, trashSize, type TrashEntry } from './trash';
 
 export interface Device {
   node_id: string;
@@ -447,13 +448,12 @@ export function Devices({ theme, notify }: { theme: Theme; notify: (t: string) =
   );
 }
 
-interface TrashEntry { id: string; name: string; original_path: string; deleted_at: string }
-
-/** Papierkorb (Unterseite der Einstellungen): Einträge ansehen und wiederherstellen. */
+/** Papierkorb (Unterseite der Einstellungen): Einträge ansehen, wiederherstellen, leeren.
+ *  Lange drücken auf einen Eintrag löscht ihn endgültig (mit Rückfrage). */
 export function TrashPage({ theme, notify }: { theme: Theme; notify: (t: string) => void }) {
   const s = styles(theme);
   const [trash, setTrash] = useState<TrashEntry[] | null>(null);
-  const loadTrash = useCallback(() => request<{ entries: TrashEntry[] }>('TrashList').then((r) => setTrash(r.entries)).catch((e) => notify(e.message)), [notify]);
+  const loadTrash = useCallback(() => trashList().then(setTrash).catch((e) => notify(e.message)), [notify]);
   useEffect(() => {
     loadTrash();
   }, [loadTrash]);
@@ -468,11 +468,33 @@ export function TrashPage({ theme, notify }: { theme: Theme; notify: (t: string)
           <Text style={[s.muted, s.centerText]}>{t('Gelöschte Dateien landen hier und lassen sich wiederherstellen.')}</Text>
         </View>
       ) : (
-        <View style={[s.group, s.firstGroup]}>
+        <>
+        <View style={s.trashHead}>
+          <Text style={[s.muted, s.grow]}>
+            {trashSize(trash) > 0
+              ? t('{n} Elemente · {size}', { n: trash.length, size: humanSize(trashSize(trash), locale()) })
+              : t('{n} Elemente', { n: trash.length })}
+          </Text>
+          <Pressable
+            onPress={() => confirmEmptyTrash(trash, notify, loadTrash)}
+            style={s.trashEmptyBtn}
+            accessibilityRole="button"
+            accessibilityLabel={t('Papierkorb leeren')}
+            android_ripple={{ color: theme.accentSoft as string }}
+          >
+            <Icon name="trash" size={18} color={theme.danger as string} />
+            <Text style={[s.text, { color: theme.danger as string }]}>{t('Papierkorb leeren')}</Text>
+          </Pressable>
+        </View>
+        <View style={s.group}>
           {trash.map((e, i) => (
             <View key={e.id}>
               {i > 0 && <View style={s.sepFile} />}
-              <View style={s.row}>
+              <Pressable
+                style={s.row}
+                onLongPress={() => confirmPurge(e, notify, loadTrash)}
+                accessibilityHint={t('Lange drücken: endgültig löschen')}
+              >
                 <Glyph name={e.name} dir={false} theme={theme} size={36} />
                 <View style={s.grow}>
                   <Text style={s.text} numberOfLines={1}>{e.name}</Text>
@@ -486,10 +508,11 @@ export function TrashPage({ theme, notify }: { theme: Theme; notify: (t: string)
                 >
                   <Icon name="restore" size={22} color={theme.accent as string} />
                 </Pressable>
-              </View>
+              </Pressable>
             </View>
           ))}
         </View>
+        </>
       )}
     </ScrollView>
   );
@@ -576,6 +599,8 @@ const styles = themed((th: Theme) =>
     label: { marginTop: 20, marginBottom: 10, marginLeft: 4 },
     group: { borderRadius: 12, backgroundColor: th.surface, overflow: 'hidden' },
     firstGroup: { marginTop: 8 },
+    trashHead: { flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 8, paddingLeft: 4, gap: 8 },
+    trashEmptyBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 40, paddingHorizontal: 12, borderRadius: 20 },
     emptyGroup: { alignItems: 'center', gap: 10, paddingVertical: 28, paddingHorizontal: 24 },
     row: { flexDirection: 'row', alignItems: 'center', gap: 18, minHeight: 64, paddingLeft: 16, paddingRight: 8, paddingVertical: 10 },
     block: { padding: 16, gap: 2 },

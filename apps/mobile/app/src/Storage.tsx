@@ -11,6 +11,7 @@ import { Icon, type IconName } from './Icon';
 import { Text } from './text';
 import type { Theme } from './theme';
 import { Glyph, SectionLabel, themed } from './ui';
+import { confirmEmptyTrash, trashList, trashSize, type TrashEntry } from './trash';
 
 interface Usage {
   path: string;
@@ -48,6 +49,11 @@ export default function StoragePage({ root, theme, onClose, onOpenFolder, notify
   const [cat, setCat] = useState<string | null>(null);
   const [catFiles, setCatFiles] = useState<Usage['largest'] | null>(null);
   const path = trail[trail.length - 1];
+  // Papierkorb: zählt nicht zu den Arten (nicht im Index), belegt aber weiter Platz
+  const [binned, setBinned] = useState<TrashEntry[]>([]);
+  useEffect(() => {
+    trashList().then(setBinned).catch(() => setBinned([]));
+  }, [gen]);
 
   useEffect(() => {
     setUsage(null);
@@ -159,6 +165,30 @@ export default function StoragePage({ root, theme, onClose, onOpenFolder, notify
               })}
             </View>
 
+            {path === root && binned.length > 0 && (
+              <View style={[s.card, s.trashCard]}>
+                <View style={s.row}>
+                  <Icon name="trash" size={20} color={theme.text2 as string} />
+                  <View style={s.grow}>
+                    <Text style={s.text}>{t('Papierkorb')}</Text>
+                    <Text style={s.meta}>
+                      {trashSize(binned) > 0
+                        ? t('{n} Elemente · {size}', { n: binned.length, size: humanSize(trashSize(binned), locale()) })
+                        : t('{n} Elemente', { n: binned.length })}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => confirmEmptyTrash(binned, notify, () => setGen((g) => g + 1))}
+                    style={s.reset}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('Papierkorb leeren')}
+                  >
+                    <Text style={[s.link, { color: theme.danger as string }]}>{t('Leeren')}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
             {cat ? (
               <View style={s.sectionRow}>
                 <SectionLabel theme={theme} style={[s.section, s.grow]}>{t('{kind}: größte zuerst', { kind: catLabel })}</SectionLabel>
@@ -233,6 +263,7 @@ const styles = themed((th) =>
     note: { color: th.text2, fontSize: 15, lineHeight: 22, padding: 24 },
     loading: { marginTop: 48 },
     loadingSmall: { marginVertical: 24 },
+    trashCard: { marginTop: 12 },
     sectionRow: { flexDirection: 'row', alignItems: 'center' },
     reset: { marginTop: 20, marginBottom: 8, paddingHorizontal: 8, minHeight: 32, justifyContent: 'center' },
     link: { color: th.accent, fontSize: 14, fontWeight: '600' },
