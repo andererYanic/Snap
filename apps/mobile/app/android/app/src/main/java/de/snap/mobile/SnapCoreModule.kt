@@ -197,6 +197,30 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
     }
   }
 
+  /** Scharfer Ausschnitt eines Fotos beim Zoomen (x, y, w, h relativ 0…1; Breite in Pixeln). */
+  @ReactMethod
+  fun zoomImage(path: String, x: Double, y: Double, w: Double, h: Double, outW: Double, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(ZoomTiles.image(ctx.applicationContext, path, x, y, w, h, outW.toInt()))
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** Scharfer Ausschnitt einer PDF-Seite beim Zoomen (x, y, w, h relativ zur Seite). */
+  @ReactMethod
+  fun pdfRegion(path: String, index: Double, x: Double, y: Double, w: Double, h: Double, outW: Double, promise: Promise) {
+    scope.launch {
+      try {
+        promise.resolve(PdfPages.region(ctx.applicationContext, path, index.toInt(), x, y, w, h, outW.toInt()))
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
   /** PDF: Seite als PNG (Pfad) in der gewünschten Breite. */
   @ReactMethod
   fun pdfPage(path: String, index: Double, width: Double, promise: Promise) {

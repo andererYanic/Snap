@@ -22,6 +22,7 @@ import { useOcr } from './Ocr';
 import { m } from './motion';
 import { Icon } from './Icon';
 import { clampV, pinchBase, pinchStep, range, rubber, settle, settleTarget, type PinchState } from './zoom';
+import { SHARPEN_FROM, useSettled, visibleRegion } from './sharpen';
 
 export interface MediaItem {
   path: string;
@@ -326,6 +327,33 @@ function ZoomImage({ item, active, s, tx, ty, onBox }: {
   // RAW kann Android nicht selbst zeigen: große Fassung der eingebetteten Vorschau
   const raw = useThumb(isRaw(item.path) ? item.path : null, 2560);
   const [loaded, setLoaded] = useState(false);
+  // Scharfer Ausschnitt beim Zoomen (nur der sichtbare Teil in Bildschirmauflösung)
+  const [frame, setFrame] = useState<Box | null>(null);
+  const [tile, setTile] = useState<{ uri: string; c: Box } | null>(null);
+  const tileReq = useRef(0);
+  const sharpenable = active && loaded && !!frame && !item.uri && !isRaw(item.path) && !/\.gif$/i.test(item.path);
+  useEffect(() => {
+    if (!active) {
+      tileReq.current++;
+      setTile(null);
+    }
+  }, [active]);
+  useSettled(s, tx, ty, sharpenable, (sc, x, y) => {
+    const n = ++tileReq.current;
+    if (sc < SHARPEN_FROM || !frame) {
+      setTile(null);
+      return;
+    }
+    const v = visibleRegion(sc, x, y, frame, W, H);
+    if (!v) {
+      return;
+    }
+    core.zoomImage(item.path, v.rel, v.px).then((f) => {
+      if (f && n === tileReq.current) {
+        setTile({ uri: `file://${f}`, c: v.content });
+      }
+    }).catch(() => {});
+  });
   const style = useAnimatedStyle(() =>
     active
       ? { transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: s.value }] }
@@ -342,11 +370,21 @@ function ZoomImage({ item, active, s, tx, ty, onBox }: {
           setLoaded(true);
           const src = e?.nativeEvent?.source;
           if (src?.width && src?.height) {
-            onBox(item.path, containBox(src.width, src.height));
+            const b = containBox(src.width, src.height);
+            setFrame(b);
+            onBox(item.path, b);
           }
         }}
         fadeDuration={150}
       />
+      {tile && (
+        <Image
+          source={{ uri: tile.uri }}
+          style={{ position: 'absolute', left: tile.c.x, top: tile.c.y, width: tile.c.w, height: tile.c.h }}
+          fadeDuration={0}
+          accessible={false}
+        />
+      )}
     </Animated.View>
   );
 }

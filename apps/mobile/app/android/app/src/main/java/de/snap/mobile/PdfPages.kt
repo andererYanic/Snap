@@ -118,6 +118,51 @@ object PdfPages {
     }
   }
 
+  /**
+   * Ausschnitt einer Seite in Bildschirmauflösung (zum Scharfstellen beim Zoomen): `x, y, w, h`
+   * relativ zur Seite (0…1), `outW` Pixel breit. Nur der sichtbare Teil wird gerendert – viel
+   * weniger Arbeit als die ganze Seite in hoher Auflösung. PNG (Text bleibt scharf).
+   */
+  suspend fun region(context: Context, path: String, index: Int, x: Double, y: Double, w: Double, h: Double, outW: Int): String? =
+    withContext(Dispatchers.IO) {
+      val f = check(path) ?: return@withContext null
+      if (!(w > 0 && h > 0 && x >= 0 && y >= 0 && x + w <= 1.0001 && y + h <= 1.0001)) return@withContext null
+      val dir = File(context.cacheDir, "zoom").apply { mkdirs() }
+      ZoomTiles.prune(dir)
+      val key = MessageDigest.getInstance("SHA-256")
+        .digest("${f.absolutePath}|${f.lastModified()}|${f.length()}|$index|${"%.4f %.4f %.4f %.4f".format(x, y, w, h)}|$outW".toByteArray())
+        .joinToString("") { "%02x".format(it) }
+        .take(40)
+      val out = File(dir, "p$key.png")
+      if (out.isFile && out.length() > 0) return@withContext out.absolutePath
+      lock.withLock {
+        try {
+          val r = open(f)
+          if (index !in 0 until r.pageCount.coerceAtMost(MAX_PAGES)) return@withLock null
+          r.openPage(index).use { p ->
+            val bw = outW.coerceIn(16, 4096)
+            val scale = bw / (w * p.width)
+            val bh = (h * p.height * scale).toInt().coerceIn(1, 4096)
+            if (bw.toLong() * bh > MAX_PIXELS) return@withLock null
+            val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            bmp.eraseColor(Color.WHITE)
+            val m = android.graphics.Matrix()
+            m.setScale(scale.toFloat(), scale.toFloat())
+            m.postTranslate((-x * p.width * scale).toFloat(), (-y * p.height * scale).toFloat())
+            p.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            val tmp = File(dir, "p$key.tmp")
+            tmp.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bmp.recycle()
+            tmp.renameTo(out)
+            out.absolutePath
+          }
+        } catch (_: Throwable) {
+          close()
+          null
+        }
+      }
+    }
+
   // ------------------------------------------------------------ Textschicht
 
   /** Textschicht über Android: ab Android 15 oder Android 11–14 mit Systemupdate (Erweiterung 13). */

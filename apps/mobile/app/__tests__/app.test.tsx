@@ -846,7 +846,10 @@ test('Zoom: Fingerpunkt bleibt stehen, Grenzen mit Gummiband, Seiten finden, Auf
   const z = require('../src/zoom');
   expect(renderStep(1)).toBe(1);
   expect(renderStep(1.2)).toBe(1.5);
-  expect(renderStep(9)).toBe(MAX_ZOOM);
+  expect(MAX_ZOOM).toBe(5);
+  // Ganze Seiten höchstens in Stufe 2; darüber zeichnet ein Ausschnitt nur den sichtbaren Teil
+  expect(renderStep(2)).toBe(2);
+  expect(renderStep(9)).toBe(2);
   // Erlaubte Verschiebung: Inhalt so groß wie der Ausschnitt → fest; doppelt so groß → bis −400
   expect(z.range(1, 400, 0, 400)).toEqual([0, 0]);
   expect(z.range(2, 400, 0, 400)).toEqual([-400, 0]);
@@ -2090,4 +2093,45 @@ test('Dateiauswahl für andere Apps: nur passende Arten, Antippen gibt genau die
     delete NativeModules.SnapCore.pickFinish;
     delete NativeModules.SnapCore.pickCancel;
   }
+});
+
+test('Scharfstellen beim Zoomen: sichtbarer Ausschnitt (relativ, Inhaltskoordinaten, Pixel)', () => {
+  const { visibleRegion } = require('../src/sharpen');
+  const box = { x: 0, y: 100, w: 400, h: 300 }; // Bild im 400×500-Fenster bei Zoom 1
+  // Zoom 1, ohne Zugabe: alles sichtbar
+  const all = visibleRegion(1, 0, 0, box, 400, 500, 0, 2);
+  expect(all.rel).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  expect(all.px).toBe(800);
+  // Zoom 2 auf die Mitte: die mittlere Hälfte in beiden Richtungen, doppelte Pixel
+  const mid = visibleRegion(2, -200, -250 - 0, box, 400, 500, 0, 2);
+  expect(mid.content.x).toBeCloseTo(100);
+  expect(mid.content.w).toBeCloseTo(200);
+  expect(mid.rel.x).toBeCloseTo(0.25);
+  expect(mid.rel.w).toBeCloseTo(0.5);
+  expect(mid.px).toBe(800);
+  // Zugabe wird am Bildrand abgeschnitten, nie außerhalb (rel bleibt in 0…1)
+  const edge = visibleRegion(3, 0, -300, box, 400, 500, 0.15, 2);
+  expect(edge.rel.x).toBe(0);
+  expect(edge.rel.x + edge.rel.w).toBeLessThanOrEqual(1);
+  expect(edge.rel.y).toBeGreaterThanOrEqual(0);
+  expect(edge.rel.y + edge.rel.h).toBeLessThanOrEqual(1 + 1e-9);
+  // Nicht sichtbar bzw. ungültig → null; Pixel nach oben begrenzt
+  expect(visibleRegion(2, -5000, 0, box, 400, 500, 0, 2)).toBeNull();
+  expect(visibleRegion(0, 0, 0, box, 400, 500)).toBeNull();
+  expect(visibleRegion(6, 0, 0, { x: 0, y: 0, w: 4000, h: 4000 }, 4000, 4000, 0, 3).px).toBe(4096);
+});
+
+test('Leseansicht: Schrift per Zoom neu gesetzt (scharf), begrenzt, Tabellen wachsen mit', () => {
+  const { zoomStyles, clampZoom, TEXT_ZOOM_MIN, TEXT_ZOOM_MAX } = require('../src/TextViewer');
+  const base = { text: { fontSize: 16, lineHeight: 26, color: '#000' }, td: { minWidth: 90, maxWidth: 260, fontSize: 14, lineHeight: 20 }, title: { fontSize: 17 }, bullet: { width: 24 } };
+  expect(zoomStyles(base, 1)).toBe(base);
+  const z = zoomStyles(base, 2);
+  expect(z.text).toEqual({ fontSize: 32, lineHeight: 52, color: '#000' });
+  expect(z.td.minWidth).toBe(180);
+  expect(z.td.maxWidth).toBe(520);
+  expect(z.title).toBe(base.title); // Kopfzeile bleibt gleich groß
+  expect(z.bullet.width).toBe(48);
+  expect(clampZoom(10)).toBe(TEXT_ZOOM_MAX);
+  expect(clampZoom(0.1)).toBe(TEXT_ZOOM_MIN);
+  expect(clampZoom(1.23)).toBe(1.25);
 });

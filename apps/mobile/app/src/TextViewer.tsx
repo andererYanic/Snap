@@ -3,6 +3,8 @@
 // http(s).
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { Text } from './text';
 import * as core from './core';
 import { Icon } from './Icon';
@@ -223,7 +225,31 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
   const [doc, setDoc] = useState<{ text: string; truncated: boolean } | null | 'error'>(null);
   const [raw, setRaw] = useState(false);
   const [docx, setDocx] = useState<Block[] | null>(null);
-  const s = styles(theme);
+  const [zoom, setZoomState] = useState(1);
+  const base = styles(theme);
+  const s = useMemo(() => zoomStyles(base, zoom), [base, zoom]);
+  // Gewählte Schriftgröße bleibt erhalten
+  useEffect(() => {
+    core.getPref('textZoom').then((v) => v && setZoomState(clampZoom(Number(v) || 1))).catch(() => {});
+  }, []);
+  const setZoom = (z: number) => {
+    const v = clampZoom(z);
+    setZoomState(v);
+    core.setPref('textZoom', String(v));
+  };
+  // Während des Zoomens nur vergrößert zeigen; beim Loslassen in der neuen Schriftgröße setzen
+  const live = useSharedValue(1);
+  const pinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      live.value = Math.max(TEXT_ZOOM_MIN / zoom, Math.min(TEXT_ZOOM_MAX / zoom, e.scale));
+    })
+    .onEnd(() => {
+      runOnJS(setZoom)(zoom * live.value);
+    })
+    .onFinalize(() => {
+      live.value = withTiming(1, { duration: 0 });
+    });
+  const liveStyle = useAnimatedStyle(() => ({ transform: [{ scale: live.value }] }));
   const md = MD.test(name);
   const isDocx = DOCS.test(name);
 
@@ -285,6 +311,11 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
             <Icon name="back" color={theme.text as string} />
           </Pressable>
           <Text style={s.title} numberOfLines={1}>{name}</Text>
+          {Math.abs(zoom - 1) >= 0.01 && (
+            <Pressable onPress={() => setZoom(1)} style={s.btn} accessibilityRole="button" accessibilityLabel={t('Schriftgröße zurücksetzen')}>
+              <Text style={s.small}>{`${Math.round(zoom * 100)} %`}</Text>
+            </Pressable>
+          )}
           {isDocx && <Text style={s.badge}>{t('Leseansicht')}</Text>}
           {(md || TABLE.test(name) || CARD.test(name)) && (
             <Pressable onPress={() => setRaw((v) => !v)} style={s.btn} accessibilityLabel={raw ? t('Formatiert anzeigen') : t('Quelltext anzeigen')}>
@@ -299,10 +330,15 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
           <ActivityIndicator style={s.fill} color={theme.accent as string} />
         ) : doc === 'error' ? (
           <Text style={[s.text, s.error]}>{t('Diese Datei lässt sich nicht anzeigen.')}</Text>
-        ) : blocks && !raw ? (
+        ) : (
+          <GestureHandlerRootView style={s.fill}>
+          <GestureDetector gesture={pinch}>
+          <Animated.View style={[s.fill, liveStyle]} accessibilityHint={t('Mit zwei Fingern die Schrift vergrößern')}>
+          {blocks && !raw ? (
           <FlatList
             data={blocks}
             keyExtractor={(_, i) => String(i)}
+            extraData={zoom}
             contentContainerStyle={s.body}
             initialNumToRender={20}
             renderItem={({ item }) => <BlockView b={item} s={s} theme={theme} />}
@@ -318,16 +354,50 @@ export default function TextViewer({ path, name, theme, onClose }: { path: strin
           <FlatList
             data={chunks}
             keyExtractor={(_, i) => String(i)}
+            extraData={zoom}
             contentContainerStyle={s.body}
             initialNumToRender={4}
             renderItem={({ item }) => <Text style={[s.text, s.mono]} selectable>{item}</Text>}
             ListFooterComponent={doc.truncated ? <Text style={s.note}>{t('Nur der Anfang der Datei wird angezeigt (2 MB).')}</Text> : undefined}
           />
+          )}
+          </Animated.View>
+          </GestureDetector>
+          </GestureHandlerRootView>
         )}
       </View>
     </Modal>
   );
 }
+
+/** Schriftgröße der Leseansicht (Zoom mit zwei Fingern): Text wird neu gesetzt statt vergrößert –
+ *  so ist er sofort scharf. */
+export const TEXT_ZOOM_MIN = 0.8;
+export const TEXT_ZOOM_MAX = 3;
+const ZOOMABLE = ['text', 'mono', 'h1', 'h2', 'h3', 'codeText', 'td', 'note'] as const;
+
+/** Stile mit Schriftgröße `z` (Schrift, Zeilenhöhe und Tabellenbreiten mitwachsen lassen). */
+export function zoomStyles<T extends Record<string, any>>(base: T, z: number): T {
+  if (Math.abs(z - 1) < 0.01) {
+    return base;
+  }
+  const out: Record<string, any> = { ...base };
+  for (const k of ZOOMABLE) {
+    const st = StyleSheet.flatten(base[k]) ?? {};
+    out[k] = {
+      ...st,
+      ...(st.fontSize ? { fontSize: Math.round(st.fontSize * z * 10) / 10 } : {}),
+      ...(st.lineHeight ? { lineHeight: Math.round(st.lineHeight * z) } : {}),
+      ...(st.minWidth ? { minWidth: Math.round(st.minWidth * z) } : {}),
+      ...(st.maxWidth ? { maxWidth: Math.round(st.maxWidth * z) } : {}),
+    };
+  }
+  // Fließtext ohne eigene Größe (Überschriften erben „text“) und Aufzählungszeichen
+  out.bullet = { ...StyleSheet.flatten(base.bullet), width: Math.round(24 * z) };
+  return out as T;
+}
+
+export const clampZoom = (z: number) => Math.max(TEXT_ZOOM_MIN, Math.min(TEXT_ZOOM_MAX, Math.round(z * 20) / 20));
 
 const styles = themed((th: Theme) =>
   StyleSheet.create({
