@@ -18,6 +18,45 @@ strip = true
 [profile.mobile]
 inherits = "release"
 panic = "unwind"
+# Auf Größe optimiert (−12 % am Kern); rechenintensive Bibliotheken unten bleiben auf Tempo.
+opt-level = "s"
+
+[profile.mobile.package.blake3]
+opt-level = 3
+[profile.mobile.package.bao-tree]
+opt-level = 3
+[profile.mobile.package.argon2]
+opt-level = 3
+[profile.mobile.package.blake2]
+opt-level = 3
+[profile.mobile.package.sha2]
+opt-level = 3
+[profile.mobile.package.aes]
+opt-level = 3
+[profile.mobile.package.aes-gcm]
+opt-level = 3
+[profile.mobile.package.ghash]
+opt-level = 3
+[profile.mobile.package.curve25519-dalek]
+opt-level = 3
+[profile.mobile.package.ed25519-dalek]
+opt-level = 3
+[profile.mobile.package.image]
+opt-level = 3
+[profile.mobile.package.zune-jpeg]
+opt-level = 3
+[profile.mobile.package.zune-core]
+opt-level = 3
+[profile.mobile.package.png]
+opt-level = 3
+[profile.mobile.package.fdeflate]
+opt-level = 3
+[profile.mobile.package.miniz_oxide]
+opt-level = 3
+[profile.mobile.package.flate2]
+opt-level = 3
+[profile.mobile.package.quinn-proto]
+opt-level = 3
 
 # Entwicklungs-Builds: nur Zeilentabellen (Backtraces bleiben lesbar), Abhängigkeiten ohne
 # Debug-Infos – spart viele GB im target-Ordner und beschleunigt das Linken.
