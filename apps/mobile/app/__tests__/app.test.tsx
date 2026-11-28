@@ -1878,3 +1878,37 @@ test('Favoriten und zuletzt geöffnet: lokal, ohne Doppelte, begrenzt', async ()
   prefs.recent = '{kaputt';
   expect(await places.recent()).toEqual([]);
 });
+
+test('Speicherübersicht: Arten, größte Dateien, Ordner mit Drill-down', async () => {
+  const StoragePage = require('../src/Storage').default;
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  const asked: string[] = [];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req.SpaceUsage) {
+      asked.push(req.SpaceUsage.path);
+      const sub = req.SpaceUsage.path.endsWith('/DCIM');
+      return JSON.stringify({ SpaceUsage: {
+        path: req.SpaceUsage.path, total: 5e9, files: 1200,
+        children: sub ? [] : [{ name: 'DCIM', is_dir: true, size: 4e9, files: 1000 }, { name: 'notiz.txt', is_dir: false, size: 10, files: 1 }],
+        by_type: [{ category: 'Bilder', size: 3e9, files: 900 }, { category: 'Apps', size: 1e9, files: 3 }],
+        largest: [{ path: '/storage/emulated/0/Movies/film.mp4', size: 2e9 }],
+      } });
+    }
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<StoragePage root="/storage/emulated/0" theme={snapTheme(false)} notify={() => {}} onClose={() => {}} onOpenFolder={() => {}} />); });
+    await flush();
+    const texts = () => r.root.findAll((n) => typeof n.props.children === 'string').map((n) => n.props.children as string);
+    expect(texts()).toEqual(expect.arrayContaining(['Bilder', 'Apps', 'film.mp4', 'DCIM']));
+    expect(texts()).not.toContain('notiz.txt'); // nur Ordner unter „Größte Ordner“
+    await act(async () => { pressable(r, 'DCIM').props.onPress(); });
+    await flush();
+    expect(asked).toEqual(['/storage/emulated/0', '/storage/emulated/0/DCIM']);
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});

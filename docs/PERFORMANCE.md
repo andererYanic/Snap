@@ -922,3 +922,10 @@ Alles innerhalb der Messschwankung außer dem Entsperren (+25 ms) – dort ist L
 - Eine Anfrage in `spawn_blocking`: Geräte mit Rechten (indizierte Abfragen je Gerät), Freigaben,
   Links, die letzten 1000 Audit-Einträge und Zustandsabfragen im Speicher – im Test
   (`core/tests/security.rs`) im einstelligen Millisekundenbereich. Nur beim Öffnen der Seite.
+
+## Review 51 – Speicherübersicht am Handy (2026-11-27)
+
+- Nutzt die vorhandene Speicheranalyse des Kerns (eine Abfrage über den Teilbaum im lokalen Index,
+  kein erneutes Durchsuchen; gemessen in Review „storage_analysis“). Je geöffnetem Ordner genau eine
+  Anfrage in `spawn_blocking`, die Oberfläche zeigt bis dahin einen Fortschritt.
+- Neu nur die Kategorie „Apps“ (APK/APKS/XAPK) – eine weitere Endungszuordnung, keine Mehrkosten.

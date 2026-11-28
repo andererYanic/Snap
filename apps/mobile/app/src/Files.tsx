@@ -23,6 +23,7 @@ import PdfViewer from './PdfViewer';
 import TextViewer, { isText } from './TextViewer';
 import { ApkSheet, isApk } from './Apk';
 import ArchiveViewer, { isArchiveListable } from './ArchiveViewer';
+import StoragePage from './Storage';
 import SvgViewer, { isSvg } from './SvgViewer';
 import { planRename, renameProblem, type RenameMode } from './rename';
 import * as places from './places';
@@ -149,6 +150,7 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
   // Geöffnetes anderes Gerät (Startseite → Gerät antippen)
   const [remoteDev, setRemoteDev] = useState<RemoteDevice | null>(null);
   const [storage, setStorage] = useState<{ total: number; free: number } | null>(null);
+  const [analyze, setAnalyze] = useState(false);
   const [folders, setFolders] = useState<[string, string][]>([]);
   // Favoriten und zuletzt geöffnete Dateien (lokal)
   const [favs, setFavs] = useState<places.Place[]>([]);
@@ -676,6 +678,14 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
                 )}
               </View>
             </Tap>
+            <View style={s.sep} />
+            <Tap theme={theme} onPress={() => setAnalyze(true)} style={s.placeRow} label={t('Was belegt Platz?')}>
+              <Icon name="search" size={24} color={theme.text2 as string} />
+              <View style={s.placeText}>
+                <Text style={s.cardTitle} numberOfLines={1}>{t('Was belegt Platz?')}</Text>
+                <Text style={s.meta}>{t('Nach Art, größte Dateien und Ordner')}</Text>
+              </View>
+            </Tap>
             {remote.map((d) => {
               const dUsed = d.storage ? d.storage.total - d.storage.free : 0;
               return (
@@ -1166,6 +1176,16 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
           </Animated.View>
         </View>
       </Modal>
+
+      {analyze && (
+        <StoragePage
+          root={root}
+          theme={theme}
+          notify={notify}
+          onClose={() => setAnalyze(false)}
+          onOpenFolder={(dir) => { setAnalyze(false); go(dir, 'forward'); }}
+        />
+      )}
 
       <Modal visible={!!bulk} transparent animationType="fade" onRequestClose={() => setBulk(null)}>
         <View style={s.modalBg}>
