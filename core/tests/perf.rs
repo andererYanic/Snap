@@ -1796,3 +1796,46 @@ fn vault_crypto() {
     report("Entschlüsseln 100 MB (MB)", 100, t.elapsed());
     assert_eq!(out, data);
 }
+
+/// Leistungsdeckel am Handy: Erstscan mit höchstens 2 gleichzeitigen Hash-Vorgängen gegenüber
+/// der Kernzahl (1 000 Dateien à 1 MiB – hier zählt das Hashen, nicht die Verwaltung).
+#[test]
+#[ignore]
+fn share_scan_capped() {
+    use space_core::events::Event;
+    use space_core::ipc::{Request, Response};
+    use space_core::{Config, Daemon};
+    let dir = tempfile::tempdir().unwrap();
+    let share = dir.path().join("share");
+    std::fs::create_dir_all(&share).unwrap();
+    for i in 0..1000u32 {
+        let data: Vec<u8> = (0..1024 * 1024u32).map(|j| (j.wrapping_mul(31) ^ i) as u8).collect();
+        std::fs::write(share.join(format!("datei-{i:04}.bin")), data).unwrap();
+    }
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    for parallel in [0usize, 2] {
+        rt.block_on(async {
+            let mut c = Config::portable(&dir.path().join(format!("node-{parallel}")));
+            c.use_relay = false;
+            c.scan_parallel = parallel;
+            let d = Daemon::start_loopback(c).await.unwrap();
+            let mut sub = d.subscribe();
+            let t = Instant::now();
+            assert!(matches!(
+                d.request(Request::ShareAdd { path: share.clone(), name: Some("S".into()), devices: Some(vec![]) })
+                    .await,
+                Response::ShareAdded { .. }
+            ));
+            loop {
+                if let Some(Event::ShareScanned { total, .. }) = sub.next().await {
+                    if total >= 1000 {
+                        break;
+                    }
+                }
+            }
+            let n = space_core::shares::scan_parallel(parallel);
+            report(&format!("Erstscan 1 GB, {n} gleichzeitig"), 1000, t.elapsed());
+            d.shutdown().await;
+        });
+    }
+}

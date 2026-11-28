@@ -3,6 +3,7 @@
 
 pub mod analysis;
 pub mod api;
+pub mod background;
 pub mod backoff;
 pub mod backup;
 pub mod clipboard;

@@ -104,6 +104,9 @@ pub struct Config {
     pub index_home: bool,
     pub index_drives: bool,
     pub index_max_watches: usize,
+    /// Höchstens so viele Dateien gleichzeitig hashen (Freigabe-Scans); 0 = Kernzahl (2…16).
+    /// Am Handy klein, damit die Oberfläche flüssig bleibt.
+    pub scan_parallel: usize,
     /// Home-Papierkorb (freedesktop): `$XDG_DATA_HOME/Trash`.
     pub trash_dir: PathBuf,
     /// Verändernde Fernoperationen pro Gerät und Stunde, darüber wird Bestätigung verlangt.
@@ -263,6 +266,7 @@ impl Config {
             index_home: true,
             index_drives: file.index_drives.unwrap_or(true),
             index_max_watches: file.index_max_watches.unwrap_or(50_000),
+            scan_parallel: 0,
             trash_dir,
             ops_hourly_limit: file.ops_hourly_limit.unwrap_or(100),
             thumb_cache_bytes: file.thumb_cache_mb.unwrap_or(500).max(10) * 1024 * 1024,
@@ -300,6 +304,7 @@ impl Config {
             index_home: false,
             index_drives: false,
             index_max_watches: 10_000,
+            scan_parallel: 0,
             trash_dir: root.join("Trash"),
             ops_hourly_limit: 100,
             thumb_cache_bytes: 50 * 1024 * 1024,
