@@ -191,7 +191,7 @@ async fn space_usage_and_duplicates_via_daemon() {
     d.request(Request::IndexAdd { path: home.clone() }).await;
     wait_search(&d, "kopie", |h| h.len() == 1).await;
 
-    match d.request(Request::SpaceUsage { path: home.clone(), limit: 10 }).await {
+    match d.request(Request::SpaceUsage { path: home.clone(), limit: 10, category: None }).await {
         Response::SpaceUsage(u) => {
             assert_eq!(u.total, 4_000_001);
             assert_eq!(u.by_type[0].category, "Videos");
@@ -207,9 +207,9 @@ async fn space_usage_and_duplicates_via_daemon() {
         }
         other => panic!("{other:?}"),
     }
-    let rel = Request::SpaceUsage { path: "relativ".into(), limit: 10 };
+    let rel = Request::SpaceUsage { path: "relativ".into(), limit: 10, category: None };
     assert_eq!(code(&d.request(rel).await), Some(ErrorCode::InvalidInput));
-    let outside = Request::SpaceUsage { path: tmp.path().join("woanders"), limit: 10 };
+    let outside = Request::SpaceUsage { path: tmp.path().join("woanders"), limit: 10, category: None };
     assert_eq!(code(&d.request(outside).await), Some(ErrorCode::NotFound));
     d.shutdown().await;
 }

@@ -930,6 +930,15 @@ Alles innerhalb der Messschwankung außer dem Entsperren (+25 ms) – dort ist L
   Anfrage in `spawn_blocking`, die Oberfläche zeigt bis dahin einen Fortschritt.
 - Neu nur die Kategorie „Apps“ (APK/APKS/XAPK) – eine weitere Endungszuordnung, keine Mehrkosten.
 
+## Review 54 – Speicherübersicht: Dateien einer Art (2026-11-28)
+
+- `SpaceUsage` mit `category`: derselbe eine Durchlauf über den Teilbaum im Index, nur die Liste
+  der größten Dateien wird gefiltert (Heap mit höchstens 200 Einträgen statt 20). Gemessen
+  (`perf.rs` › `storage_analysis`, Release): 1,1 Mio. Einträge 308 ms gefiltert gegenüber 326 ms
+  ungefiltert – bei 12 600 Dateien eines typischen Handys rund 4 ms, in `spawn_blocking`.
+- Am Handy eine eigene Abfrage nur beim Antippen einer Art; die Übersicht bleibt stehen, nur der
+  Dateiabschnitt zeigt bis zur Antwort einen Fortschritt. Höchstens 200 Zeilen.
+
 ## Review 55 – Leistungsdeckel am Handy (2026-11-28)
 
 Anlass: Nach „Alle Dateien“ ruckelte das Handy. Der erste Scan hasht den ganzen gemeinsamen

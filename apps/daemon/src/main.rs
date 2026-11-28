@@ -1013,7 +1013,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Commands::Ring { device: Some(device), stop } => Request::Ring { device, stop },
         Commands::Ring { device: None, .. } => Request::RingStop,
-        Commands::Usage { path, limit } => Request::SpaceUsage { path: absolute(&path)?, limit },
+        Commands::Usage { path, limit } => Request::SpaceUsage { path: absolute(&path)?, limit, category: None },
         Commands::Dupes { path, min_mb, limit } => Request::Duplicates {
             path: path.map(|p| absolute(&p)).transpose()?,
             min_size: Some((min_mb.max(0.0) * 1e6) as u64),

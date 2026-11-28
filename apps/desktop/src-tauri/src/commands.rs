@@ -542,7 +542,7 @@ pub async fn link_revoke(d: State<'_, Daemon>, id: String) -> UiResult<Value> {
 
 #[tauri::command]
 pub async fn space_usage(d: State<'_, Daemon>, path: String) -> UiResult<Value> {
-    d.request(Request::SpaceUsage { path: ui_path(&path)?, limit: 50 }).await
+    d.request(Request::SpaceUsage { path: ui_path(&path)?, limit: 50, category: None }).await
 }
 
 #[tauri::command]

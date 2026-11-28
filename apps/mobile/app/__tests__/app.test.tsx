@@ -1912,3 +1912,46 @@ test('Speicherübersicht: Arten, größte Dateien, Ordner mit Drill-down', async
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Speicherübersicht: Art antippen zeigt nur deren Dateien', async () => {
+  const StoragePage = require('../src/Storage').default;
+  const { snapTheme } = require('../src/theme');
+  const origRequest = NativeModules.SnapCore.request.getMockImplementation();
+  const cats: (string | undefined)[] = [];
+  NativeModules.SnapCore.request.mockImplementation(async (json: string) => {
+    const req = JSON.parse(json);
+    if (req.SpaceUsage) {
+      const c = req.SpaceUsage.category;
+      cats.push(c);
+      return JSON.stringify({ SpaceUsage: {
+        path: req.SpaceUsage.path, total: 5e9, files: 1200,
+        children: [{ name: 'DCIM', is_dir: true, size: 4e9, files: 1000 }],
+        by_type: [{ category: 'Bilder', size: 3e9, files: 900 }, { category: 'Videos', size: 2e9, files: 3 }],
+        largest: c === 'Bilder'
+          ? [{ path: '/storage/emulated/0/DCIM/foto.jpg', size: 9e6 }]
+          : [{ path: '/storage/emulated/0/Movies/film.mp4', size: 2e9 }],
+      } });
+    }
+    return origRequest(json);
+  });
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<StoragePage root="/storage/emulated/0" theme={snapTheme(false)} notify={() => {}} onClose={() => {}} onOpenFolder={() => {}} />); });
+    await flush();
+    const texts = () => r.root.findAll((n) => typeof n.props.children === 'string').map((n) => n.props.children as string);
+    expect(texts()).toEqual(expect.arrayContaining(['film.mp4', 'DCIM']));
+    await act(async () => { pressable(r, 'Bilder').props.onPress(); });
+    await flush();
+    expect(cats).toEqual([undefined, 'Bilder']);
+    expect(texts()).toContain('foto.jpg');
+    expect(texts()).not.toContain('film.mp4'); // nur Bilder
+    expect(texts()).not.toContain('DCIM'); // keine gemischten Ordner
+    // Erneut antippen hebt die Auswahl auf
+    await act(async () => { pressable(r, 'Bilder').props.onPress(); });
+    await flush();
+    expect(texts()).toEqual(expect.arrayContaining(['film.mp4', 'DCIM']));
+    expect(texts()).not.toContain('foto.jpg');
+  } finally {
+    NativeModules.SnapCore.request.mockImplementation(origRequest);
+  }
+});
