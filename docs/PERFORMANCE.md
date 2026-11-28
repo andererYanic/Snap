@@ -836,12 +836,23 @@ Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP
 - Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
   Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.
 
-## Review 51 – Speicherübersicht am Handy (2026-11-27)
+## Review 50 – Komfort: Massen-Umbenennen, Favoriten, Volltext (2026-11-27)
 
-- Nutzt die vorhandene Speicheranalyse des Kerns (eine Abfrage über den Teilbaum im lokalen Index,
-  kein erneutes Durchsuchen; gemessen in Review „storage_analysis“). Je geöffnetem Ordner genau eine
-  Anfrage in `spawn_blocking`, die Oberfläche zeigt bis dahin einen Fortschritt.
-- Neu nur die Kategorie „Apps“ (APK/APKS/XAPK) – eine weitere Endungszuordnung, keine Mehrkosten.
+Gemessen (Release, `core/tests/perf.rs` › `content_index`, 2000 Textdateien à ~3 KB):
+
+| Vorgang | Zeit |
+|---|---|
+| Volltext erfassen | 78 µs je Datei (2000 Dateien in 157 ms) |
+| Volltext-Suche | 0,15 ms je Anfrage |
+| Abgleich ohne Änderungen | 0,55 ms |
+
+- Erfassen läuft im Hintergrund in Portionen zu 200 Dateien mit 300 ms Pause, nur nach Änderungen
+  am Dateiindex; Office-Dokumente und PDFs sind teurer (Lesen und Entpacken), bleiben aber in
+  derselben Portionierung. Je Datei höchstens 100 000 Zeichen – der Index wächst begrenzt.
+- Suche: eine FTS5-Abfrage mit `LIMIT`, Pfade über die vorhandene Elternkette; die App fragt erst ab
+  3 Zeichen und entprellt (160 ms) – keine GUI-Abfrage nahe der 16-ms-Grenze.
+- Massen-Umbenennen: zwei `renameat2`-Aufrufe je Datei (über Zwischennamen), keine Kopien.
+- Favoriten/Zuletzt: kleine JSON-Listen in den App-Einstellungen (≤ 50/20 Einträge).
 
 ## Review 47 – Texterkennung (OCR) (2026-11-27)
 
@@ -883,8 +894,38 @@ Gemessen (Release, Host, `core/tests/perf.rs` › `vault_crypto`):
 - Aufräumen alle 5 Minuten in `spawn_blocking`: eine indizierte Abfrage (`idx_drop_expiry`) nach
   höchstens 500 fälligen Pfaden; ohne fällige Einträge kein Plattenzugriff außer der Abfrage.
 
+## Review 53 – Größe der App (2026-11-27)
+
+Ziel: weniger Speicher auf dem Handy, ohne spürbar langsamer zu werden.
+
+| Maßnahme | Wirkung |
+|---|---|
+| Rust-Kern mit `opt-level = "s"`, rechenintensive Bibliotheken (Hashing, Krypto, Bild-Decoder, Kompression, QUIC) weiter `opt-level = 3` | `libsnap_ffi.so` (arm64) 27,2 → 24,1 MB (−11 %) |
+| R8 und Entfernen ungenutzter Ressourcen (Release) | Java/Kotlin-Bytecode wird geschrumpft (vorher ~21 MB DEX) |
+| Eine Architektur je APK (arm64-v8a für Handys) | statt beider Architekturen: halbiert die nativen Bibliotheken |
+
+Tempo im Vergleich (Host, gleiche Perf-Tests, Profil `release` → `mobile`):
+
+| Vorgang | vorher | nachher |
+|---|---|---|
+| Vorschaubild 12 MP → 256 px | 56,7 ms | 58,1 ms |
+| RAW → Anzeige 2560 px | 257 ms | 175 ms |
+| Tresor ver-/entschlüsseln (100 MB) | 83 / 75 ms | 81 / 74 ms |
+| Erstscan je Datei (hashen + importieren) | 200 µs | 204 µs |
+| Tresor entsperren (Argon2id, bewusst langsam) | 152 ms | 177 ms |
+
+Alles innerhalb der Messschwankung außer dem Entsperren (+25 ms) – dort ist Langsamkeit Absicht
+(bremst Passwort-Raten); die Oberfläche zeigt währenddessen einen Fortschritt.
+
 ## Review 52 – Sicherheitsübersicht (2026-11-27)
 
 - Eine Anfrage in `spawn_blocking`: Geräte mit Rechten (indizierte Abfragen je Gerät), Freigaben,
   Links, die letzten 1000 Audit-Einträge und Zustandsabfragen im Speicher – im Test
   (`core/tests/security.rs`) im einstelligen Millisekundenbereich. Nur beim Öffnen der Seite.
+
+## Review 51 – Speicherübersicht am Handy (2026-11-27)
+
+- Nutzt die vorhandene Speicheranalyse des Kerns (eine Abfrage über den Teilbaum im lokalen Index,
+  kein erneutes Durchsuchen; gemessen in Review „storage_analysis“). Je geöffnetem Ordner genau eine
+  Anfrage in `spawn_blocking`, die Oberfläche zeigt bis dahin einen Fortschritt.
+- Neu nur die Kategorie „Apps“ (APK/APKS/XAPK) – eine weitere Endungszuordnung, keine Mehrkosten.

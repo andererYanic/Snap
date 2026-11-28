@@ -262,6 +262,11 @@ pub enum Request {
         filter: crate::index::SearchFilter,
         limit: u32,
     },
+    /// Volltextsuche im Inhalt von Dokumenten (lokaler Index). Nur lokal.
+    ContentSearch {
+        query: String,
+        limit: u32,
+    },
     /// Ordnerinhalt live lesen (Explorer), Ordner zuerst, seitenweise. Nur lokal.
     ListDir {
         path: PathBuf,
@@ -939,6 +944,9 @@ pub enum Response {
     },
     UploadRules {
         rules: Vec<crate::database::UploadRule>,
+    },
+    ContentHits {
+        hits: Vec<crate::content::ContentHit>,
     },
     SecurityOverview(crate::security::SecurityReport),
     VaultStatus(crate::vault::VaultStatus),

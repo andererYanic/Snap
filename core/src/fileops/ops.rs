@@ -369,6 +369,75 @@ pub fn rename(path: &Path, new_name: &str) -> Result<Done> {
     }
 }
 
+/// Mehrere Einträge umbenennen: erst alles prüfen, dann umbenennen; bei einem Fehler unterwegs
+/// die bereits umbenannten zurück.
+pub fn rename_many(items: &[super::jobs::RenameItem]) -> Result<Vec<Done>> {
+    // Hinweis: Zwischennamen liegen nur kurz im selben Ordner (versteckt, eindeutig).
+    use std::collections::HashSet;
+    if items.is_empty() || items.len() > super::jobs::MAX_RENAME_MANY {
+        api_bail!(InvalidInput, "Ungültige Anzahl Einträge.");
+    }
+    let mut sources: HashSet<PathBuf> = HashSet::new();
+    let mut targets: HashSet<PathBuf> = HashSet::new();
+    let mut plan = Vec::new();
+    for it in items {
+        require_abs(&it.path)?;
+        validate_name(&it.new_name)?;
+        if std::fs::symlink_metadata(&it.path).is_err() {
+            api_bail!(NotFound, "{} existiert nicht.", it.path.display());
+        }
+        if !sources.insert(it.path.clone()) {
+            api_bail!(InvalidInput, "{} ist doppelt ausgewählt.", it.path.display());
+        }
+        let to = it.path.with_file_name(&it.new_name);
+        if to == it.path {
+            continue;
+        }
+        if !targets.insert(to.clone()) {
+            api_bail!(AlreadyExists, "Zwei Einträge würden „{}“ heißen.", it.new_name);
+        }
+        plan.push((it.path.clone(), to));
+    }
+    // Belegte Ziele: erlaubt nur, wenn das Ziel selbst gerade umbenannt wird (z. B. Tausch a↔b)
+    for (_, to) in &plan {
+        if std::fs::symlink_metadata(to).is_ok() && !sources.contains(to) {
+            api_bail!(AlreadyExists, "{} existiert bereits.", to.display());
+        }
+    }
+    // Zweistufig über eindeutige Zwischennamen, damit Ketten und Tausche gelingen
+    let tag = format!(".snap-ren-{:08x}", fastrand::u32(..));
+    let mut staged: Vec<(PathBuf, PathBuf, PathBuf)> = Vec::new();
+    let undo_staged = |staged: &[(PathBuf, PathBuf, PathBuf)]| {
+        for (from, tmp, _) in staged.iter().rev() {
+            let _ = rename_noreplace(tmp, from);
+        }
+    };
+    for (i, (from, to)) in plan.iter().enumerate() {
+        let tmp = from.with_file_name(format!("{tag}-{i}"));
+        if let Err(e) = rename_noreplace(from, &tmp) {
+            undo_staged(&staged);
+            return Err(e).with_context(|| format!("{} nicht umbenennbar", from.display()));
+        }
+        staged.push((from.clone(), tmp, to.clone()));
+    }
+    let mut done: Vec<Done> = Vec::new();
+    for (i, (from, tmp, to)) in staged.iter().enumerate() {
+        if let Err(e) = rename_noreplace(tmp, to) {
+            // Zurück: Erledigte auf ihre Zwischennamen, dann alle auf den Ursprung
+            for (_, t, dest) in staged[..i].iter().rev() {
+                let _ = rename_noreplace(dest, t);
+            }
+            undo_staged(&staged);
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                api_bail!(AlreadyExists, "{} existiert bereits.", to.display());
+            }
+            return Err(e).with_context(|| format!("{} nicht umbenennbar", from.display()));
+        }
+        done.push(Done { from: from.clone(), to: to.clone() });
+    }
+    Ok(done)
+}
+
 /// Legt einen Ordner an.
 pub fn mkdir(parent: &Path, name: &str) -> Result<PathBuf> {
     require_abs(parent)?;

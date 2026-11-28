@@ -97,6 +97,7 @@ pub(crate) async fn handle_request(
             files::remote_dir(inner, &device, share, &dir, after, limit)
         }
         Request::Search { query, filter, limit } => explorer::search(inner, query, filter, limit).await,
+        Request::ContentSearch { query, limit } => explorer::content_search(inner, query, limit).await,
         Request::ReadDocx { path, image_dir } => read_docx(path, image_dir).await,
         Request::ReadDocument { path, image_dir } => read_document(path, image_dir).await,
         Request::ArchiveList { path } => archive_list(path).await,
@@ -406,6 +407,7 @@ fn request_name(req: &Request) -> Option<&'static str> {
         Request::ClipboardSend { .. } => "clipboard.send",
         Request::Ring { .. } => "device.ring",
         Request::RingStop => "device.ring_stop",
+        Request::ContentSearch { .. } => "content.search",
         Request::VaultStatus => "vault.status",
         Request::SecurityOverview => "security.overview",
         Request::VaultCreate { .. } => "vault.create",
