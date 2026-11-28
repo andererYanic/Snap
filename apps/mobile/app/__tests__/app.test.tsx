@@ -2021,3 +2021,73 @@ test('Papierkorb leeren: mit Rückfrage, danach leer; auch in der Speicherübers
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Öffnen mit Snap: Ordner aus einer anderen App öffnet sich in „Dateien“, Datei in der Anzeige', async () => {
+  const opens: any[] = [{ kind: 'dir', path: '/storage/emulated/0/DCIM' }];
+  NativeModules.SnapCore.takeOpen = jest.fn(async () => opens.shift() ?? null);
+  const hadPdf = NativeModules.SnapCore.pdfInfo;
+  NativeModules.SnapCore.pdfInfo = jest.fn(async () => ({ pages: 1, ratios: [1.4] }));
+  NativeModules.SnapCore.pdfPage = NativeModules.SnapCore.pdfPage ?? jest.fn(async () => null);
+  try {
+    calls.length = 0;
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<App />); });
+    await flush();
+    await flush();
+    expect(calls).toContainEqual(expect.objectContaining({ ListDir: expect.objectContaining({ path: '/storage/emulated/0/DCIM' }) }));
+    // Eine Datei (z. B. aus dem Messenger): eingebaute PDF-Anzeige, keine andere App
+    opens.push({ kind: 'file', path: '/storage/emulated/0/Download/brief.pdf' });
+    NativeModules.SnapCore.openFile.mockClear();
+    const handler = (NativeModules.SnapCore.takeOpen as jest.Mock);
+    await act(async () => { r.unmount(); r = mount(<App />); });
+    await flush();
+    await flush();
+    expect(handler).toHaveBeenCalled();
+    expect(NativeModules.SnapCore.openFile).not.toHaveBeenCalled();
+    expect(allText(r)).toContain('brief.pdf');
+    // Nicht erlaubt (z. B. Snaps eigene Ordner): nur ein Hinweis
+    opens.push({ kind: 'unsupported', path: null });
+    await act(async () => { r.unmount(); r = mount(<App />); });
+    await flush();
+    await flush();
+    expect(allText(r)).toContain('Das kann Snap nicht öffnen.');
+  } finally {
+    delete NativeModules.SnapCore.takeOpen;
+    NativeModules.SnapCore.pdfInfo = hadPdf;
+  }
+});
+
+test('Dateiauswahl für andere Apps: nur passende Arten, Antippen gibt genau diese Datei heraus', async () => {
+  const Picker = require('../src/Picker').default;
+  const { mayMatch } = require('../src/Picker');
+  expect(mayMatch('a.jpg', ['image/*'])).toBe(true);
+  expect(mayMatch('a.pdf', ['image/*'])).toBe(false);
+  expect(mayMatch('a.pdf', ['application/pdf'])).toBe(true);
+  expect(mayMatch('a.docx', ['application/*'])).toBe(true);
+  expect(mayMatch('ohne-endung', ['image/*'])).toBe(false);
+  expect(mayMatch('egal.xyz', [])).toBe(true);
+  NativeModules.SnapCore.pickRequest = jest.fn(async () => ({ mimes: ['application/pdf'], multiple: false }));
+  NativeModules.SnapCore.pickFinish = jest.fn(async () => 1);
+  NativeModules.SnapCore.pickCancel = jest.fn();
+  try {
+    let r!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { r = mount(<Picker />); });
+    await flush();
+    await flush();
+    const text = allText(r);
+    expect(text).toContain('Datei auswählen');
+    expect(text).toContain('brief.pdf');
+    expect(text).toContain('DCIM');
+    expect(text).not.toContain('liste.txt'); // keine PDF
+    expect(text).not.toContain('urlaub.zip');
+    await act(async () => { byLabel(r, 'brief.pdf').props.onPress(); });
+    await flush();
+    expect(NativeModules.SnapCore.pickFinish).toHaveBeenCalledWith(['/storage/emulated/0/brief.pdf']);
+    await act(async () => { byLabel(r, 'Abbrechen').props.onPress(); });
+    expect(NativeModules.SnapCore.pickCancel).toHaveBeenCalled();
+  } finally {
+    delete NativeModules.SnapCore.pickRequest;
+    delete NativeModules.SnapCore.pickFinish;
+    delete NativeModules.SnapCore.pickCancel;
+  }
+});

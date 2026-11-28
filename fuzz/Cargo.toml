@@ -192,3 +192,10 @@ path = "fuzz_targets/vault_object.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "intent_uri"
+path = "fuzz_targets/intent_uri.rs"
+test = false
+doc = false
+bench = false

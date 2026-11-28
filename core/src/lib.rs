@@ -18,6 +18,7 @@ pub mod events;
 pub mod fileops;
 pub mod index;
 pub mod indexer;
+pub mod intent;
 pub mod ipc;
 pub mod ledger;
 pub mod links;

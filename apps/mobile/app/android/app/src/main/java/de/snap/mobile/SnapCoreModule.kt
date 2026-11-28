@@ -210,6 +210,76 @@ class SnapCoreModule(private val ctx: ReactApplicationContext) : ReactContextBas
   }
 
   /**
+   * „Öffnen mit Snap“ / „Ordner öffnen“ abholen (einmalig): `{ kind: 'file'|'dir'|'unsupported',
+   * path }` oder null. Neues meldet das Ereignis `snap-open`.
+   */
+  @ReactMethod
+  fun takeOpen(promise: Promise) {
+    ExternalOpen.listener = {
+      try {
+        if (ctx.hasActiveReactInstance()) ctx.emitDeviceEvent("snap-open", "1")
+      } catch (_: Throwable) {}
+    }
+    scope.launch {
+      try {
+        val r = ExternalOpen.take(ctx.applicationContext) ?: return@launch promise.resolve(null)
+        val map = com.facebook.react.bridge.Arguments.createMap()
+        map.putString("kind", r.kind)
+        if (r.path != null) map.putString("path", r.path) else map.putNull("path")
+        promise.resolve(map)
+      } catch (e: Throwable) {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  /** Dateiauswahl: gewünschte Arten und ob mehrere erlaubt sind (null außerhalb der Auswahl). */
+  @ReactMethod
+  fun pickRequest(promise: Promise) {
+    val act = ctx.currentActivity as? PickerActivity ?: return promise.resolve(null)
+    val map = com.facebook.react.bridge.Arguments.createMap()
+    val arr = com.facebook.react.bridge.Arguments.createArray()
+    act.mimes.forEach { arr.pushString(it) }
+    map.putArray("mimes", arr)
+    map.putBoolean("multiple", act.multiple)
+    promise.resolve(map)
+  }
+
+  /** Dateiauswahl abschließen: geprüfte Dateien an die aufrufende App (nur lesend). */
+  @ReactMethod
+  fun pickFinish(paths: com.facebook.react.bridge.ReadableArray, promise: Promise) {
+    val act = ctx.currentActivity as? PickerActivity ?: return promise.reject("pick", "Keine Dateiauswahl offen.")
+    val root = ExternalOpen.storageRoot()
+    val own = ExternalOpen.ownDirs(ctx.applicationContext)
+    val uris = mutableListOf<Uri>()
+    val n = if (act.multiple) minOf(paths.size(), 500) else minOf(paths.size(), 1)
+    for (i in 0 until n) {
+      val p = paths.getString(i) ?: continue
+      val real = uniffi.snap_ffi.checkSharedPath(p, false, root, own)
+        ?: return promise.reject("pick", "Diese Datei kann Snap nicht herausgeben.")
+      val f = java.io.File(real)
+      if (!act.accepts(mimeOf(f))) return promise.reject("pick", "Diese Art von Datei ist hier nicht gefragt.")
+      uris.add(contentUri(f))
+    }
+    if (uris.isEmpty()) return promise.reject("pick", "Keine Datei gewählt.")
+    act.runOnUiThread { act.deliver(uris) }
+    promise.resolve(uris.size)
+  }
+
+  /** Dateiauswahl ohne Ergebnis schließen. */
+  @ReactMethod
+  fun pickCancel() {
+    val act = ctx.currentActivity as? PickerActivity ?: return
+    act.runOnUiThread { act.cancel() }
+  }
+
+  /** Art einer Datei (für die Auswahl: nur Passendes zeigen). */
+  @ReactMethod
+  fun mimeType(path: String, promise: Promise) {
+    promise.resolve(mimeOf(java.io.File(path)))
+  }
+
+  /**
    * Aus dem „Teilen“-Menü empfangene Inhalte abholen (einmalig): `{ files, text }` oder null.
    * Neu Geteiltes meldet das Ereignis `snap-share`.
    */

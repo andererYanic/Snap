@@ -965,3 +965,11 @@ Priorität – im selben Prozess wie die Oberfläche.
 - „Papierkorb leeren“ und „Endgültig löschen“ nutzen die vorhandenen Anfragen (`TrashEmpty`,
   `TrashPurge`, beide in `spawn_blocking`). Die Speicherübersicht fragt die Papierkorbliste
   einmal beim Öffnen ab (eine Verzeichnisauflistung von `info/`).
+
+## Review 57 – Öffnen mit Snap, Ordner öffnen, Dateiauswahl (2026-11-28)
+
+- Prüfen einer Adresse: Zerlegen im Kern plus ein `canonicalize` und ein `stat` – Mikrosekunden,
+  ohne laufenden Kern. Kopiert wird nur, was sich nicht auf den Speicher abbilden lässt (fremde
+  `content://`-Inhalte), auf einem Hintergrund-Thread; die Oberfläche zeigt die Datei danach.
+- Die Dateiauswahl lädt je Ordner eine `ListDir`-Seite (bis 2000 Einträge, wie die Dateiansicht)
+  und filtert nach Endung in JS; Liste als `FlatList` (nur sichtbare Zeilen werden gezeichnet).
