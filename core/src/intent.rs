@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 const EXTERNAL_STORAGE: &str = "com.android.externalstorage.documents";
 const DOWNLOADS: &str = "com.android.providers.downloads.documents";
 /// Höchstlänge einer Adresse (länger ist nie echt).
-const MAX_URI: usize = 8192;
+pub const MAX_URI: usize = 8192;
 
 /// Was erwartet wird.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +203,17 @@ mod tests {
             assert_eq!(p(bad), None, "{bad}");
         }
         assert_eq!(p(&format!("file:///{}", "a/".repeat(5000))), None, "zu lang");
+        // Fuzzing-Fund: kurze raw:-Adresse, deren Pfad neu kodiert die Höchstlänge übersteigt –
+        // erlaubt, aber als file:// zu lang (wird abgewiesen statt abgeschnitten)
+        // Steuerzeichen unkodiert (wie im Fund), nur „/“ kodiert: 5 Zeichen je Teil statt 7 als file://
+        let long = format!("/{}", "\u{f}:/".repeat(1500));
+        let id = format!("raw%3A{}", long.replace('/', "%2F"));
+        let raw = format!("content://com.android.providers.downloads.documents/document/{id}");
+        assert!(raw.len() <= MAX_URI);
+        let path = p(&raw).expect("gültiger Pfad");
+        let again = format!("file://{}", crate::fileops::trash::percent_encode(path.as_bytes()));
+        assert!(again.len() > MAX_URI);
+        assert_eq!(p(&again), None);
     }
 
     #[test]
