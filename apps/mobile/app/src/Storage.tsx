@@ -1,5 +1,6 @@
 // Speicherübersicht wie bei Android: Belegung nach Art (Bilder, Videos, Musik, Dokumente, Apps,
-// Archive, Sonstiges), größte Dateien und größte Ordner – mit Drill-down in Ordner. Grundlage ist
+// Archive, Sonstiges), größte Dateien und größte Ordner – mit Drill-down in Ordner. Eine Art
+// antippen zeigt darunter nur deren Dateien (größte zuerst). Grundlage ist
 // der lokale Suchindex (kein erneutes Durchsuchen des Speichers). Löschen nur über den Papierkorb.
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Modal, Pressable, ScrollView, StatusBar, StyleSheet, View } from 'react-native';
@@ -43,6 +44,9 @@ export default function StoragePage({ root, theme, onClose, onOpenFolder, notify
   const [trail, setTrail] = useState<string[]>([root]);
   const [usage, setUsage] = useState<Usage | null | 'error'>(null);
   const [gen, setGen] = useState(0);
+  // Ausgewählte Art: darunter nur deren Dateien (eigene Abfrage, die Übersicht bleibt stehen)
+  const [cat, setCat] = useState<string | null>(null);
+  const [catFiles, setCatFiles] = useState<Usage['largest'] | null>(null);
   const path = trail[trail.length - 1];
 
   useEffect(() => {
@@ -50,7 +54,32 @@ export default function StoragePage({ root, theme, onClose, onOpenFolder, notify
     request<Usage>({ SpaceUsage: { path, limit: 25 } }).then(setUsage).catch(() => setUsage('error'));
   }, [path, gen]);
 
-  const back = () => (trail.length > 1 ? setTrail(trail.slice(0, -1)) : onClose());
+  useEffect(() => {
+    setCatFiles(null);
+    if (!cat) return;
+    let live = true;
+    request<Usage>({ SpaceUsage: { path, limit: 1, category: cat } })
+      .then((r) => live && setCatFiles(r.largest))
+      .catch((e) => {
+        if (live) {
+          setCatFiles([]);
+          notify(String(e?.message ?? e));
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [path, gen, cat, notify]);
+
+  const back = () => {
+    if (cat) setCat(null);
+    else if (trail.length > 1) setTrail(trail.slice(0, -1));
+    else onClose();
+  };
+  const openDir = (dir: string) => {
+    setCat(null);
+    setTrail([...trail, dir]);
+  };
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       back();
@@ -75,7 +104,9 @@ export default function StoragePage({ root, theme, onClose, onOpenFolder, notify
   const u = usage && usage !== 'error' ? usage : null;
   const name = path === root ? t('Interner Speicher') : path.slice(path.lastIndexOf('/') + 1);
   const cats = u ? [...u.by_type].sort((a, b) => b.size - a.size) : [];
-  const folders = u ? u.children.filter((c) => c.is_dir && c.size > 0).slice(0, 12) : [];
+  const folders = u && !cat ? u.children.filter((c) => c.is_dir && c.size > 0).slice(0, 12) : [];
+  const files = cat ? catFiles ?? [] : u ? u.largest.slice(0, 15) : [];
+  const catLabel = cat ? t((CAT[cat] ?? CAT.Sonstiges).label) : '';
   return (
     <Modal visible animationType="slide" onRequestClose={back} statusBarTranslucent>
       <View style={s.root}>
@@ -104,23 +135,44 @@ export default function StoragePage({ root, theme, onClose, onOpenFolder, notify
             <View style={s.card}>
               {cats.map((c, i) => {
                 const k = CAT[c.category] ?? CAT.Sonstiges;
+                const on = cat === c.category;
                 return (
                   <View key={c.category}>
                     {i > 0 && <View style={s.sep} />}
-                    <View style={s.row}>
+                    <Pressable
+                      onPress={() => setCat(on ? null : c.category)}
+                      style={[s.row, on && { backgroundColor: theme.accentSoft as string }]}
+                      android_ripple={{ color: theme.accentSoft as string }}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={`${t(k.label)}, ${humanSize(c.size, locale())}`}
+                      accessibilityHint={on ? t('Wieder alle Dateien zeigen') : t('Nur diese Dateien zeigen')}
+                    >
                       <View style={[s.dot, { backgroundColor: k.color }]} />
-                      <Icon name={k.icon} size={20} color={theme.text2 as string} />
-                      <Text style={[s.text, s.grow]}>{t(k.label)}</Text>
+                      <Icon name={k.icon} size={20} color={(on ? theme.accent : theme.text2) as string} />
+                      <Text style={[s.text, s.grow, on && s.textOn]}>{t(k.label)}</Text>
+                      <Text style={s.count}>{c.files.toLocaleString(locale())}</Text>
                       <Text style={s.size}>{humanSize(c.size, locale())}</Text>
-                    </View>
+                    </Pressable>
                   </View>
                 );
               })}
             </View>
 
-            {u!.largest.length > 0 && <SectionLabel theme={theme} style={s.section}>{t('Größte Dateien')}</SectionLabel>}
+            {cat ? (
+              <View style={s.sectionRow}>
+                <SectionLabel theme={theme} style={[s.section, s.grow]}>{t('{kind}: größte zuerst', { kind: catLabel })}</SectionLabel>
+                <Pressable onPress={() => setCat(null)} style={s.reset} accessibilityRole="button" accessibilityLabel={t('Alle zeigen')}>
+                  <Text style={s.link}>{t('Alle zeigen')}</Text>
+                </Pressable>
+              </View>
+            ) : (
+              files.length > 0 && <SectionLabel theme={theme} style={s.section}>{t('Größte Dateien')}</SectionLabel>
+            )}
+            {cat && catFiles === null && <ActivityIndicator style={s.loadingSmall} color={theme.accent as string} />}
+            {cat && catFiles !== null && catFiles.length === 0 && <Text style={s.note}>{t('Keine Dateien dieser Art.')}</Text>}
             <View style={s.card}>
-              {u!.largest.slice(0, 15).map((f, i) => {
+              {files.map((f, i) => {
                 const fname = f.path.slice(f.path.lastIndexOf('/') + 1);
                 return (
                   <View key={f.path}>
@@ -144,7 +196,7 @@ export default function StoragePage({ root, theme, onClose, onOpenFolder, notify
                 <View key={c.name}>
                   {i > 0 && <View style={s.sep} />}
                   <Pressable
-                    onPress={() => setTrail([...trail, `${path}/${c.name}`])}
+                    onPress={() => openDir(`${path}/${c.name}`)}
                     onLongPress={() => onOpenFolder(`${path}/${c.name}`)}
                     style={s.row}
                     android_ripple={{ color: theme.accentSoft as string }}
@@ -180,6 +232,12 @@ const styles = themed((th) =>
     meta: { color: th.text2, fontSize: 13, lineHeight: 18 },
     note: { color: th.text2, fontSize: 15, lineHeight: 22, padding: 24 },
     loading: { marginTop: 48 },
+    loadingSmall: { marginVertical: 24 },
+    sectionRow: { flexDirection: 'row', alignItems: 'center' },
+    reset: { marginTop: 20, marginBottom: 8, paddingHorizontal: 8, minHeight: 32, justifyContent: 'center' },
+    link: { color: th.accent, fontSize: 14, fontWeight: '600' },
+    textOn: { color: th.accent, fontWeight: '600' },
+    count: { color: th.text3, fontSize: 13, fontVariant: ['tabular-nums'], marginRight: 4 },
     page: { padding: 16, paddingBottom: 48 },
     bar: { flexDirection: 'row', height: 14, borderRadius: 7, overflow: 'hidden', backgroundColor: th.surface2, marginBottom: 16 },
     card: { borderRadius: 14, backgroundColor: th.surface, overflow: 'hidden' },

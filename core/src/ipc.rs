@@ -643,6 +643,9 @@ pub enum Request {
         path: PathBuf,
         #[serde(default)]
         limit: u32,
+        /// Nur Dateien dieser Kategorie in `largest` (z. B. "Bilder"); `None` = alle.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        category: Option<String>,
     },
     /// Doppelte Dateien finden (`path = None`: alle indexierten Orte). Nur lesend.
     Duplicates {

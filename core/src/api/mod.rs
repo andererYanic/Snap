@@ -188,7 +188,7 @@ pub(crate) async fn handle_request(
         Request::LinkCreate { path, days, max_downloads, password } => {
             crate::links::create(inner, &path, days, max_downloads, password).await.map(Response::Link)
         }
-        Request::SpaceUsage { path, limit } => explorer::space_usage(inner, path, limit).await,
+        Request::SpaceUsage { path, limit, category } => explorer::space_usage(inner, path, limit, category).await,
         Request::Duplicates { path, min_size, limit } => explorer::duplicates(inner, path, min_size, limit).await,
         Request::Timeline { path, before, limit } => explorer::timeline(inner, path, before, limit).await,
         Request::TimelineMonths { path } => explorer::timeline_months(inner, path).await,
