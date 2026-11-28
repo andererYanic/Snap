@@ -147,6 +147,19 @@
           <data android:mimeType="inode/directory" />
         </intent-filter>
       </activity-alias>
+      <!-- „Snap“ in der Seitenleiste der System-Dateiauswahl: eigene Geräte und Snap Drop, nur
+           lesend; aufrufbar nur von der Systemoberfläche (MANAGE_DOCUMENTS), Apps erhalten nur
+           die angetippte Datei (siehe SnapDocumentsProvider.kt) -->
+      <provider
+        android:name=".SnapDocumentsProvider"
+        android:authorities="${applicationId}.documents"
+        android:exported="true"
+        android:grantUriPermissions="true"
+        android:permission="android.permission.MANAGE_DOCUMENTS">
+        <intent-filter>
+          <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+        </intent-filter>
+      </provider>
       <!-- Snap als Dateiauswahl für andere Apps (nur angetippte Dateien, nur lesend) -->
       <activity
         android:name=".PickerActivity"

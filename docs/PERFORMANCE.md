@@ -973,3 +973,12 @@ Priorität – im selben Prozess wie die Oberfläche.
   `content://`-Inhalte), auf einem Hintergrund-Thread; die Oberfläche zeigt die Datei danach.
 - Die Dateiauswahl lädt je Ordner eine `ListDir`-Seite (bis 2000 Einträge, wie die Dateiansicht)
   und filtert nach Endung in JS; Liste als `FlatList` (nur sichtbare Zeilen werden gezeichnet).
+
+## Review 58 – „Snap“ in der System-Dateiauswahl (2026-11-28)
+
+- Ordner anderer Geräte kommen aus dem lokalen Katalog (`RemoteDir`, Seiten zu 1000, höchstens
+  5000 Einträge je Ordner) – keine Netzwerkanfrage beim Blättern. Die Aufrufe laufen auf
+  Binder-Threads des Systems, nicht auf Snaps Oberflächen-Thread.
+- Erst `openDocument` lädt die Datei (verschlüsselt, Hash geprüft) in Snaps Cache; ein zweites
+  Öffnen innerhalb eines Tages nutzt die Kopie. Ältere Kopien werden beim nächsten Öffnen entfernt.
+- Kennungen: Zerlegen im Kern ohne Speicherzugriff (Mikrosekunden).

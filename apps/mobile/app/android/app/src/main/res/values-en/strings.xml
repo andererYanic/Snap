@@ -29,4 +29,7 @@
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>
     </plurals>
+    <string name="documents_summary">Your devices, Snap Drop</string>
+    <string name="documents_devices">Your devices</string>
+    <string name="documents_drop">Received with Snap Drop</string>
 </resources>

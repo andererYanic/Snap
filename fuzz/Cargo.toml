@@ -199,3 +199,10 @@ path = "fuzz_targets/intent_uri.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "document_id"
+path = "fuzz_targets/document_id.rs"
+test = false
+doc = false
+bench = false

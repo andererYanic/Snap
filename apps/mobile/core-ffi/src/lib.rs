@@ -125,6 +125,58 @@ pub fn check_shared_path(path: String, want_dir: bool, storage_root: String, own
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Kennung eines Eintrags der Dokument-Quelle „Snap“ (System-Dateiauswahl), siehe
+/// `space_core::intent::DocId`.
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum DocumentId {
+    Root,
+    Devices,
+    Drop { rel: String },
+    Device { node: String },
+    Dir { node: String, share: String, dir: String },
+    RemoteFile { node: String, hash: String, name: String },
+}
+
+impl From<DocumentId> for space_core::intent::DocId {
+    fn from(d: DocumentId) -> Self {
+        use space_core::intent::DocId;
+        match d {
+            DocumentId::Root => DocId::Root,
+            DocumentId::Devices => DocId::Devices,
+            DocumentId::Drop { rel } => DocId::Drop(rel),
+            DocumentId::Device { node } => DocId::Device(node),
+            DocumentId::Dir { node, share, dir } => DocId::Dir { node, share, dir },
+            DocumentId::RemoteFile { node, hash, name } => DocId::RemoteFile { node, hash, name },
+        }
+    }
+}
+
+impl From<space_core::intent::DocId> for DocumentId {
+    fn from(d: space_core::intent::DocId) -> Self {
+        use space_core::intent::DocId;
+        match d {
+            DocId::Root => DocumentId::Root,
+            DocId::Devices => DocumentId::Devices,
+            DocId::Drop(rel) => DocumentId::Drop { rel },
+            DocId::Device(node) => DocumentId::Device { node },
+            DocId::Dir { node, share, dir } => DocumentId::Dir { node, share, dir },
+            DocId::RemoteFile { node, hash, name } => DocumentId::RemoteFile { node, hash, name },
+        }
+    }
+}
+
+/// Kennung zerlegen (streng, nur kanonische Form; Unbekanntes → `None`).
+#[uniffi::export]
+pub fn document_id_parse(raw: String) -> Option<DocumentId> {
+    space_core::intent::doc_id_decode(&raw).map(Into::into)
+}
+
+/// Kennung erzeugen (`None`, wenn ein Teil ungültig ist, z. B. ein fremder Name mit `/`).
+#[uniffi::export]
+pub fn document_id_make(id: DocumentId) -> Option<String> {
+    space_core::intent::doc_id_encode(&id.into())
+}
+
 /// Konfiguration für Android aus den Startoptionen.
 pub fn mobile_config(opts: &CoreOptions) -> Result<space_core::config::Config, SnapError> {
     let data = absolute(&opts.data_dir, "data_dir")?;
