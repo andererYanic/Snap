@@ -304,6 +304,15 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   nur angetippte Dateien heraus, jede vorher vom Kern geprüft, passend zur verlangten Art, als
   `content://` nur lesend und nur für diesen Aufruf; keine Dateien anderer Geräte. Gegen
   Überlagerung (Tapjacking) ignoriert die Auswahl Berührungen unter fremden Fenstern.
+- **„Snap“ in der System-Dateiauswahl (entschieden 2026-11-28):** Ein `DocumentsProvider` zeigt
+  in der Seitenleiste der System-Dateiauswahl die Dateien eigener Geräte (aus dem lokalen Katalog,
+  gleiche Rechte wie in der App) und den Snap-Drop-Empfangsordner. Aufrufbar nur von der
+  Systemoberfläche (`MANAGE_DOCUMENTS`); Apps erhalten von Android nur die eine angetippte Datei.
+  Nur lesend (keine Schreib-, Lösch- oder Ordnerrechte, kein `FLAG_SUPPORTS_IS_CHILD` – keine
+  Baumfreigaben). Dateien anderer Geräte werden erst beim Öffnen verschlüsselt in Snaps Cache
+  geladen (Hash geprüft). Drop-Dateien prüft der Kern wie oben (gemeinsamer Speicher, nicht aus
+  dem Empfangsordner hinaus). Kennungen zerlegt der Kern streng und nur in kanonischer Form
+  (`intent::doc_id_decode`, Fuzz-Ziel `document_id`). Der Tresor erscheint dort nie.
 - Keine Google-Dienste und keine Tracker. Verteilung als signierte APK über GitHub.
 
 ## PDF-Signaturen und Textmarker (entschieden 2026-11-09)

@@ -138,6 +138,102 @@ fn is_volume_id(v: &str) -> bool {
         && b.iter().enumerate().all(|(i, c)| i == 4 || c.is_ascii_digit() || (b'A'..=b'F').contains(c))
 }
 
+/// Kennung eines Eintrags der Dokument-Quelle „Snap“ in der System-Dateiauswahl
+/// (`SnapDocumentsProvider`). Kennungen kommen von der Systemoberfläche zurück und gelten als
+/// Eingabe von außen: [`doc_id_decode`] nimmt nur genau die Formen an, die [`doc_id_encode`]
+/// erzeugt, mit geprüften Teilen (Node-ID und Hash hexadezimal, Pfade ohne `.`/`..`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocId {
+    Root,
+    Devices,
+    /// Datei oder Ordner im Snap-Drop-Empfangsordner (relativ, leer = der Ordner selbst).
+    Drop(String),
+    /// Wurzel eines gekoppelten Geräts (Freigaben).
+    Device(String),
+    /// Ordner in einer Freigabe eines Geräts (`dir` relativ, leer = Wurzel der Freigabe).
+    Dir {
+        node: String,
+        share: String,
+        dir: String,
+    },
+    /// Datei eines Geräts (Inhalts-Hash und Anzeigename).
+    RemoteFile {
+        node: String,
+        hash: String,
+        name: String,
+    },
+}
+
+const MAX_DOC_ID: usize = 4096;
+
+fn enc(s: &str) -> String {
+    crate::fileops::trash::percent_encode(s.as_bytes()).replace('/', "%2F")
+}
+
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn safe_name(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 255 && !s.contains('/') && s != "." && s != ".."
+}
+
+fn safe_rel_or_empty(s: &str) -> bool {
+    s.is_empty() || (s.len() < 2048 && segments_ok(s))
+}
+
+/// Prüft die Teile einer Kennung (für beide Richtungen).
+pub fn doc_id_valid(id: &DocId) -> bool {
+    match id {
+        DocId::Root | DocId::Devices => true,
+        DocId::Drop(rel) => safe_rel_or_empty(rel),
+        DocId::Device(node) => is_hex64(node),
+        DocId::Dir { node, share, dir } => {
+            is_hex64(node) && !share.is_empty() && share.len() < 2048 && segments_ok(share) && safe_rel_or_empty(dir)
+        }
+        DocId::RemoteFile { node, hash, name } => is_hex64(node) && is_hex64(hash) && safe_name(name),
+    }
+}
+
+/// Kennung erzeugen. `None`, wenn ein Teil ungültig ist (z. B. ein fremder Name mit `/`).
+pub fn doc_id_encode(id: &DocId) -> Option<String> {
+    if !doc_id_valid(id) {
+        return None;
+    }
+    let s = match id {
+        DocId::Root => "root".to_string(),
+        DocId::Devices => "devices".to_string(),
+        DocId::Drop(rel) if rel.is_empty() => "drop".to_string(),
+        DocId::Drop(rel) => format!("drop/{}", enc(rel)),
+        DocId::Device(node) => format!("dev/{node}"),
+        DocId::Dir { node, share, dir } => format!("dir/{node}/{}/{}", enc(share), enc(dir)),
+        DocId::RemoteFile { node, hash, name } => format!("file/{node}/{hash}/{}", enc(name)),
+    };
+    (s.len() <= MAX_DOC_ID).then_some(s)
+}
+
+/// Kennung zerlegen (streng; Unbekanntes → `None`).
+pub fn doc_id_decode(raw: &str) -> Option<DocId> {
+    if raw.len() > MAX_DOC_ID {
+        return None;
+    }
+    let p: Vec<&str> = raw.split('/').collect();
+    let id = match p.as_slice() {
+        ["root"] => DocId::Root,
+        ["devices"] => DocId::Devices,
+        ["drop"] => DocId::Drop(String::new()),
+        ["drop", rel] if !rel.is_empty() => DocId::Drop(decode(rel)?),
+        ["dev", node] => DocId::Device(node.to_string()),
+        ["dir", node, share, dir] => DocId::Dir { node: node.to_string(), share: decode(share)?, dir: decode(dir)? },
+        ["file", node, hash, name] => {
+            DocId::RemoteFile { node: node.to_string(), hash: hash.to_string(), name: decode(name)? }
+        }
+        _ => return None,
+    };
+    // Nur kanonische Form: erneut erzeugt muss genau dieselbe Kennung herauskommen
+    (doc_id_valid(&id) && doc_id_encode(&id).as_deref() == Some(raw)).then_some(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +347,66 @@ mod tests {
         // In einem Schritt
         let uri = format!("file://{}", storage.join("Download/a.pdf").display()).replace(' ', "%20");
         assert!(resolve(&uri, Kind::File, &storage, &own).is_some());
+    }
+
+    #[test]
+    fn dokument_kennungen() {
+        let node = "a".repeat(64);
+        let hash = "0123456789abcdef".repeat(4);
+        let ids = [
+            DocId::Root,
+            DocId::Devices,
+            DocId::Drop(String::new()),
+            DocId::Drop("Laptop/Urlaub 2024/foto #1.jpg".into()),
+            DocId::Device(node.clone()),
+            DocId::Dir { node: node.clone(), share: "Fotos".into(), dir: String::new() },
+            DocId::Dir { node: node.clone(), share: "Daten/Projekt".into(), dir: "a b/c%d".into() },
+            DocId::RemoteFile { node: node.clone(), hash: hash.clone(), name: "Brief (1).pdf".into() },
+        ];
+        for id in &ids {
+            let s = doc_id_encode(id).expect("gültig");
+            assert_eq!(doc_id_decode(&s).as_ref(), Some(id), "{s}");
+        }
+        // Ungültige Teile werden gar nicht erst erzeugt
+        for bad in [
+            DocId::Drop("../privat".into()),
+            DocId::Drop("a/../../b".into()),
+            DocId::Drop("/absolut".into()),
+            DocId::Device("ABC".into()),
+            DocId::Device("g".repeat(64)),
+            DocId::Dir { node: node.clone(), share: String::new(), dir: String::new() },
+            DocId::Dir { node: node.clone(), share: "..".into(), dir: String::new() },
+            DocId::Dir { node: node.clone(), share: "S".into(), dir: "x/./y".into() },
+            DocId::RemoteFile { node: node.clone(), hash: "kurz".into(), name: "a".into() },
+            DocId::RemoteFile { node: node.clone(), hash: hash.clone(), name: "a/b".into() },
+            DocId::RemoteFile { node: node.clone(), hash: hash.clone(), name: "..".into() },
+            DocId::RemoteFile { node: node.clone(), hash: hash.clone(), name: "x".repeat(256) },
+        ] {
+            assert_eq!(doc_id_encode(&bad), None, "{bad:?}");
+        }
+        // Manipulierte Kennungen
+        for raw in [
+            "",
+            "root/",
+            "Root",
+            "drop/",
+            "drop/..%2Fprivat",
+            "drop/a%2F..%2F..%2Fb",
+            "drop/%2Fetc%2Fpasswd",
+            "drop/a/b",
+            "drop/a%00b",
+            "dev/ABC",
+            "dev/../x",
+            &format!("dev/{node}/zuviel"),
+            &format!("dir/{node}//"),
+            &format!("dir/{node}/..%2F../x"),
+            &format!("file/{node}/{hash}/a%2Fb"),
+            &format!("file/{node}/{hash}/"),
+            &format!("file/{node}/{}/x", hash.to_uppercase()),
+            &format!("file/{node}/{hash}/%61"), // nicht kanonisch kodiert
+            &format!("drop/{}", "a".repeat(5000)),
+        ] {
+            assert_eq!(doc_id_decode(raw), None, "{raw}");
+        }
     }
 }
