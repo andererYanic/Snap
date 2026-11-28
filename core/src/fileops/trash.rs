@@ -139,11 +139,14 @@ pub fn restore_target(info: &TrashInfo, topdir: Option<&Path>) -> Option<PathBuf
 }
 
 /// Erzeugt einen Ordner mit 0700, falls er fehlt, und prüft, dass er ein echter Ordner
-/// (kein Symlink) des aktuellen Benutzers ist.
-fn ensure_own_dir(dir: &Path) -> Result<()> {
+/// (kein Symlink) ist und – wenn `check_owner` – dem aktuellen Benutzer gehört.
+fn ensure_own_dir(dir: &Path, check_owner: bool) -> Result<()> {
     match std::fs::symlink_metadata(dir) {
         Ok(m) => {
-            if !m.is_dir() || m.uid() != crate::secure_fs::current_uid() {
+            if !m.is_dir() {
+                api_bail!(PermissionDenied, "{} ist kein Ordner – Papierkorb nicht nutzbar", dir.display());
+            }
+            if check_owner && m.uid() != crate::secure_fs::current_uid() {
                 api_bail!(PermissionDenied, "{} ist kein eigener Ordner – Papierkorb nicht nutzbar", dir.display());
             }
         }
@@ -176,11 +179,20 @@ fn mount_root(path: &Path) -> Result<PathBuf> {
 pub struct Trash {
     /// Home-Papierkorb, normalerweise `$XDG_DATA_HOME/Trash`.
     home: PathBuf,
+    /// Besitzer der Papierkorb-Ordner prüfen (Spezifikation, mehrere Benutzer). Nicht auf
+    /// Android: Dort meldet der gemeinsame Speicher (FUSE) den Besitzer des darunterliegenden
+    /// Dateisystems, nie die App – die Prüfung schlug ab der zweiten Benutzung fehl. Sie
+    /// schützt dort auch nichts: Jede App mit Speicherzugriff kann ohnehin alles ändern.
+    check_owner: bool,
 }
 
 impl Trash {
     pub fn new(home: PathBuf) -> Self {
-        Self { home }
+        Self::with_owner_check(home, !cfg!(target_os = "android"))
+    }
+
+    pub fn with_owner_check(home: PathBuf, check_owner: bool) -> Self {
+        Self { home, check_owner }
     }
 
     pub fn home_dir(&self) -> TrashDir {
@@ -205,7 +217,7 @@ impl Trash {
         if let Ok(m) = std::fs::symlink_metadata(&shared) {
             if m.is_dir() && m.permissions().mode() & 0o1000 != 0 {
                 let dir = shared.join(uid.to_string());
-                if ensure_own_dir(&dir).is_ok() {
+                if ensure_own_dir(&dir, self.check_owner).is_ok() {
                     return Ok(TrashDir { base: dir, topdir: Some(top) });
                 }
             }
@@ -229,8 +241,8 @@ impl Trash {
         if path.starts_with(&td.base) {
             api_bail!(InvalidInput, "Der Papierkorb selbst kann nicht in den Papierkorb verschoben werden.");
         }
-        ensure_own_dir(&td.files())?;
-        ensure_own_dir(&td.info())?;
+        ensure_own_dir(&td.files(), self.check_owner)?;
+        ensure_own_dir(&td.info(), self.check_owner)?;
         let stored = match &td.topdir {
             Some(top) => path.strip_prefix(top).unwrap_or(path),
             None => path,
@@ -507,5 +519,44 @@ mod tests {
         assert!(std::fs::read_dir(dir.path().join("Trash/files")).unwrap().next().is_none());
         // Der Papierkorb selbst nicht
         assert!(trash.trash(&dir.path().join("Trash/files")).is_err());
+    }
+
+    /// Fremder Besitzer (wie auf Android-FUSE): mit Prüfung abgewiesen, ohne nutzbar – auch
+    /// beim zweiten Mal, wenn die Ordner schon existieren. Braucht root für `chown`.
+    #[test]
+    fn fremder_besitzer_wie_auf_android() {
+        if crate::secure_fs::current_uid() != 0 {
+            eprintln!("übersprungen: braucht root für chown");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("Trash");
+        for sub in ["files", "info"] {
+            std::fs::create_dir_all(home.join(sub)).unwrap();
+            std::os::unix::fs::chown(home.join(sub), Some(12345), Some(12345)).unwrap();
+        }
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, b"a").unwrap();
+        let strict = Trash::with_owner_check(home.clone(), true);
+        let err = strict.trash(&f).unwrap_err();
+        assert_eq!(crate::api::error::code_of(&err), crate::api::error::ErrorCode::PermissionDenied);
+        assert!(f.exists(), "nichts verschoben");
+
+        let android = Trash::with_owner_check(home.clone(), false);
+        for name in ["a.txt", "b.txt"] {
+            let p = dir.path().join(name);
+            std::fs::write(&p, name).unwrap();
+            android.trash(&p).unwrap();
+            assert!(!p.exists());
+        }
+        assert_eq!(android.list().len(), 2);
+        // Symlinks bleiben verboten, auch ohne Besitzer-Prüfung
+        let home2 = dir.path().join("Trash2");
+        std::fs::create_dir_all(&home2).unwrap();
+        std::os::unix::fs::symlink(dir.path(), home2.join("files")).unwrap();
+        let p = dir.path().join("c.txt");
+        std::fs::write(&p, b"c").unwrap();
+        assert!(Trash::with_owner_check(home2, false).trash(&p).is_err());
+        assert!(p.exists());
     }
 }
