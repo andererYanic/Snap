@@ -56,5 +56,12 @@ if ! grep -qE "Documents|Dokumente" "$OUT/ui-texts.txt" || ! grep -qE "Interner 
   exit 1
 fi
 echo "OK: App läuft (PID $PID) und zeigt die Dateien."
+# Besitzer auf dem gemeinsamen Speicher (FUSE): Ordner, die die App anlegt, gehören nicht
+# ihr – darum prüft der Papierkorb auf Android keinen Besitzer (nur Bericht, kein Abbruch).
+APP_UID="$(adb shell run-as "$PKG" id -u 2>/dev/null | tr -d '\r')"
+adb shell run-as "$PKG" mkdir -p /sdcard/.snap-e2e-besitzer 2>/dev/null
+DIR_UID="$(adb shell run-as "$PKG" stat -c %u /sdcard/.snap-e2e-besitzer 2>/dev/null | tr -d '\r')"
+adb shell run-as "$PKG" rmdir /sdcard/.snap-e2e-besitzer 2>/dev/null
+echo "Besitzer gemeinsamer Speicher: App-uid=${APP_UID:-?} Ordner-uid=${DIR_UID:-?}"
 # Ruckel-Messung (nur Bericht, kein Abbruch)
 "$(dirname "$0")/perf.sh" || echo "Ruckel-Messung fehlgeschlagen"

@@ -145,7 +145,10 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
 - **Dateioperationen:** nie stillschweigend überschreiben (`RENAME_NOREPLACE`, „ersetzen“ nur
   über den Papierkorb); Symlinks werden weder beim Kopieren noch beim Löschen verfolgt;
   `.trashinfo` gilt als fremde Eingabe (strenger Parser, nur absolute Ziele ohne `..`, Fuzz-Ziel
-  `trashinfo`).
+  `trashinfo`). Papierkorb-Ordner müssen echte Ordner sein (keine Symlinks) und dem Benutzer
+  gehören – außer auf Android: Der gemeinsame Speicher (FUSE) meldet dort nie die App als
+  Besitzer, und jede App mit Speicherzugriff kann ihn ohnehin ändern; die Prüfung schützte dort
+  nichts und ließ den Papierkorb scheitern.
 - **Vorschaubilder & Metadaten:** Dateien fremder Herkunft werden nur mit reinen Rust-Decodern
   gelesen. Abmessungen und Speicherbedarf werden *vor* dem Decodieren selbst geprüft, weil nicht
   jeder Decoder seine Grenzen einhält: Per Fuzzing wurde eine 43-Byte-GIF-Datei gefunden, die
