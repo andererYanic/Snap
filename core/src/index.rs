@@ -512,9 +512,43 @@ impl LocalIndex {
         Ok(rows)
     }
 
-    /// Ordner, der nie indexiert wird (Caches, Abhängigkeiten, Snap-Daten …).
+    /// Entfernt Einträge, die in ausgeschlossenen Pfaden liegen (z. B. aus der Zeit, bevor der
+    /// Papierkorb ausgeschlossen war). Gibt die Zahl der entfernten Einträge zurück.
+    pub fn prune_excluded(&self) -> Result<u64> {
+        let mut found = Vec::new();
+        for p in &self.excluded_paths {
+            let Some(id) = self.find_dir(p)? else { continue };
+            let row: Option<(i64, Option<i64>)> = self
+                .r()
+                .prepare_cached("SELECT root_id, parent FROM nodes WHERE id = ?1")?
+                .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?;
+            // Nie einen ganzen Ort entfernen (Wurzel hat keinen Elternordner).
+            if let Some((root_id, Some(_))) = row {
+                found.push((id, root_id));
+            }
+        }
+        if found.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.w();
+        let tx = TxGuard::begin(&conn)?;
+        let mut removed = 0;
+        for (id, root_id) in found {
+            let mut w = Writer { tx: &tx, root_id, fts_inline: true, in_batch: 0, new_dirs: Vec::new() };
+            removed += w.delete_subtree(id)?;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    /// Ordner, der nie indexiert wird (Caches, Abhängigkeiten, Snap-Daten, Papierkörbe …).
     pub fn is_excluded(&self, path: &Path, name: &str) -> bool {
-        if EXCLUDED_NAMES.contains(&name) || self.excluded_paths.iter().any(|p| path.starts_with(p)) {
+        // `.Trash-$uid`: Papierkorb eines Laufwerks (freedesktop), am Handy `.Trash-snap`.
+        if EXCLUDED_NAMES.contains(&name)
+            || name.starts_with(".Trash-")
+            || self.excluded_paths.iter().any(|p| path.starts_with(p))
+        {
             return true;
         }
         if let Some(home) = &self.home {
@@ -1230,6 +1264,50 @@ mod tests {
         assert!(idx.remove_root(id).unwrap());
         assert_eq!(idx.count().unwrap(), 0);
         assert!(idx.search("strand", &SearchFilter::default(), 50).unwrap().is_empty());
+    }
+
+    /// Papierkörbe werden nie indexiert; Einträge aus der Zeit davor entfernt `prune_excluded`.
+    #[test]
+    fn papierkorb_nicht_im_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("speicher");
+        // Konfigurierter Papierkorb (am Handy `.Trash-snap`; hier ein Name ohne Namensregel, damit
+        // der alte Stand ihn noch indexiert)
+        let trash = root.join("Papierkorb");
+        std::fs::create_dir_all(trash.join("files")).unwrap();
+        std::fs::create_dir_all(root.join("Laufwerk/.Trash-1000/files")).unwrap();
+        std::fs::write(trash.join("files/geloescht.iso"), vec![0u8; 5000]).unwrap();
+        std::fs::write(root.join("Laufwerk/.Trash-1000/files/alt.zip"), b"x").unwrap();
+        std::fs::write(root.join("behalten.txt"), b"ja").unwrap();
+        let db = dir.path().join("index.db");
+        // Alter Stand: ohne Ausschluss indexiert (wie vor dieser Änderung am Handy)
+        {
+            let idx = LocalIndex::open(&db, vec![]).unwrap();
+            let id = idx.add_root(&root).unwrap();
+            idx.rebuild_root(id, &root).unwrap();
+            assert_eq!(idx.search("geloescht", &SearchFilter::default(), 10).unwrap().len(), 1, "vorher drin");
+            let all = SearchFilter { include_hidden: true, ..Default::default() };
+            assert!(idx.search("alt.zip", &all, 10).unwrap().is_empty(), ".Trash-$uid nie");
+        }
+        let idx = LocalIndex::open(&db, vec![trash.clone()]).unwrap();
+        assert!(idx.prune_excluded().unwrap() >= 3, "Ordner files und Datei entfernt");
+        assert_eq!(idx.prune_excluded().unwrap(), 0, "zweites Mal nichts");
+        let all = SearchFilter { include_hidden: true, ..Default::default() };
+        assert!(idx.search("geloescht", &all, 10).unwrap().is_empty());
+        // Neu Gelöschtes kommt beim Abgleich nicht hinein, auch kein `.Trash-$uid`
+        std::fs::write(trash.join("files/neu.mp4"), b"v").unwrap();
+        let id = idx.roots().unwrap()[0].id;
+        idx.refresh(id, &root, &root, true).unwrap();
+        idx.rebuild_root(id, &root).unwrap();
+        for q in ["neu.mp4", "geloescht", "alt.zip", ".Trash"] {
+            assert!(idx.search(q, &all, 10).unwrap().is_empty(), "{q}");
+        }
+        let u = crate::analysis::space_usage(&idx, &root, 10).unwrap();
+        assert_eq!((u.files, u.total), (1, 2), "nur behalten.txt");
+        // Der Ort selbst wird nie entfernt, auch wenn er ausgeschlossen wäre
+        let idx2 = LocalIndex::open(&db, vec![root.clone()]).unwrap();
+        assert_eq!(idx2.prune_excluded().unwrap(), 0);
+        assert_eq!(idx2.roots().unwrap().len(), 1);
     }
 
     #[test]

@@ -271,8 +271,17 @@ impl Daemon {
         std::fs::set_permissions(&config.socket_path, std::fs::Permissions::from_mode(0o600))?;
 
         let index = if config.index_enabled {
-            let excluded = vec![config.data_dir.clone(), socket_dir.clone()];
+            // Papierkorb nie indexieren: Gelöschtes soll weder in der Suche noch in der
+            // Speicherübersicht auftauchen (am Handy liegt er im indexierten Speicher).
+            let excluded = vec![config.data_dir.clone(), socket_dir.clone(), config.trash_dir.clone()];
             let idx = crate::index::LocalIndex::open(&config.index_path(), excluded)?;
+            match idx.prune_excluded() {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!("{n} Einträge aus ausgeschlossenen Ordnern (Papierkorb) aus dem Index entfernt")
+                }
+                Err(e) => tracing::warn!("Bereinigen des Index: {e:#}"),
+            }
             Some(Arc::new(crate::indexer::IndexService::new(idx, config.index_max_watches)))
         } else {
             None

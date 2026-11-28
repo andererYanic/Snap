@@ -953,3 +953,15 @@ Priorität – im selben Prozess wie die Oberfläche.
 - Gemessen (`perf.rs` › `share_scan_capped`, Release, 4 Kerne, 1 000 Dateien à 1 MiB aus dem
   Seitencache): 250 ms mit 4 gleichzeitig, 424 ms mit 2. Der Erstscan dauert also etwa 1,7-mal so
   lange (einmalig), danach werden nur geänderte Dateien gehasht.
+
+## Review 56 – Papierkorb leeren, Papierkorb nicht im Index (2026-11-28)
+
+- Der Papierkorb (`trash_dir`, am Handy `.Trash-snap` im gemeinsamen Speicher) und alle
+  `.Trash-$uid` werden nicht mehr indexiert – schon beim Durchlaufen ausgelassen wie die übrigen
+  Ausschlüsse. Gelöschtes kostet damit beim Abgleich nichts mehr.
+- Beim Start entfernt `prune_excluded` Altbestände: je ausgeschlossenem Pfad eine Suche über die
+  Ordnerkette (drei Pfade, je unter 1 ms) und nur bei Treffern ein Löschen des Teilbaums in einer
+  Transaktion – einmalig.
+- „Papierkorb leeren“ und „Endgültig löschen“ nutzen die vorhandenen Anfragen (`TrashEmpty`,
+  `TrashPurge`, beide in `spawn_blocking`). Die Speicherübersicht fragt die Papierkorbliste
+  einmal beim Öffnen ab (eine Verzeichnisauflistung von `info/`).
