@@ -11,6 +11,7 @@ import { Text } from './text';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDecay } from 'react-native-reanimated';
 import { pageAt, pinchBase, pinchStep, range, rubber, settle, settleTarget, type PinchState } from './zoom';
+import { useSettled, visibleRegion } from './sharpen';
 import * as core from './core';
 import { request } from './core';
 import { t } from './i18n';
@@ -35,10 +36,14 @@ const clamp = (v: number, a: number, b: number) => {
   return Math.max(a, Math.min(b, v));
 };
 
-/** Auflösungsstufe für eine Zoomstufe (nicht bei jedem Zwischenwert neu zeichnen). */
+/** Auflösungsstufe für eine Zoomstufe (nicht bei jedem Zwischenwert neu zeichnen). Ganze Seiten
+ *  höchstens in Stufe 2 – darüber stellt ein Ausschnitt nur den sichtbaren Teil scharf
+ *  (`sharpen.ts`), statt die ganze Seite riesig zu zeichnen. */
 export function renderStep(scale: number): number {
-  return [1, 1.5, 2, 3, 4, 5].find((st) => st >= scale - 0.01) ?? 5;
+  return [1, 1.5, 2].find((st) => st >= scale - 0.01) ?? 2;
 }
+/** Ab diesem Zoom reicht die ganze Seite (Stufe 2) nicht mehr: Ausschnitt nachzeichnen. */
+const TILE_FROM = 2.05;
 
 /** Obere Kanten der Seiten (Inhaltskoordinaten bei Zoom 1) und Gesamthöhe. */
 export function layoutPages(ratios: number[]): { offsets: number[]; height: number } {
@@ -169,6 +174,9 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
   // Zoom, für den die Seiten scharf gezeichnet sind (nach dem Loslassen übernommen)
   const [scale, setScale] = useState(1);
   const [shown, setShown] = useState<[number, number]>([0, 2]);
+  // Scharfe Ausschnitte der sichtbaren Seiten bei starkem Zoom (Seite → Bild, Lage auf der Seite)
+  const [tiles, setTiles] = useState<Record<number, { uri: string; c: { x: number; y: number; w: number; h: number } }>>({});
+  const tileReq = useRef(0);
   const [mode, setMode] = useState<'view' | 'mark' | 'place'>('view');
   const [color, setColor] = useState(MARKER_COLORS[0][0]);
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -242,6 +250,36 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
       }
     },
   );
+
+  // Nach dem Zur-Ruhe-Kommen: sichtbare Teile der sichtbaren Seiten scharf nachzeichnen
+  useSettled(zs, tx, ty, !!ok, (sc, x, y) => {
+    const n = ++tileReq.current;
+    if (!ok || sc < TILE_FROM) {
+      setTiles({});
+      return;
+    }
+    const keep: number[] = [];
+    for (let i = shown[0]; i <= shown[1] && i < ok.pages; i++) {
+      const box = { x: PAD, y: lay.offsets[i], w: PAGE_W, h: PAGE_W * ok.ratios[i] };
+      const v = visibleRegion(sc, x, y, box, vw.value, vh.value);
+      if (!v) {
+        continue;
+      }
+      keep.push(i);
+      core.pdfRegion(doc, i, v.rel, v.px).then((f) => {
+        if (f && n === tileReq.current) {
+          setTiles((cur) => ({ ...cur, [i]: { uri: `file://${f}`, c: { x: v.content.x - PAD, y: v.content.y - lay.offsets[i], w: v.content.w, h: v.content.h } } }));
+        }
+      }).catch(() => {});
+    }
+    // Ausschnitte nicht mehr sichtbarer Seiten weg
+    setTiles((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => keep.includes(Number(k)))));
+  });
+  // Neues Dokument oder neu gespeichert: alte Ausschnitte passen nicht mehr
+  useEffect(() => {
+    tileReq.current++;
+    setTiles({});
+  }, [doc, rev]);
 
   const pinch = Gesture.Pinch()
     .withTestId('pdf-pinch')
@@ -529,7 +567,15 @@ export default function PdfViewer({ path, name, onClose, notify, onChanged, init
                     const groups = Array.from(new Set(pageMarks.map((mk) => `${mk.color}|${mk.width ?? MARKER_WIDTH}`)));
                     return (
                       <View key={`${doc}|${i}`} style={[styles.pageSlot, { top: lay.offsets[i], width: pageW, height: h }]}>
-                        <PdfPage path={doc} rev={rev} index={i} ratio={info.ratios[i]} scale={scale} />
+                        <PdfPage path={doc} rev={rev} index={i} ratio={info.ratios[i]} scale={i >= shown[0] && i <= shown[1] ? scale : 1} />
+                        {tiles[i] && (
+                          <Image
+                            source={{ uri: tiles[i].uri }}
+                            style={{ position: 'absolute', left: tiles[i].c.x, top: tiles[i].c.y, width: tiles[i].c.w, height: tiles[i].c.h }}
+                            fadeDuration={0}
+                            accessible={false}
+                          />
+                        )}
                         {groups.map((gk) => {
                           const [c, w] = gk.split('|');
                           return (

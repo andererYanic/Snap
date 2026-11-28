@@ -97,6 +97,11 @@ export const thumbnail = (path: string, edge: number): Promise<string | null> =>
 export const pdfInfo = (path: string): Promise<{ pages: number; ratios: number[] } | null> => native().pdfInfo(path);
 /** PDF-Seite als PNG-Datei in der gewünschten Breite (Pixel). */
 export const pdfPage = (path: string, index: number, width: number): Promise<string | null> => native().pdfPage(path, index, width);
+/** Scharfer Ausschnitt beim Zoomen: Foto bzw. PDF-Seite (x, y, w, h relativ 0…1, Breite in Pixeln). */
+export const zoomImage = (path: string, r: { x: number; y: number; w: number; h: number }, px: number): Promise<string | null> =>
+  native().zoomImage?.(path, r.x, r.y, r.w, r.h, px) ?? Promise.resolve(null);
+export const pdfRegion = (path: string, index: number, r: { x: number; y: number; w: number; h: number }, px: number): Promise<string | null> =>
+  native().pdfRegion?.(path, index, r.x, r.y, r.w, r.h, px) ?? Promise.resolve(null);
 /** PDF-Textschicht über Android (ab 15, oder 11–14 mit Systemupdate). */
 export const pdfTextSupported = (): boolean => !!native().pdfTextSupported?.();
 /** Hat die Seite Text (eingescannte Seiten nicht)? */

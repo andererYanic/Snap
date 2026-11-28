@@ -973,3 +973,24 @@ Priorität – im selben Prozess wie die Oberfläche.
   `content://`-Inhalte), auf einem Hintergrund-Thread; die Oberfläche zeigt die Datei danach.
 - Die Dateiauswahl lädt je Ordner eine `ListDir`-Seite (bis 2000 Einträge, wie die Dateiansicht)
   und filtert nach Endung in JS; Liste als `FlatList` (nur sichtbare Zeilen werden gezeichnet).
+
+## Review 59 – Schneller scharf beim Zoomen (2026-11-28)
+
+Rückmeldung des Nutzers: Beim Zoomen werden Dateien zu langsam scharf.
+
+- **Fotos** wurden auf Bildschirmgröße verkleinert dekodiert; beim Zoomen wurde nur dieses Bild
+  vergrößert (nie scharf). Neu: Nach dem Zur-Ruhe-Kommen (120 ms ohne Bewegung) wird nur der
+  sichtbare Ausschnitt plus 15 % Rand per `BitmapRegionDecoder` in Bildschirmauflösung dekodiert
+  (`inSampleSize` passend, EXIF-Drehung beachtet) und darübergelegt – höchstens etwa so viele
+  Pixel wie der Bildschirm (≈ 2–3 MP) statt bis zu 50 MP für das ganze Foto.
+- **PDF:** Nach jedem Zoom wurden alle eingehängten Seiten (bis zu vier) neu gerendert, bis 4096 px
+  breit (≈ 16 MP je Seite) und als PNG kodiert – die sichtbare Seite wartete hinter den anderen.
+  Neu: Ganze Seiten nur bis Stufe 2 und nur für die sichtbaren Seiten; darüber rendert
+  `PdfRenderer` mit Matrix nur den sichtbaren Bereich in Bildschirmauflösung. Die Arbeit je
+  Scharfstellen sinkt damit auf etwa ein Sechstel bis ein Achtel (Pixel ≈ Bildschirm statt
+  ≈ 16 MP × Seiten).
+- **Office/Text:** Die Leseansicht zoomt über die Schriftgröße (Text wird neu gesetzt), daher ist
+  sie sofort nach dem Loslassen scharf; während des Zoomens nur eine Vergrößerung als Vorschau.
+- Ausschnitte liegen kurz im Cache (höchstens 40 Dateien, 10 Minuten).
+- Gemessen auf dem Gerät steht noch aus (der Emulator der CI misst keine Darstellung); die Angaben
+  oben sind aus den Pixelmengen abgeleitet.
