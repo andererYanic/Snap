@@ -292,6 +292,18 @@ Stand: 2026-11-05 · Gilt für Daemon, CLI und Protokolle in diesem Repository.
   nie über bestehende Dateien geschrieben (`createNewFile`), „Original ersetzen“ läuft über den Kern
   (Original in den Papierkorb, nur im selben Ordner, rückgängig machbar). Feindliche Mediendateien
   treffen dieselben Dekoder wie beim Abspielen; Bilder werden auf 24 MP begrenzt dekodiert.
+- **Öffnen mit Snap, Ordner öffnen, Dateiauswahl (entschieden 2026-11-28):** Andere Apps können
+  Snap Dateien bzw. Ordner zeigen (`ACTION_VIEW`) und Snap als Dateiauswahl nutzen
+  (`ACTION_GET_CONTENT`). Adressen fremder Apps sind feindlich: Der Kern (`core/src/intent.rs`,
+  Fuzz-Ziel `intent_uri`) übersetzt nur `file://` und die Dokument-Adressen des Systemspeichers bzw.
+  Download-Ordners, löst Symlinks und `..` auf und lässt nur Pfade im gemeinsamen Speicher zu – nie
+  Snaps eigene Ordner (privater Datenordner mit Schlüssel und Datenbank, `Android/data/<Paket>`).
+  Andere `content://`-Inhalte werden in einen eigenen Cache kopiert (höchstens 2 GB), Snaps eigene
+  Adressen abgewiesen. Angezeigt wird nur; nichts wird automatisch geteilt, gesendet oder
+  verändert, und Unbekanntes wird nicht an eine andere App weitergereicht. Die Dateiauswahl gibt
+  nur angetippte Dateien heraus, jede vorher vom Kern geprüft, passend zur verlangten Art, als
+  `content://` nur lesend und nur für diesen Aufruf; keine Dateien anderer Geräte. Gegen
+  Überlagerung (Tapjacking) ignoriert die Auswahl Berührungen unter fremden Fenstern.
 - Keine Google-Dienste und keine Tracker. Verteilung als signierte APK über GitHub.
 
 ## PDF-Signaturen und Textmarker (entschieden 2026-11-09)

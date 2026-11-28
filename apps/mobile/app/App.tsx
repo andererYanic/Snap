@@ -34,6 +34,10 @@ export default function App() {
   const [crash, setCrash] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: () => void; action?: { label: string; run: () => void } } | null>(null);
   // Snap Drop: Senden (gewählte Dateien), eingehendes Angebot, Kurzanfrage für den Offline-Weg
+  // „Öffnen mit Snap“ / „Ordner öffnen“ aus einer anderen App, bis „Dateien“ es ausgeführt hat
+  const [external, setExternal] = useState<{ kind: 'file' | 'dir'; path: string; n: number } | null>(null);
+  const clearExternal = useCallback(() => setExternal(null), []);
+  const externalN = useRef(0);
   const [dropShare, setDropShare] = useState<{ paths: string[]; text: string | null } | null>(null);
   const setDropPaths = useCallback((paths: string[] | null) => setDropShare(paths ? { paths, text: null } : null), []);
   const [incoming, setIncoming] = useState<drop.IncomingOffer | null>(null);
@@ -142,6 +146,20 @@ export default function App() {
       }).catch(() => {});
     pickShare();
     const offShare = core.onShare(pickShare);
+    // „Öffnen mit Snap“ / „Ordner öffnen“ aus einer anderen App
+    const pickOpen = () =>
+      core.takeOpen().then((o) => {
+        if (!o) return;
+        if (o.kind === 'unsupported' || !o.path) {
+          notify(t('Das kann Snap nicht öffnen.'));
+          return;
+        }
+        setTab('files');
+        externalN.current += 1;
+        setExternal({ kind: o.kind as 'file' | 'dir', path: o.path, n: externalN.current });
+      }).catch(() => {});
+    pickOpen();
+    const offOpen = core.onOpen(pickOpen);
     drop.syncRadio().catch(() => {});
     drop.initBackground().catch(() => {});
     const saveContact = (id: number) =>
@@ -244,6 +262,7 @@ export default function App() {
     return () => {
       off();
       offShare();
+      offOpen();
       drop.onHotspotRequest(null);
     };
   }, [ready, notify, notifyAction]);
@@ -329,7 +348,7 @@ export default function App() {
         <SafeAreaView style={s.fill} edges={['top', 'left', 'right']}>
           {tab === 'photos' && <Text style={s.header}>{tabs.find((x) => x.key === tab)?.label}</Text>}
           <Animated.View key={tab} entering={m(FadeIn.duration(180))} style={s.fill}>
-            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} onFont={fontChanged} onDrop={setDropPaths} />}
+            {tab === 'files' && <Files theme={theme} root={root} notify={notify} selectionChanged={setSelecting} bottomSlot={setBottomBar} home={filesHome} onFont={fontChanged} onDrop={setDropPaths} external={external} onExternalDone={clearExternal} />}
             {tab === 'photos' && <Photos theme={theme} notify={notify} onDrop={setDropPaths} />}
             {tab === 'settings' && (
               <Settings theme={theme} notify={notify} material={material} setMaterial={setMaterial} materialAvailable={materialAvailable} fontName={fontName} onFont={fontChanged} home={settingsHome} />

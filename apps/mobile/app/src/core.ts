@@ -50,6 +50,20 @@ export function onShare(cb: () => void) {
   const sub = new NativeEventEmitter(native()).addListener('snap-share', () => cb());
   return () => sub.remove();
 }
+/** „Öffnen mit Snap“ bzw. „Ordner öffnen“ aus einer anderen App (einmalig abholen). */
+export interface ExternalOpen { kind: 'file' | 'dir' | 'unsupported'; path: string | null }
+export const takeOpen = (): Promise<ExternalOpen | null> => native().takeOpen?.() ?? Promise.resolve(null);
+export function onOpen(cb: () => void) {
+  const sub = new NativeEventEmitter(native()).addListener('snap-open', () => cb());
+  return () => sub.remove();
+}
+/** Dateiauswahl für andere Apps: gewünschte Arten (leer = alle), mehrere erlaubt? */
+export const pickRequest = (): Promise<{ mimes: string[]; multiple: boolean } | null> => native().pickRequest?.() ?? Promise.resolve(null);
+/** Gewählte Dateien an die aufrufende App (der Kern prüft jede einzeln). */
+export const pickFinish = (paths: string[]): Promise<number> => native().pickFinish(paths);
+export const pickCancel = (): void => native().pickCancel?.();
+export const mimeType = (path: string): Promise<string> => native().mimeType?.(path) ?? Promise.resolve('*/*');
+
 export interface ApkInfo {
   label: string;
   package: string;

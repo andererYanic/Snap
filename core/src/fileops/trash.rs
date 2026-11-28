@@ -65,7 +65,7 @@ pub fn percent_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn percent_decode(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn percent_decode(s: &str) -> Option<Vec<u8>> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

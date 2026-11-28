@@ -32,13 +32,18 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     // Aus dem „Teilen“-Menü einer anderen App gestartet → für Snap Drop vormerken
-    if (savedInstanceState == null) ShareInbox.accept(applicationContext, intent)
+    if (savedInstanceState == null) {
+      ShareInbox.accept(applicationContext, intent)
+      // „Öffnen mit Snap“ bzw. „Ordner öffnen“ aus einer anderen App
+      ExternalOpen.accept(applicationContext, intent)
+    }
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
     ShareInbox.accept(applicationContext, intent)
+    ExternalOpen.accept(applicationContext, intent)
   }
 
   /**

@@ -95,7 +95,7 @@ object ShareInbox {
     return out to p.text
   }
 
-  private fun displayName(context: Context, u: Uri): String? = try {
+  internal fun displayName(context: Context, u: Uri): String? = try {
     context.contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
       if (c.moveToFirst()) c.getString(0) else null
     }
@@ -104,7 +104,7 @@ object ShareInbox {
   }
 
   /** Nur der letzte Pfadteil, ohne Steuerzeichen und Trennzeichen, nicht versteckt, ≤ 120 Zeichen. */
-  private fun cleanName(raw: String): String {
+  internal fun cleanName(raw: String): String {
     var s = raw.substringAfterLast('/').substringAfterLast('\\')
       .filter { !it.isISOControl() && it != ':' && it.code !in 0x200B..0x200F && it.code !in 0x202A..0x202E }
       .trim().trimEnd('.')

@@ -104,6 +104,27 @@ pub fn take_crash_log(data_dir: String) -> Option<String> {
     (!text.is_empty()).then(|| text.chars().take(8000).collect())
 }
 
+/// Adresse einer anderen App („Öffnen mit“, „Ordner öffnen“) in einen geprüften Pfad im
+/// gemeinsamen Speicher übersetzen; nie in `own_dirs` (Snaps eigene Ordner). `None` = nicht
+/// übersetzbar oder nicht erlaubt (Datei dann ggf. in den Cache kopieren). Ohne laufenden Kern.
+#[uniffi::export]
+pub fn resolve_external(uri: String, want_dir: bool, storage_root: String, own_dirs: Vec<String>) -> Option<String> {
+    let kind = if want_dir { space_core::intent::Kind::Dir } else { space_core::intent::Kind::File };
+    let own: Vec<PathBuf> = own_dirs.into_iter().map(PathBuf::from).collect();
+    space_core::intent::resolve(&uri, kind, std::path::Path::new(&storage_root), &own)
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Einen Pfad prüfen, bevor Snap ihn als Dateiauswahl an eine andere App herausgibt (gleiche
+/// Regeln wie [`resolve_external`]). Gibt den aufgelösten Pfad zurück.
+#[uniffi::export]
+pub fn check_shared_path(path: String, want_dir: bool, storage_root: String, own_dirs: Vec<String>) -> Option<String> {
+    let kind = if want_dir { space_core::intent::Kind::Dir } else { space_core::intent::Kind::File };
+    let own: Vec<PathBuf> = own_dirs.into_iter().map(PathBuf::from).collect();
+    space_core::intent::checked(std::path::Path::new(&path), kind, std::path::Path::new(&storage_root), &own)
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 /// Konfiguration für Android aus den Startoptionen.
 pub fn mobile_config(opts: &CoreOptions) -> Result<space_core::config::Config, SnapError> {
     let data = absolute(&opts.data_dir, "data_dir")?;

@@ -46,6 +46,10 @@ interface Props {
   onFont?: (name: string | null) => void;
   /** Zähler: ändert er sich, geht es zurück zur Startansicht (erneutes Antippen von „Dateien“). */
   home?: number;
+  /** Aus einer anderen App: Ordner öffnen bzw. Datei anzeigen (`n` zählt Aufrufe). */
+  external?: { kind: 'file' | 'dir'; path: string; n: number } | null;
+  /** Der Aufruf von außen wurde ausgeführt (damit er beim erneuten Öffnen nicht wiederkommt). */
+  onExternalDone?: () => void;
 }
 
 interface Item extends DirEntry {
@@ -102,7 +106,7 @@ export function entryOrder(sort: 'name' | 'date' | 'size' | 'type', coll: Intl.C
   };
 }
 
-export default function Files({ theme, root, notify, selectionChanged, bottomSlot, onFont, onDrop, home = 0 }: Props) {
+export default function Files({ theme, root, notify, selectionChanged, bottomSlot, onFont, onDrop, home = 0, external = null, onExternalDone }: Props) {
   const [path, setPath] = useState<string | null>(null); // null = Startseite
   const [dir, setDir] = useState<'forward' | 'back'>('forward');
   const [items, setItems] = useState<Item[]>([]);
@@ -360,8 +364,9 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
     }
   };
 
-  /** Datei (z. B. von einem anderen Gerät heruntergeladen) mit den eingebauten Anzeigen öffnen. */
-  const openPath = (path: string, name: string) => {
+  /** Datei (z. B. von einem anderen Gerät heruntergeladen) mit den eingebauten Anzeigen öffnen.
+   *  `outside`: kam aus einer anderen App – nie an eine andere App zurückreichen. */
+  const openPath = (path: string, name: string, outside = false) => {
     if (isSvg(name)) {
       setSvg({ path, name });
     } else if (isText(name)) {
@@ -374,10 +379,31 @@ export default function Files({ theme, root, notify, selectionChanged, bottomSlo
       setApk({ path, name, size: 0 });
     } else if (isArchiveListable(name)) {
       setArchive({ path, name });
+    } else if (outside) {
+      notify(t('Snap kann „{name}“ nicht anzeigen.', { name }));
     } else {
       core.openFile(path).catch((err) => openFailed(name, err));
     }
   };
+
+  // Aus einer anderen App: Ordner öffnen bzw. Datei mit den eingebauten Anzeigen zeigen
+  const externalSeen = useRef(0);
+  useEffect(() => {
+    if (!external || external.n === externalSeen.current) {
+      return;
+    }
+    externalSeen.current = external.n;
+    setQuery('');
+    setSel(new Set());
+    setRemoteDev(null);
+    if (external.kind === 'dir') {
+      go(external.path, 'forward');
+    } else {
+      openPath(external.path, external.path.slice(external.path.lastIndexOf('/') + 1), true);
+    }
+    onExternalDone?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [external]);
 
   const undoable = (text: string) =>
     notify(text, async () => {
