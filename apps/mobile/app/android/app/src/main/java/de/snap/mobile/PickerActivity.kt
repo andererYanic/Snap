@@ -16,7 +16,7 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
  * - Herausgegeben wird nur, was der Mensch hier antippt: jede Datei wird vorher vom Kern geprüft
  *   (`checkSharedPath`: im gemeinsamen Speicher, nie Snaps eigene Ordner, keine Symlinks
  *   dorthin) und als `content://`-Adresse nur lesend und nur für diesen Aufruf freigegeben.
- * - Verlangt die App bestimmte Arten (z. B. `image/*`), wird nur Passendes angenommen.
+ * - Verlangt die App bestimmte Arten (z. B. nur Bilder), wird nur Passendes angenommen.
  * - Keine Dateien anderer Geräte; nichts wird geschrieben.
  * - Gegen Überlagerung durch andere Apps (Tapjacking): Berührungen werden ignoriert, solange ein
  *   fremdes Fenster darüber liegt.
