@@ -836,6 +836,24 @@ Gemessen (Release, `core/tests/perf.rs` › `raw_preview`, 25-MB-Datei mit 12-MP
 - Untertitel: eine Ordnerabfrage beim Öffnen eines Videos (höchstens 2000 Einträge), keine
   Dauerarbeit. GIF-Animation decodiert Fresco nur, solange das Bild sichtbar ist.
 
+## Review 50 – Komfort: Massen-Umbenennen, Favoriten, Volltext (2026-11-27)
+
+Gemessen (Release, `core/tests/perf.rs` › `content_index`, 2000 Textdateien à ~3 KB):
+
+| Vorgang | Zeit |
+|---|---|
+| Volltext erfassen | 78 µs je Datei (2000 Dateien in 157 ms) |
+| Volltext-Suche | 0,15 ms je Anfrage |
+| Abgleich ohne Änderungen | 0,55 ms |
+
+- Erfassen läuft im Hintergrund in Portionen zu 200 Dateien mit 300 ms Pause, nur nach Änderungen
+  am Dateiindex; Office-Dokumente und PDFs sind teurer (Lesen und Entpacken), bleiben aber in
+  derselben Portionierung. Je Datei höchstens 100 000 Zeichen – der Index wächst begrenzt.
+- Suche: eine FTS5-Abfrage mit `LIMIT`, Pfade über die vorhandene Elternkette; die App fragt erst ab
+  3 Zeichen und entprellt (160 ms) – keine GUI-Abfrage nahe der 16-ms-Grenze.
+- Massen-Umbenennen: zwei `renameat2`-Aufrufe je Datei (über Zwischennamen), keine Kopien.
+- Favoriten/Zuletzt: kleine JSON-Listen in den App-Einstellungen (≤ 50/20 Einträge).
+
 ## Review 47 – Texterkennung (OCR) (2026-11-27)
 
 Gemessen mit denselben Commits von Tesseract/Leptonica, für den Linux-Host gebaut (4 Kerne, ein

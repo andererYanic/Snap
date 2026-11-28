@@ -90,7 +90,16 @@ export default function Explorer({ tab, home, event, clip, setClip, notify, navi
       if (searching !== null) {
         const r = await api.search(searching, showHidden);
         if (!current()) return;
-        setItems(r.hits.map((h) => ({ path: h.path, name: h.name, dir: h.kind === "Dir", size: h.size, mtime: h.mtime, hidden: h.name.startsWith(".") })));
+        const byName = r.hits.map((h) => ({ path: h.path, name: h.name, dir: h.kind === "Dir", size: h.size, mtime: h.mtime, hidden: h.name.startsWith(".") }));
+        setItems(byName);
+        // Zusätzlich Dokumente, deren Inhalt passt (Volltext, ab 3 Zeichen)
+        if (searching.trim().length >= 3) {
+          const c = await api.contentSearch(searching).catch(() => ({ hits: [] }));
+          if (!current()) return;
+          const seen = new Set(byName.map((x) => x.path));
+          const extra = c.hits.filter((h) => !seen.has(h.path)).map((h) => ({ path: h.path, name: h.name, dir: false, size: h.size, mtime: h.mtime, hidden: false }));
+          if (extra.length) setItems([...byName, ...extra]);
+        }
       } else if (isTrash) {
         const r = await api.trashList();
         if (!current()) return;

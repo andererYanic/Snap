@@ -368,6 +368,7 @@ impl LocalIndex {
             )?;
         }
         conn.execute_batch(&crate::photos::schema())?;
+        conn.execute_batch(crate::content::schema())?;
         let mut readers = Vec::new();
         for _ in 0..READERS {
             let r =

@@ -213,3 +213,54 @@ async fn space_usage_and_duplicates_via_daemon() {
     assert_eq!(code(&d.request(outside).await), Some(ErrorCode::NotFound));
     d.shutdown().await;
 }
+
+async fn content(d: &Daemon, q: &str) -> Vec<(String, String)> {
+    match d.request(Request::ContentSearch { query: q.into(), limit: 20 }).await {
+        Response::ContentHits { hits } => hits.into_iter().map(|h| (h.path, h.snippet)).collect(),
+        other => panic!("{other:?}"),
+    }
+}
+
+async fn wait_content(d: &Daemon, q: &str, pred: impl Fn(&[(String, String)]) -> bool) {
+    let t = Instant::now();
+    loop {
+        let hits = content(d, q).await;
+        if pred(&hits) {
+            return;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20), "Zeitüberschreitung bei Volltext '{q}': {hits:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn volltext_findet_inhalt_und_folgt_aenderungen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(home.join("Briefe")).unwrap();
+    std::fs::write(home.join("Briefe/vermieter.txt"), "Sehr geehrter Herr Müller,\nhiermit kündige ich die Wohnung.")
+        .unwrap();
+    std::fs::write(home.join("Briefe/seite.html"), "<p>Die <b>Nebenkostenabrechnung</b> liegt bei.</p>").unwrap();
+    std::fs::write(home.join("bild.jpg"), "kündige auch hier").unwrap(); // kein Textformat
+    let d = start(&tmp.path().join("snap")).await;
+    assert!(matches!(d.request(Request::IndexAdd { path: home.clone() }).await, Response::IndexRoots { .. }));
+
+    // Wörter, Präfix, ohne Akzente und Groß-/Kleinschreibung; nur Textformate
+    wait_content(&d, "kündig", |h| h.len() == 1 && h[0].0.ends_with("vermieter.txt")).await;
+    let h = content(&d, "MULLER wohnung").await;
+    assert_eq!(h.len(), 1);
+    assert!(h[0].1.contains('«'), "Fundstelle markiert: {}", h[0].1);
+    wait_content(&d, "nebenkosten", |h| h.len() == 1).await;
+    let h = content(&d, "nebenkosten").await;
+    assert!(!h[0].1.contains("<b>") && !h[0].1.contains("<p>"), "Tags nicht im Index: {}", h[0].1);
+    // Abfrage-Syntax von außen gilt wörtlich
+    assert!(content(&d, "\" OR NEAR(").await.is_empty());
+
+    // Änderung und Löschung
+    std::fs::write(home.join("Briefe/vermieter.txt"), "Neuer Inhalt: Mieterhöhung").unwrap();
+    wait_content(&d, "mieterhöhung", |h| h.len() == 1).await;
+    wait_content(&d, "kündige", |h| h.is_empty()).await;
+    std::fs::remove_file(home.join("Briefe/seite.html")).unwrap();
+    wait_content(&d, "nebenkosten", |h| h.is_empty()).await;
+    d.shutdown().await;
+}

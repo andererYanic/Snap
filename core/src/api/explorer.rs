@@ -39,6 +39,19 @@ pub(crate) async fn search(
     Ok(Response::SearchResults { hits })
 }
 
+/// Volltextsuche im Inhalt von Dokumenten.
+pub(crate) async fn content_search(inner: &Arc<DaemonInner>, query: String, limit: u32) -> Result<Response> {
+    let svc = service(inner)?;
+    if query.len() > QUERY_MAX_LEN {
+        api_bail!(InvalidInput, "Suchbegriff ist zu lang (höchstens {QUERY_MAX_LEN} Bytes).");
+    }
+    let hits = tokio::task::spawn_blocking(move || {
+        crate::content::search(&svc.index, &query, limit.clamp(1, SEARCH_MAX) as usize)
+    })
+    .await??;
+    Ok(Response::ContentHits { hits })
+}
+
 /// Liest eine Seite eines Ordners direkt vom Dateisystem (immer aktuell, unabhängig vom
 /// Index). Zum Sortieren genügen Name und Typ aus `readdir`; Größe und Datum (`stat`) werden
 /// nur für die Einträge der angeforderten Seite gelesen. Gibt (Seite, Gesamtzahl) zurück.

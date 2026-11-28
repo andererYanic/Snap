@@ -1735,6 +1735,44 @@ fn raw_preview() {
 
 #[test]
 #[ignore]
+fn content_index() {
+    use space_core::index::LocalIndex;
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("docs");
+    std::fs::create_dir_all(&tree).unwrap();
+    let words = ["Rechnung", "Vertrag", "Kündigung", "Steuer", "Urlaub", "Projekt", "Bericht", "Angebot"];
+    let n = 2000;
+    for i in 0..n {
+        let body: String = (0..400).map(|k| words[(i * 7 + k) % words.len()]).collect::<Vec<_>>().join(" ");
+        std::fs::write(tree.join(format!("d{i}.txt")), format!("{body} Kennung{i}")).unwrap();
+    }
+    let idx = LocalIndex::open(&dir.path().join("index.db"), vec![]).unwrap();
+    let root = idx.add_root(&tree).unwrap();
+    idx.rebuild_root(root, &tree).unwrap();
+    let t = Instant::now();
+    let mut total = 0;
+    loop {
+        let k = space_core::content::refresh(&idx, space_core::content::BATCH).unwrap();
+        if k == 0 {
+            break;
+        }
+        total += k;
+    }
+    report("Volltext erfassen (Textdateien à ~3 KB)", total, t.elapsed());
+    let q = 100;
+    let t = Instant::now();
+    for i in 0..q {
+        let hits = space_core::content::search(&idx, &format!("Kennung{}", i * 13), 20).unwrap();
+        assert!(!hits.is_empty());
+    }
+    report("Volltext-Suche (2000 Dokumente)", q, t.elapsed());
+    let t = Instant::now();
+    assert_eq!(space_core::content::refresh(&idx, 1000).unwrap(), 0);
+    report("Volltext-Abgleich ohne Änderungen", 1, t.elapsed());
+}
+
+#[test]
+#[ignore]
 fn vault_crypto() {
     use space_core::vault::{create_keys, decrypt_stream, encrypt_stream, unlock_password};
     let t = Instant::now();

@@ -37,6 +37,8 @@ pub struct IndexService {
     watched_roots: Mutex<HashSet<i64>>,
     /// Signal an die Foto-Zeitachse: Index hat sich geändert.
     pub(crate) media_dirty: Notify,
+    /// Volltext: nach Änderungen am Dateiindex neue/geänderte Dokumente erfassen.
+    pub(crate) content_dirty: Notify,
     pub(crate) stopping: AtomicBool,
     /// Monatsübersicht der ganzen Zeitachse (vom Aktualisierer vorberechnet).
     pub(crate) months_cache: Mutex<Option<Vec<crate::photos::MonthCount>>>,
@@ -53,6 +55,7 @@ impl IndexService {
             limit_warned: AtomicBool::new(false),
             watched_roots: Mutex::new(HashSet::new()),
             media_dirty: Notify::new(),
+            content_dirty: Notify::new(),
             stopping: AtomicBool::new(false),
             months_cache: Mutex::new(None),
         }
@@ -237,6 +240,7 @@ pub(crate) async fn run_indexer(inner: Arc<DaemonInner>) {
         Err(e) => tracing::warn!("Lokale Suche ohne Watcher (nur periodischer Abgleich): {e}"),
     }
 
+    tokio::spawn(run_content(svc.clone()));
     loop {
         full_pass(&svc, config.index_drives).await;
         tokio::select! {
@@ -289,6 +293,7 @@ async fn full_pass(svc: &Arc<IndexService>, drives: bool) {
         Ok(Ok(())) => {}
     }
     svc.media_dirty.notify_one();
+    svc.content_dirty.notify_one();
 }
 
 /// Verarbeitet Watcher-Ereignisse gebündelt: liest nur die betroffenen Ordner neu.
@@ -319,6 +324,31 @@ async fn run_event_loop(svc: Arc<IndexService>, mut rx: tokio::sync::mpsc::Unbou
         let s = svc.clone();
         let _ = tokio::task::spawn_blocking(move || s.refresh_dirs(dirs)).await;
         svc.media_dirty.notify_one();
+        svc.content_dirty.notify_one();
+        svc.content_dirty.notify_one();
+    }
+}
+
+/// Volltext im Hintergrund: portionsweise, mit Pausen, nur nach Änderungen.
+async fn run_content(svc: Arc<IndexService>) {
+    loop {
+        svc.content_dirty.notified().await;
+        loop {
+            let s = svc.clone();
+            match tokio::task::spawn_blocking(move || crate::content::refresh(&s.index, crate::content::BATCH)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => tracing::debug!("Volltext: {n} Datei(en) erfasst"),
+                Ok(Err(e)) => {
+                    tracing::warn!("Volltext fehlgeschlagen: {e:#}");
+                    break;
+                }
+                Err(_) => break,
+            }
+            // Gerät nicht dauerhaft belasten
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+        let s = svc.clone();
+        let _ = tokio::task::spawn_blocking(move || crate::content::prune(&s.index)).await;
     }
 }
 

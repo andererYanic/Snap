@@ -1843,3 +1843,38 @@ test('Sicherheitsübersicht: Hinweise übersetzt, Rechte lesbar', async () => {
     NativeModules.SnapCore.request.mockImplementation(origRequest);
   }
 });
+
+test('Massen-Umbenennen: Nummerieren und Ersetzen planen, Probleme erkennen', () => {
+  const { planRename, renameProblem } = require('../src/rename');
+  const names = ['IMG_2001.jpg', 'IMG_2002.JPG', 'notiz'];
+  expect(planRename(names, { kind: 'number', base: 'Urlaub', start: 1 })).toEqual(['Urlaub 01.jpg', 'Urlaub 02.JPG', 'Urlaub 03']);
+  const many = Array.from({ length: 120 }, (_, i) => `f${i}.png`);
+  expect(planRename(many, { kind: 'number', base: '', start: 1 })[0]).toBe('001.png');
+  expect(planRename(names, { kind: 'replace', find: 'img_', with: 'Foto ' })).toEqual(['Foto 2001.jpg', 'Foto 2002.JPG', 'notiz']);
+  expect(planRename(['a.jpg'], { kind: 'replace', find: '.', with: '-' })).toEqual(['a.jpg']); // Endung bleibt, Punkt ist kein Muster
+  expect(renameProblem(['a.jpg', 'b.jpg'], ['x.jpg', 'x.jpg'])).toBe('duplicate');
+  expect(renameProblem(['a'], ['../b'])).toBe('invalid');
+  expect(renameProblem(['a'], ['a'])).toBe('unchanged');
+  expect(renameProblem(['a', 'b'], ['b', 'a'])).toBeNull();
+});
+
+test('Favoriten und zuletzt geöffnet: lokal, ohne Doppelte, begrenzt', async () => {
+  const places = require('../src/places');
+  const prefs: Record<string, string> = {};
+  NativeModules.SnapCore.getPref = jest.fn(async (k: string) => prefs[k] ?? (k === 'lang' ? 'de' : null));
+  NativeModules.SnapCore.setPref = jest.fn((k: string, v: string) => { prefs[k] = v; });
+  expect(await places.toggleFavorite({ path: '/sd/Docs', name: 'Docs', dir: true })).toBe(true);
+  expect(await places.isFavorite('/sd/Docs')).toBe(true);
+  expect(await places.toggleFavorite({ path: '/sd/Docs', name: 'Docs', dir: true })).toBe(false);
+  for (let i = 0; i < 25; i++) {
+    await places.noteOpened({ path: `/sd/f${i % 22}.txt`, name: `f${i % 22}.txt`, dir: false });
+  }
+  const r = await places.recent();
+  expect(r).toHaveLength(20);
+  expect(r[0].path).toBe('/sd/f2.txt');
+  expect(new Set(r.map((x: any) => x.path)).size).toBe(20);
+  await places.forget(['/sd/f2.txt']);
+  expect((await places.recent())[0].path).toBe('/sd/f1.txt');
+  prefs.recent = '{kaputt';
+  expect(await places.recent()).toEqual([]);
+});
