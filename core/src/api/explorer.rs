@@ -264,13 +264,21 @@ pub(crate) fn index_rescan(inner: &DaemonInner) -> Result<Response> {
     Ok(Response::Success { message: "Abgleich der indexierten Orte gestartet.".into() })
 }
 
-pub(crate) async fn space_usage(inner: &Arc<DaemonInner>, path: PathBuf, limit: u32) -> Result<Response> {
+pub(crate) async fn space_usage(
+    inner: &Arc<DaemonInner>,
+    path: PathBuf,
+    limit: u32,
+    category: Option<String>,
+) -> Result<Response> {
     let svc = service(inner)?;
     if !path.is_absolute() {
         api_bail!(InvalidInput, "Pfad muss absolut sein: {}", path.display());
     }
     let limit = if limit == 0 { 30 } else { limit as usize };
-    let usage = tokio::task::spawn_blocking(move || crate::analysis::space_usage(&svc.index, &path, limit)).await??;
+    let usage = tokio::task::spawn_blocking(move || {
+        crate::analysis::space_usage_in(&svc.index, &path, limit, category.as_deref())
+    })
+    .await??;
     Ok(Response::SpaceUsage(usage))
 }
 

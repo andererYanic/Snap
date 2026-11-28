@@ -994,7 +994,7 @@ fn photo_timeline() {
 #[test]
 #[ignore]
 fn storage_analysis() {
-    use space_core::analysis::{duplicates, space_usage};
+    use space_core::analysis::{duplicates, space_usage, space_usage_in};
     use space_core::index::LocalIndex;
     let dir = tempfile::tempdir().unwrap();
     let idx = LocalIndex::open(&dir.path().join("index.db"), vec![]).unwrap();
@@ -1007,6 +1007,10 @@ fn storage_analysis() {
     let t = Instant::now();
     space_usage(&idx, std::path::Path::new("/synthetisch/Gruppe 7"), 30).unwrap();
     report("analyse: Speicher eines Unterordners (10 000)", 1, t.elapsed());
+    let t = Instant::now();
+    let b = space_usage_in(&idx, std::path::Path::new("/synthetisch"), 30, Some("Bilder")).unwrap();
+    report("analyse: nur Bilder über 1,1 Mio. Einträge", 1, t.elapsed());
+    assert_eq!(b.files, 1_000_000);
 
     // Duplikate: 1 000 echte Dateien à 256 KB, davon 250 Paare
     let real = dir.path().join("echt");

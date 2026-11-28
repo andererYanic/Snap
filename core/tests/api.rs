@@ -187,7 +187,7 @@ mod permissions {
             Request::UploadRuleAdd { path: "/etc".into(), device: "x".into(), share: "F".into(), dest_dir: "".into() },
             Request::UploadRuleList,
             Request::LinkList,
-            Request::SpaceUsage { path: "/".into(), limit: 10 },
+            Request::SpaceUsage { path: "/".into(), limit: 10, category: None },
             Request::BackupList,
             Request::BackupRun { id: "abcd".into() },
             Request::BackupRestore { id: "abcd".into(), snapshot: "x".into(), path: "/".into(), dest: "/tmp".into() },

@@ -60,6 +60,12 @@ pub struct SpaceUsage {
     pub largest: Vec<LargeFile>,
 }
 
+/// Alle Kategorien der Übersicht (Rückgabewerte von [`category`]).
+pub const CATEGORIES: [&str; 8] =
+    ["Videos", "Bilder", "Musik", "Dokumente", "Apps", "Archive", "Programmcode", "Sonstiges"];
+/// So viele Dateien liefert die Analyse höchstens, wenn nach einer Kategorie gefiltert wird.
+pub const CATEGORY_FILES: usize = 200;
+
 /// Kategorie einer Dateiendung (für die Übersicht).
 pub fn category(ext: Option<&str>) -> &'static str {
     match ext.unwrap_or("") {
@@ -79,6 +85,18 @@ pub fn category(ext: Option<&str>) -> &'static str {
 
 /// Speicheranalyse eines indexierten Ordners (blockierend).
 pub fn space_usage(index: &LocalIndex, path: &Path, limit: usize) -> Result<SpaceUsage> {
+    space_usage_in(index, path, limit, None)
+}
+
+/// Wie [`space_usage`]; mit `only` (einer Kategorie) enthält `largest` nur Dateien dieser Kategorie (bis zu
+/// [`CATEGORY_FILES`], größte zuerst). Summen, Arten und Unterordner bleiben vollständig.
+pub fn space_usage_in(index: &LocalIndex, path: &Path, limit: usize, only: Option<&str>) -> Result<SpaceUsage> {
+    if let Some(c) = only {
+        if !CATEGORIES.contains(&c) {
+            api_bail!(InvalidInput, "Unbekannte Kategorie '{c}'.");
+        }
+    }
+    let keep = if only.is_some() { CATEGORY_FILES } else { 20 };
     let Some(dir) = index.find_dir(path)? else {
         api_bail!(NotFound, "{} ist kein indexierter Ordner (index add …).", path.display());
     };
@@ -131,12 +149,16 @@ pub fn space_usage(index: &LocalIndex, path: &Path, limit: usize) -> Result<Spac
                     c.size += size;
                     c.files += 1;
                 }
-                let e = by_type.entry(category(ext.as_deref())).or_default();
+                let cat = category(ext.as_deref());
+                let e = by_type.entry(cat).or_default();
                 e.0 += size;
                 e.1 += 1;
-                if heap.len() < 20 || heap.peek().is_some_and(|m| m.0 .0 < size) {
+                if only.is_some_and(|c| c != cat) {
+                    continue;
+                }
+                if heap.len() < keep || heap.peek().is_some_and(|m| m.0 .0 < size) {
                     heap.push(std::cmp::Reverse((size, id)));
-                    if heap.len() > 20 {
+                    if heap.len() > keep {
                         heap.pop();
                     }
                 }
@@ -384,6 +406,29 @@ mod tests {
         assert_eq!(sub.total, 4000);
         assert!(space_usage(&idx, &root.join("fehlt"), 10).is_err());
         assert!(space_usage(&idx, Path::new("/nicht/indexiert"), 10).is_err());
+    }
+
+    #[test]
+    fn usage_filtered_by_category() {
+        let (_d, root, idx, _) = setup();
+        let u = space_usage_in(&idx, &root, 10, Some("Bilder")).unwrap();
+        assert_eq!(u.largest.len(), 2);
+        assert!(u.largest.iter().all(|f| f.path.ends_with(".jpg")), "{:?}", u.largest);
+        // Summen und Arten bleiben vollständig
+        assert_eq!(u.files, 6);
+        assert_eq!(u.by_type.len(), 3);
+        let docs = space_usage_in(&idx, &root, 10, Some("Dokumente")).unwrap();
+        assert_eq!(docs.largest.len(), 1);
+        assert!(docs.largest[0].path.ends_with("notiz.txt"));
+        assert!(space_usage_in(&idx, &root, 10, Some("Apps")).unwrap().largest.is_empty());
+        // Jede Kategorie der Zuordnung ist bekannt, unbekannte werden abgewiesen
+        for ext in ["mp4", "jpg", "mp3", "pdf", "apk", "zip", "rs", "xyz"] {
+            assert!(CATEGORIES.contains(&category(Some(ext))), "{ext}");
+        }
+        for bad in ["", "bilder", "Bilder'; --", "../x"] {
+            let err = space_usage_in(&idx, &root, 10, Some(bad)).unwrap_err();
+            assert_eq!(crate::api::error::code_of(&err), crate::api::error::ErrorCode::InvalidInput, "{bad}");
+        }
     }
 
     #[test]
